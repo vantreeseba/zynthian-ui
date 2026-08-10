@@ -919,6 +919,10 @@ class zynthian_engine_clippy(zynthian_engine):
 
     def send_controller_value(self, zctrl):
         if zctrl.symbol == "record":
+            if getattr(zctrl.processor, "set_state_flag", False):
+                # Record state is transient: a snapshot/ZS3 saved mid-recording must not re-arm on restore
+                zctrl.value = 0
+                return
             self.toggle_clip_record(zctrl.processor, self.selected_phrase)
             return
 

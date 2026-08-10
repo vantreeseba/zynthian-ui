@@ -1444,6 +1444,10 @@ class zynthian_gui:
     def cuia_toggle_session_record(self, params=None):
         self.state_manager.toggle_session_record()
 
+    def cuia_toggle_pad_record(self, params=None):
+        # Punch in/out clip/MIDI recording on the selected launcher pad
+        self.screens["mixer"].cuia_toggle_pad_record(params)
+
     def cuia_stop(self, params=None):
         if self.get_alt_mode():
             self.cuia_stop_midi_play()

@@ -2635,6 +2635,48 @@ class zynthian_gui_mixer(zynthian_gui_base):
             return True
         return False
 
+    def cuia_toggle_pad_record(self, params=None):
+        """Punch in/out recording on the selected launcher pad
+
+        A recording in flight (any pad) => stop MIDI capture / punch out clips at the next bar
+        Otherwise => start recording into the selected pad (audio clip or MIDI pattern)
+        """
+
+        sm = self.state_manager
+        handled = False
+        if sm.midi_record_pad is not None:
+            sm.stop_pad_midi_record()
+            self.set_title("MIDI recording stopped", None, None, 2)
+            handled = True
+        for chain in self.zyngui.chain_manager.chains.values():
+            proc = chain.get_clippy_processor()
+            if proc is None:
+                continue
+            for (rec_proc, rec_phrase), rec in list(proc.engine.recordings.items()):
+                if rec["state"] != "saving":
+                    proc.engine.toggle_clip_record(rec_proc, rec_phrase)
+                    handled = True
+            break  # Single shared clippy engine => recordings already covers all chains
+        if handled:
+            return True
+        # Nothing in flight => record into the selected pad
+        phrase = self.zynseq.phrase
+        if self.highlighted_strip is None or phrase >= self.zynseq.phrases:
+            return True
+        chain = self.highlighted_strip.chain
+        proc = chain.get_clippy_processor() if chain else None
+        if proc:
+            if chain.capture_src is None:
+                # No record source configured => ask for one, then arm
+                self.prompt_record_source(chain, proc, phrase)
+                return True
+            proc.engine.toggle_clip_record(proc, phrase)
+        elif chain and chain.chain_id and type(chain.midi_chan) is int and chain.midi_chan < 16:
+            if sm.toggle_pad_midi_record(phrase, chain.midi_chan):
+                self.set_title(f"⏺ Recording MIDI: {chain.get_name()} · clip {phrase + 1}",
+                               zynthian_gui_config.color_status_record, None, 3)
+        return True
+
     def prompt_record_source(self, chain, proc, phrase):
         """Ask for a record source, then arm the requested clip recording"""
 
