@@ -1445,6 +1445,10 @@ class zynthian_state_manager:
                         chain.capture_src = capture_src
                     elif capture_src in self.chain_manager.chains:
                         chain.capture_src = capture_src
+                if chain_state.get("monitor_mode") in ("off", "auto", "on"):
+                    chain.monitor_mode = chain_state["monitor_mode"]
+                else:
+                    chain.monitor_mode = "off"
                 chain.audio_out = []
                 if "audio_out" in chain_state:
                     for out in chain_state["audio_out"]:
@@ -1665,6 +1669,8 @@ class zynthian_state_manager:
                     chain_state["capture_src"] = chain.capture_src.copy()
                 else:
                     chain_state["capture_src"] = chain.capture_src
+            if chain.monitor_mode != "off":
+                chain_state["monitor_mode"] = chain.monitor_mode
             chain_state["audio_out"] = []
             for out in chain.audio_out:
                 if out in zynautoconnect.get_sidechain_portnames():

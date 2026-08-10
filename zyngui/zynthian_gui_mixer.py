@@ -2306,6 +2306,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         else:
             options["Record clip"] = params
         options[f"Record source ({self.get_record_source_name(chain)})"] = params
+        options[f"Monitor input ({chain.monitor_mode.upper()})"] = params
         if has_clip:
             options["Clear clip"] = params
             options["Delete clip + audio file"] = params
@@ -2331,6 +2332,10 @@ class zynthian_gui_mixer(zynthian_gui_base):
             screen = self.zyngui.screens['chain_options']
             screen.set_chain(chain)
             screen.select_record_source(cb=lambda value: self.zyngui.show_screen("launcher"))
+        elif option.startswith("Monitor input"):
+            screen = self.zyngui.screens['chain_options']
+            screen.set_chain(chain)
+            screen.select_monitor_mode(cb=lambda value: self.zyngui.show_screen("launcher"))
         elif option == "Clear clip":
             self.zyngui.show_confirm("Clear this clip pad?\n(The audio file is kept on disk)",
                                      self.clear_clip_confirmed, (phrase, False))

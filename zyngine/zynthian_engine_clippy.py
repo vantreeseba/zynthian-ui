@@ -626,6 +626,7 @@ class zynthian_engine_clippy(zynthian_engine):
             "state": "armed", "path": path, "tempo": tempo, "bpb": bpb, "channels": channels}
         self.libseq.setPlayState(self.zynseq.scene, phrase, processor.midi_chan, zynseq.SEQ_STARTING_RECORD)
         self.state_manager.start_record_metronome()
+        self.update_monitor_routing(processor)
         self.set_record_zctrl(processor, 1)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                               chan=processor.midi_chan, phrase=phrase, state=1)
@@ -686,6 +687,7 @@ class zynthian_engine_clippy(zynthian_engine):
         self.zynseq.set_sequence_param(self.zynseq.scene, phrase, processor.midi_chan, "name", filename)
         self.libseq.updateSequenceInfo()
         rec["state"] = "saving"
+        self.update_monitor_routing(processor)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                               chan=processor.midi_chan, phrase=phrase, state=3)
         Thread(target=self._save_recording, args=(processor, phrase, clip_channel, note, path),
@@ -715,9 +717,20 @@ class zynthian_engine_clippy(zynthian_engine):
             return
         self.libclippy.disarmRecord()
         self.state_manager.stop_record_metronome()
+        self.update_monitor_routing(processor)
         self.set_record_zctrl(processor, 0)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                               chan=processor.midi_chan, phrase=phrase, state=0)
+
+    def update_monitor_routing(self, processor):
+        """Reconnect the audio graph so 'auto' input monitoring follows record state"""
+
+        try:
+            chain = self.state_manager.chain_manager.get_chain(processor.chain_id)
+            if chain and chain.monitor_mode == "auto" and isinstance(chain.capture_src, list):
+                zynautoconnect.request_audio_connect(True)
+        except Exception:
+            pass
 
     def set_record_zctrl(self, processor, value):
         try:
