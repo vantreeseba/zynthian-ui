@@ -69,6 +69,7 @@ typedef struct {
     int current_clip_id;     // Index of currently playing clip
     Clip* starting_clip;     // Pointer to the starting clip
     int starting_clip_id;    // Index of starting clip
+    volatile uint8_t monitor; // 1 to mix capture input ports into the player output (live input monitoring)
 } Player;
 
 typedef union {
@@ -346,6 +347,17 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
         out_buff_b[channel] = jack_port_get_buffer(player->jack_out_b, frames);
         memset(out_buff_a[channel], 0, frames * sizeof(float));
         memset(out_buff_b[channel], 0, frames * sizeof(float));
+
+        // Live input monitoring: pass capture input through to the player output
+        // (before clip mixing which accumulates with += and may continue early)
+        if (player->monitor && player->jack_in_a && player->jack_in_b) {
+            float* in_a = jack_port_get_buffer(player->jack_in_a, frames);
+            float* in_b = jack_port_get_buffer(player->jack_in_b, frames);
+            for (jack_nframes_t i = 0; i < frames; ++i) {
+                out_buff_a[channel][i] += in_a[i];
+                out_buff_b[channel][i] += in_b[i];
+            }
+        }
 
         // New clip starting => Cross-fade exiting and starting clips
         if (player->starting_clip) {
@@ -1146,6 +1158,18 @@ uint32_t getRecordedFrames() {
 
 uint16_t getRecordedBeats() {
     return g_recorder.beats;
+}
+
+void setInputMonitor(uint8_t channel, uint8_t enable) {
+    if (channel >= 16 || !players[channel])
+        return;
+    players[channel]->monitor = enable ? 1 : 0;
+}
+
+uint8_t getInputMonitor(uint8_t channel) {
+    if (channel >= 16 || !players[channel])
+        return 0;
+    return players[channel]->monitor;
 }
 
 int saveClip(uint8_t channel, uint8_t note, const char* path) {

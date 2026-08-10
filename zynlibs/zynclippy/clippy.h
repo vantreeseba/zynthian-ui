@@ -284,6 +284,19 @@ uint32_t getRecordedFrames();
 */
 uint16_t getRecordedBeats();
 
+/** @brief  Enable / disable live input monitoring for a player
+    @param  channel MIDI channel
+    @param  enable 1 to mix the player's capture input ports into its output, 0 to disable
+    @note   RT-safe flag - takes effect on the next process cycle
+*/
+void setInputMonitor(uint8_t channel, uint8_t enable);
+
+/** @brief  Get live input monitoring state of a player
+    @param  channel MIDI channel
+    @retval uint8_t 1 if monitoring enabled
+*/
+uint8_t getInputMonitor(uint8_t channel);
+
 /** @brief  Save a loaded clip's sample data to a wav file and set its path
     @param  channel MIDI channel
     @param  note MIDI note to trigger clip

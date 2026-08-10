@@ -1164,28 +1164,6 @@ def audio_autoconnect():
                 srcs = [f"{port}a", f"{port}b"]
             required_routes[dst_a].add(srcs[0])
             required_routes[dst_b].add(srcs[min(1, len(srcs) - 1)])
-            # Input monitoring: pass the record source through to wherever this chain's
-            # clippy player outputs go, so live input is heard like clip playback
-            if chain.monitor_mode == "on":
-                monitor = True
-            elif chain.monitor_mode == "auto":
-                recordings = getattr(clippy_proc.engine, "recordings", {})
-                monitor = any(proc == clippy_proc and rec["state"] in ("armed", "recording")
-                              for (proc, _), rec in recordings.items())
-            else:
-                monitor = False
-            if monitor:
-                out_a = f"clippy:out_{clippy_chan + 1:02d}a"
-                out_b = f"clippy:out_{clippy_chan + 1:02d}b"
-                monitored = 0
-                for sources in required_routes.values():
-                    if out_a in sources:
-                        sources.add(srcs[0])
-                        monitored += 1
-                    if out_b in sources:
-                        sources.add(srcs[min(1, len(srcs) - 1)])
-                        monitored += 1
-                logger.debug(f"Monitoring clip record source {srcs} of chain {chain.chain_id} into {monitored} destinations")
         except Exception as e:
             logger.warning(f"Failed to route clip-record source for chain {chain.chain_id}: {e}")
 

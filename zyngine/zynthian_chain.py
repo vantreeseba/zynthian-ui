@@ -73,7 +73,8 @@ class zynthian_chain:
         self.audio_out = []
         # Clip record source (clippy chains): None | source chain_id | list of 1-2 hw capture port indices
         self.capture_src = None
-        # Record source monitoring: "off" | "auto" (only while armed/recording) | "on"
+        # Record source monitoring: "off" | "auto" (only in record mode / while recording) | "on"
+        # Only affects hardware input sources - a source chain is already audible via its own strip
         self.monitor_mode = "off"
 
         self.status = ""  # Arbitary status text => THIS IS NOT USED AT ALL, RIGHT?

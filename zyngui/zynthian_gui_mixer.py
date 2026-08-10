@@ -2679,6 +2679,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
                     return True
         # Otherwise toggle session record mode
         self.state_manager.clip_record_mode = not self.state_manager.clip_record_mode
+        self.state_manager.update_clip_monitors()
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_MODE,
                               mode=self.state_manager.clip_record_mode)
         return True

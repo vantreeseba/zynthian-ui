@@ -1242,6 +1242,7 @@ class zynthian_state_manager:
 
         zynautoconnect.request_midi_connect()
         zynautoconnect.request_audio_connect(True)
+        self.update_clip_monitors()
 
         # Restore mute state
         self.mute(mute, 0)
@@ -2343,6 +2344,14 @@ class zynthian_state_manager:
     # ----------------------------------------------------------------------------
     # Launcher pad recording helpers (audio clip + MIDI pattern session record)
     # ----------------------------------------------------------------------------
+
+    def update_clip_monitors(self):
+        """Refresh live input monitoring of all clip launcher chains"""
+
+        for chain in self.chain_manager.chains.values():
+            proc = chain.get_clippy_processor()
+            if proc is not None and proc.engine:
+                proc.engine.update_monitor(proc)
 
     def start_record_metronome(self):
         """Force the metronome audible while a clip/pattern recording is in flight"""

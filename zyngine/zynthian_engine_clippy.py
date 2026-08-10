@@ -111,6 +111,9 @@ class zynthian_engine_clippy(zynthian_engine):
         self.libclippy.getRecordedFrames.restype = ctypes.c_uint32
         self.libclippy.getRecordedBeats.restype = ctypes.c_uint16
         self.libclippy.saveClip.argtypes = [ctypes.c_uint8, ctypes.c_uint8, ctypes.c_char_p]
+        self.libclippy.setInputMonitor.argtypes = [ctypes.c_uint8, ctypes.c_uint8]
+        self.libclippy.setInputMonitor.restype = None
+        self.libclippy.getInputMonitor.restype = ctypes.c_uint8
         self.jackname = self.libclippy.getJackname().decode("utf-8")
         self.zynseq.clippy = self
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TEMPO, self.start_tempo_timer)
@@ -626,7 +629,7 @@ class zynthian_engine_clippy(zynthian_engine):
             "state": "armed", "path": path, "tempo": tempo, "bpb": bpb, "channels": channels}
         self.libseq.setPlayState(self.zynseq.scene, phrase, processor.midi_chan, zynseq.SEQ_STARTING_RECORD)
         self.state_manager.start_record_metronome()
-        self.update_monitor_routing(processor)
+        self.update_monitor(processor)
         self.set_record_zctrl(processor, 1)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                               chan=processor.midi_chan, phrase=phrase, state=1)
@@ -687,7 +690,7 @@ class zynthian_engine_clippy(zynthian_engine):
         self.zynseq.set_sequence_param(self.zynseq.scene, phrase, processor.midi_chan, "name", filename)
         self.libseq.updateSequenceInfo()
         rec["state"] = "saving"
-        self.update_monitor_routing(processor)
+        self.update_monitor(processor)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                               chan=processor.midi_chan, phrase=phrase, state=3)
         Thread(target=self._save_recording, args=(processor, phrase, clip_channel, note, path),
@@ -717,20 +720,34 @@ class zynthian_engine_clippy(zynthian_engine):
             return
         self.libclippy.disarmRecord()
         self.state_manager.stop_record_metronome()
-        self.update_monitor_routing(processor)
+        self.update_monitor(processor)
         self.set_record_zctrl(processor, 0)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                               chan=processor.midi_chan, phrase=phrase, state=0)
 
-    def update_monitor_routing(self, processor):
-        """Reconnect the audio graph so 'auto' input monitoring follows record state"""
+    def update_monitor(self, processor):
+        """Set clippy live input monitoring for a processor per its chain's monitor mode
+
+        on: always monitor
+        auto: monitor while session record mode is enabled or a recording is armed/in flight
+        Only hardware input sources monitor - a source chain is audible via its own strip
+        """
 
         try:
             chain = self.state_manager.chain_manager.get_chain(processor.chain_id)
-            if chain and chain.monitor_mode == "auto" and chain.capture_src is not None:
-                zynautoconnect.request_audio_connect(True)
-        except Exception:
-            pass
+            enable = 0
+            if chain and isinstance(chain.capture_src, list):
+                if chain.monitor_mode == "on":
+                    enable = 1
+                elif chain.monitor_mode == "auto":
+                    if self.state_manager.clip_record_mode:
+                        enable = 1
+                    elif any(proc == processor and rec["state"] in ("armed", "recording")
+                             for (proc, _), rec in list(self.recordings.items())):
+                        enable = 1
+            self.libclippy.setInputMonitor(processor.midi_chan - 16, enable)
+        except Exception as e:
+            logging.warning(f"Failed to update clip input monitoring => {e}")
 
     def set_record_zctrl(self, processor, value):
         try:
