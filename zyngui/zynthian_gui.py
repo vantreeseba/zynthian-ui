@@ -1441,6 +1441,9 @@ class zynthian_gui:
         else:
             self.cuia_toggle_audio_record()
 
+    def cuia_toggle_session_record(self, params=None):
+        self.state_manager.toggle_session_record()
+
     def cuia_stop(self, params=None):
         if self.get_alt_mode():
             self.cuia_stop_midi_play()

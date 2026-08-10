@@ -512,13 +512,6 @@ class zynthian_widget_audio_file(zynthian_widget_base.zynthian_widget_base):
             except Exception as e:
                 logging.error(f"Can't get clip audio values for clip {self.clip_info} => {e}")
 
-    def cuia_toggle_record(self, param=None):
-        # Handle transport for clippy => arm / punch-out a bar-quantized clip recording
-        if self.clip_info:
-            self.processor.engine.toggle_clip_record(self.processor, self.clip_info[1])
-            return True
-        return False
-
     def cuia_stop(self, param=None):
         # Handle transport for clippy
         if self.clip_info:

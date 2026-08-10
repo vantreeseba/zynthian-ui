@@ -478,7 +478,7 @@ class zynthian_gui_base(tkinter.Frame):
                     self.status_seq_play, state=tkinter.HIDDEN)
 
             # Display clip session-record mode flag
-            if self.state_manager.clip_record_mode:
+            if self.state_manager.session_record_mode:
                 self.status_canvas.itemconfig(
                     self.status_clip_rec_box, state=tkinter.NORMAL)
                 self.status_canvas.itemconfig(

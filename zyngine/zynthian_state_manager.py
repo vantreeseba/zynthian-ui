@@ -152,7 +152,7 @@ class zynthian_state_manager:
         self.ctrldev_manager = None
         self.audio_player = None
         self.aubio_in = [1, 2]  # List of aubio inputs
-        self.clip_record_mode = False  # True when launcher pads arm clip recording (Ableton session record)
+        self.session_record_mode = False  # True when pad presses arm clip recording (Ableton session record)
         self.midi_record_pad = None  # (phrase, midi_chan) of launcher pad capturing MIDI input, None when idle
         self.record_metronome_depth = 0  # Count of in-flight recordings forcing the metronome on
         self.saved_metronome_mode = None  # Metronome mode to restore when recordings finish
@@ -2352,6 +2352,14 @@ class zynthian_state_manager:
             proc = chain.get_clippy_processor()
             if proc is not None and proc.engine:
                 proc.engine.update_monitor(proc)
+
+    def toggle_session_record(self):
+        """Toggle global session record mode - pad presses record into empty clips while enabled"""
+
+        self.session_record_mode = not self.session_record_mode
+        zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_MODE,
+                              mode=self.session_record_mode)
+        return self.session_record_mode
 
     def start_record_metronome(self):
         """Force the metronome audible while a clip/pattern recording is in flight"""

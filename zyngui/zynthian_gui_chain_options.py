@@ -230,7 +230,7 @@ class zynthian_gui_chain_options(zynthian_gui_selector_info):
         options[(checked if mm == "off" else unchecked) + "Off"] = ["off",
             ["Never pass the record source through to this chain's output.", "audio_input.png"]]
         options[(checked if mm == "auto" else unchecked) + "Auto"] = ["auto",
-            ["Hear the record source while this track's record arm is on, session record mode is enabled, or a clip recording is armed or in progress.", "audio_input.png"]]
+            ["Hear the record source while this track's record arm is on, or a clip recording is armed or in progress.", "audio_input.png"]]
         options[(checked if mm == "on" else unchecked) + "On"] = ["on",
             ["Always hear the record source through this chain, e.g. to play live over looping clips.\n\nOnly affects hardware input sources: a source chain is already audible through its own strip.", "audio_input.png"]]
         self.zyngui.screens['option'].config("Monitor record source", options, self.set_monitor_mode)

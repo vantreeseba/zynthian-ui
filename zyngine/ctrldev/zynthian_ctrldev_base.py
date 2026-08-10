@@ -473,12 +473,12 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
             if self.state_manager.midi_record_pad == (phrase, midi_chan):
                 self.state_manager.stop_pad_midi_record()
                 return
-            if self.state_manager.clip_record_mode and self.state_manager.toggle_pad_midi_record(phrase, midi_chan):
+            if self.state_manager.session_record_mode and self.state_manager.toggle_pad_midi_record(phrase, midi_chan):
                 return
         if midi_chan is not None and 15 < midi_chan < 32:
             state = self.zynseq.libseq.getPlayState(self.zynseq.scene, phrase, midi_chan)
             record_state = state in (zynseq.SEQ_RECORDING, zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD)
-            if record_state or self.state_manager.clip_record_mode:
+            if record_state or self.state_manager.session_record_mode:
                 try:
                     chain_id = self.chain_manager.get_chain_ids_by_midi_chan(midi_chan)[0]
                     proc = self.chain_manager.chains[chain_id].get_clippy_processor()
