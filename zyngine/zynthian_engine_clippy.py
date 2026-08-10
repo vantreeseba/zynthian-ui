@@ -750,6 +750,15 @@ class zynthian_engine_clippy(zynthian_engine):
                     elif any(proc == processor and rec["state"] in ("armed", "recording")
                              for (proc, _), rec in list(self.recordings.items())):
                         enable = 1
+            armed = None
+            if chain and chain.zynmixer_proc:
+                try:
+                    armed = chain.zynmixer_proc.controllers_dict["record"].value
+                except Exception:
+                    armed = "missing"
+            logging.info(f"Clippy monitor: ch{processor.midi_chan - 16} mode={getattr(chain, 'monitor_mode', None)} "
+                         f"src={getattr(chain, 'capture_src', None)} arm={armed} "
+                         f"rec_mode={self.state_manager.clip_record_mode} => enable={enable}")
             self.libclippy.setInputMonitor(processor.midi_chan - 16, enable)
         except Exception as e:
             logging.warning(f"Failed to update clip input monitoring => {e}")
@@ -758,6 +767,7 @@ class zynthian_engine_clippy(zynthian_engine):
         """Refresh monitoring when a track's record arm changes"""
 
         if symbol == "record":
+            logging.info(f"Clippy monitor: record arm changed (chan={chan}, value={value}, mixbus={mixbus})")
             self.state_manager.update_clip_monitors()
 
     def set_record_zctrl(self, processor, value):
