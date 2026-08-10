@@ -337,6 +337,16 @@ class zynthian_gui_base(tkinter.Frame):
             outline="",
             state=tkinter.HIDDEN)
 
+        # Record quantize: magnet icon while input snap is enabled
+        self.status_rec_quantize = self.status_canvas.create_text(
+            int(self.status_fs * 9.4),
+            self.status_h - 2,
+            anchor=tkinter.SW,
+            fill=zynthian_gui_config.color_status_play_seq,
+            font=("forkawesome", self.status_fs),
+            text="",
+            state=tkinter.HIDDEN)
+
         self.status_midi = self.status_canvas.create_text(
             self.status_l,
             self.status_h - 2,
@@ -488,6 +498,14 @@ class zynthian_gui_base(tkinter.Frame):
                     self.status_clip_rec_box, state=tkinter.HIDDEN)
                 self.status_canvas.itemconfig(
                     self.status_clip_rec, state=tkinter.HIDDEN)
+
+            # Display record quantize flag (magnet while input snap is on)
+            if self.state_manager.record_quantize_enabled:
+                self.status_canvas.itemconfig(
+                    self.status_rec_quantize, state=tkinter.NORMAL)
+            else:
+                self.status_canvas.itemconfig(
+                    self.status_rec_quantize, state=tkinter.HIDDEN)
 
             # Display MIDI activity flag
             if self.state_manager.status_midi:

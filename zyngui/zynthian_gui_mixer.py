@@ -2014,12 +2014,13 @@ class zynthian_gui_mixer(zynthian_gui_base):
         if name:
             title += f": {name}"
         #options["> Phrase Options"] = None
-        options[f"⏺ Session record ({'ON' if self.state_manager.session_record_mode else 'OFF'})"] = None
+        # A None value would render as an unselectable header row => use True
+        options[f"⏺ Session record ({'ON' if self.state_manager.session_record_mode else 'OFF'})"] = True
         if self.state_manager.record_quantize_enabled:
             rq_label = f"1/{self.state_manager.record_quantize}"
         else:
             rq_label = "OFF"
-        options[f"Record quantize ({rq_label})"] = None
+        options[f"Record quantize ({rq_label})"] = True
         if repeat == 0:
             options["Duration (DISABLED)"] = repeat
         else:
