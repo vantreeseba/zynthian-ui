@@ -153,6 +153,9 @@ class zynthian_state_manager:
         self.audio_player = None
         self.aubio_in = [1, 2]  # List of aubio inputs
         self.clip_record_mode = False  # True when launcher pads arm clip recording (Ableton session record)
+        self.midi_record_pad = None  # (phrase, midi_chan) of launcher pad capturing MIDI input, None when idle
+        self.record_metronome_depth = 0  # Count of in-flight recordings forcing the metronome on
+        self.saved_metronome_mode = None  # Metronome mode to restore when recordings finish
 
         # List of lists [rate, cb, schedule] for registered regularly repeating callbacks
         self.slow_update_callbacks = []
@@ -295,6 +298,7 @@ class zynthian_state_manager:
         """
 
         self.mute()
+        self.stop_pad_midi_record()
         # self.zynseq.transport_stop("ALL")
         self.zynseq.libseq.stop()
         if zynseq:
@@ -1092,6 +1096,7 @@ class zynthian_state_manager:
         """
 
         self.start_busy("load snapshot", "loading snapshot")
+        self.stop_pad_midi_record()
         try:
             with open(fpath, "r") as fh:
                 json = fh.read()
@@ -2328,6 +2333,82 @@ class zynthian_state_manager:
             self.stop_midi_record()
         else:
             self.start_midi_record()
+
+    # ----------------------------------------------------------------------------
+    # Launcher pad recording helpers (audio clip + MIDI pattern session record)
+    # ----------------------------------------------------------------------------
+
+    def start_record_metronome(self):
+        """Force the metronome audible while a clip/pattern recording is in flight"""
+
+        self.record_metronome_depth += 1
+        if self.record_metronome_depth == 1:
+            mode = self.zynseq.libseq.getMetronomeMode()
+            # Modes OFF(0), INTRO(3) and SILENT(5) produce no click while the
+            # transport rolls => switch to AUTO(1) for the duration of the recording
+            if mode in (0, 3, 5):
+                self.saved_metronome_mode = mode
+                self.zynseq.libseq.setMetronomeMode(1)
+
+    def stop_record_metronome(self):
+        """Restore the metronome mode configured before recording started"""
+
+        if self.record_metronome_depth > 0:
+            self.record_metronome_depth -= 1
+            if self.record_metronome_depth == 0 and self.saved_metronome_mode is not None:
+                self.zynseq.libseq.setMetronomeMode(self.saved_metronome_mode)
+                self.saved_metronome_mode = None
+
+    def toggle_pad_midi_record(self, phrase, midi_chan):
+        """ Toggle live MIDI capture into the pattern of a launcher pad
+
+        phrase: Phrase (launcher row) index
+        midi_chan: MIDI channel of the pad's chain (launcher columns 0-15)
+        Returns: True on success
+
+        Starts the pad playing (looped) and records incoming MIDI into its
+        pattern until toggled again. Only one pad can record at a time =>
+        starting another pad moves the recording there.
+        """
+
+        if self.midi_record_pad == (phrase, midi_chan):
+            self.stop_pad_midi_record()
+            return True
+        if midi_chan is None or midi_chan > 15:
+            return False
+        self.stop_pad_midi_record()
+        libseq = self.zynseq.libseq
+        scene = self.zynseq.scene
+        if not libseq.selectSequence(scene, phrase, midi_chan):
+            return False
+        pattern = libseq.getPattern(scene, phrase, midi_chan, 0, 0)
+        if pattern == 0xFFFFFFFF:
+            return False
+        libseq.selectPattern(pattern)
+        # Enable a disabled pad so the captured pattern loops
+        try:
+            if self.zynseq.state["scenes"][scene]["phrases"][phrase]["sequences"][midi_chan]["repeat"] == 0:
+                self.zynseq.set_sequence_param(scene, phrase, midi_chan, "repeat", 255)
+        except Exception:
+            pass
+        libseq.enableMidiRecord(True)
+        self.midi_record_pad = (phrase, midi_chan)
+        if libseq.getPlayState(scene, phrase, midi_chan) in (zynseq.SEQ_STOPPED, zynseq.SEQ_STOPPING, zynseq.SEQ_STOPPING_SYNC):
+            libseq.togglePlayState(scene, phrase, midi_chan)
+        self.start_record_metronome()
+        zynsigman.send_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, phrase=phrase, chan=midi_chan)
+        return True
+
+    def stop_pad_midi_record(self):
+        """Stop live MIDI capture into a launcher pad (the pad keeps playing)"""
+
+        if self.midi_record_pad is None:
+            return
+        phrase, midi_chan = self.midi_record_pad
+        self.zynseq.libseq.enableMidiRecord(False)
+        self.midi_record_pad = None
+        self.stop_record_metronome()
+        zynsigman.send_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, phrase=phrase, chan=midi_chan)
 
     def set_tempo(self, tempo):
         self.zynseq.set_tempo(tempo)

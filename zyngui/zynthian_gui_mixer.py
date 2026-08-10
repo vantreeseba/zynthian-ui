@@ -415,6 +415,10 @@ class zynthian_gui_launcher_pad():
                         color_text = zynthian_gui_config.PAD_COLOUR_STATE_DISABLED
                         color_state = zynthian_gui_config.PAD_COLOUR_STATE_DISABLED
                         state_text = "?"
+                if self.gui_mixer.state_manager.midi_record_pad == (self.phrase, self.chain.midi_chan):
+                    # Live MIDI capture into this pad's pattern
+                    color_state = zynthian_gui_config.PAD_COLOUR_RECORDING
+                    state_text = "⏺"
         except:
             #logging.exception(traceback.format_exc())
             title = ""
@@ -476,6 +480,21 @@ class zynthian_gui_launcher_pad():
                     return
                 if record_state:
                     return
+                if proc and self.chain.capture_src is None:
+                    # No record source configured => ask for one, then arm
+                    self.gui_mixer.prompt_record_source(self.chain, proc, self.phrase)
+                    return
+        elif midi_chan < 16 and self.chain.chain_id:
+            # MIDI pad: in record mode capture incoming MIDI into the pad's pattern
+            sm = self.gui_mixer.state_manager
+            if sm.midi_record_pad == (self.phrase, midi_chan):
+                sm.stop_pad_midi_record()
+                self.gui_mixer.set_title("MIDI recording stopped", None, None, 2)
+                return
+            if sm.clip_record_mode and sm.toggle_pad_midi_record(self.phrase, midi_chan):
+                self.gui_mixer.set_title(f"⏺ Recording MIDI: {self.chain.get_name()} · clip {self.phrase + 1}",
+                                         zynthian_gui_config.color_status_record, None, 3)
+                return
         self.gui_mixer.zynseq.libseq.togglePlayState(self.gui_mixer.zynseq.scene, self.phrase, midi_chan)
 
     def on_clip_bold_press(self):
@@ -1449,6 +1468,8 @@ class zynthian_gui_mixer(zynthian_gui_base):
             zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TIMESIG, self.set_bpb)
             zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.launcher_play_state_cb)
             zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_STATE, self.refresh_launchers)
+            zynsigman.register_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE, self.clip_rec_state_toast_cb)
+            zynsigman.register_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_MODE, self.clip_rec_mode_toast_cb)
 
         # Setup pattern editor reference
         self.pated = self.zyngui.screens["pattern_editor"]
@@ -1477,6 +1498,8 @@ class zynthian_gui_mixer(zynthian_gui_base):
             zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TIMESIG, self.set_bpb)
             zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.launcher_play_state_cb)
             zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_STATE, self.refresh_launchers)
+            zynsigman.unregister(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE, self.clip_rec_state_toast_cb)
+            zynsigman.unregister(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_MODE, self.clip_rec_mode_toast_cb)
             super().hide()
 
     def set_tempo(self, tempo=None):
@@ -1672,6 +1695,32 @@ class zynthian_gui_mixer(zynthian_gui_base):
             self.chain_strips[pos].draw_control("record")
         except:
             pass
+
+    def clip_rec_state_toast_cb(self, chan=None, phrase=None, state=None):
+        """Show clip recording progress in the topbar title"""
+
+        if not self.launcher_mode:
+            return
+        try:
+            chain_id = self.chain_manager.get_chain_ids_by_midi_chan(chan)[0]
+            name = self.chain_manager.chains[chain_id].get_name()
+        except Exception:
+            name = f"chan {chan}"
+        clip = f"{name} · clip {phrase + 1}"
+        if state == 1:
+            self.set_title(f"⏺ Armed: {clip} — recording at next bar", zynthian_gui_config.color_status_record, None, 4)
+        elif state == 2:
+            self.set_title(f"⏺ Recording: {clip}", zynthian_gui_config.color_status_record, None, 4)
+        elif state == 3:
+            self.set_title(f"Saving: {clip}", None, None, 2)
+
+    def clip_rec_mode_toast_cb(self, mode=None):
+        if not self.launcher_mode:
+            return
+        if mode:
+            self.set_title("⏺ Session record ON — pads arm recording", zynthian_gui_config.color_status_record, None, 3)
+        else:
+            self.set_title("Session record OFF", None, None, 2)
 
     def launcher_play_state_cb(self, phrase, chan):
         if not self.launcher_mode:
@@ -2017,14 +2066,6 @@ class zynthian_gui_mixer(zynthian_gui_base):
         else:
             options[f"Rename"] = ""
         options["> EDIT"] = None
-        try:
-            clippy_proc = self.highlighted_strip.chain.get_clippy_processor()
-            has_clip = bool(clippy_proc.controllers_dict[f"file {phrase + 1}"].get_value())
-        except Exception:
-            has_clip = False
-        if has_clip:
-            options["Clear clip"] = phrase
-            options["Delete clip + audio file"] = phrase
         options["Insert phrase"] = phrase
         options["Clone phrase"] = phrase
         if self.zynseq.phrases > 1:
@@ -2086,10 +2127,6 @@ class zynthian_gui_mixer(zynthian_gui_base):
             self.zyngui.show_screen("launcher")
         elif option.startswith("Delete phrase"):
             self.zyngui.show_confirm(f"Remove phrase {params + 1}?", self.remove_phrase, params)
-        elif option == "Clear clip":
-            self.zyngui.show_confirm("Clear this clip pad?\n(The audio file is kept on disk)", self.clear_clip_confirmed, (params, False))
-        elif option == "Delete clip + audio file":
-            self.zyngui.show_confirm("Clear this clip pad and DELETE its audio file from disk?", self.clear_clip_confirmed, (params, True))
         elif option.startswith("Move phrase"):
             self.moving_phrase = True
             self.zyngui.show_screen("launcher")
@@ -2231,9 +2268,75 @@ class zynthian_gui_mixer(zynthian_gui_base):
             return True
         if type(chain.midi_chan) is int and chain.midi_chan < zynseq.PHRASE_CHANNEL:
             if chain.midi_chan > 15:
-                return self.edit_audio_clip(chain, self.zynseq.phrase)
+                return self.clip_menu(chain, self.zynseq.phrase)
             else:
                 return self.edit_pattern()
+
+    def get_record_source_name(self, chain):
+        """Get a display name for a chain's clip record source"""
+
+        cs = chain.capture_src
+        if cs is None:
+            return "NONE"
+        if isinstance(cs, list):
+            return "Input " + "+".join(str(i) for i in cs)
+        try:
+            return self.chain_manager.chains[cs].get_name()
+        except Exception:
+            return "?"
+
+    def clip_menu(self, chain, phrase):
+        """Per-pad options menu for a clippy (audio clip) pad"""
+
+        proc = chain.get_clippy_processor()
+        if proc is None:
+            return False
+        try:
+            has_clip = bool(proc.controllers_dict[f"file {phrase + 1}"].get_value())
+        except Exception:
+            has_clip = False
+        state = self.zynseq.libseq.getPlayState(self.zynseq.scene, phrase, chain.midi_chan)
+        params = (chain, proc, phrase)
+        options = {}
+        options["> EDIT"] = params
+        if state in (zynseq.SEQ_RECORDING, zynseq.SEQ_STOPPING_RECORD):
+            options["Punch out (stop recording)"] = params
+        elif state == zynseq.SEQ_STARTING_RECORD:
+            options["Cancel record arm"] = params
+        else:
+            options["Record clip"] = params
+        options[f"Record source ({self.get_record_source_name(chain)})"] = params
+        if has_clip:
+            options["Clear clip"] = params
+            options["Delete clip + audio file"] = params
+        self.zyngui.screens['option'].config(f"Clip options: {chain.get_name()} · {phrase + 1}",
+                                             options, self.clip_menu_cb)
+        self.zyngui.show_screen('option')
+        return True
+
+    def clip_menu_cb(self, option, params):
+        chain, proc, phrase = params
+        if option == "> EDIT":
+            self.edit_audio_clip(chain, phrase)
+        elif option == "Record clip":
+            if chain.capture_src is None:
+                self.prompt_record_source(chain, proc, phrase)
+            else:
+                proc.engine.toggle_clip_record(proc, phrase)
+                self.zyngui.show_screen("launcher")
+        elif option.startswith("Punch out") or option.startswith("Cancel record"):
+            proc.engine.toggle_clip_record(proc, phrase)
+            self.zyngui.show_screen("launcher")
+        elif option.startswith("Record source"):
+            screen = self.zyngui.screens['chain_options']
+            screen.set_chain(chain)
+            screen.select_record_source(cb=lambda value: self.zyngui.show_screen("launcher"))
+        elif option == "Clear clip":
+            self.zyngui.show_confirm("Clear this clip pad?\n(The audio file is kept on disk)",
+                                     self.clear_clip_confirmed, (phrase, False))
+        elif option == "Delete clip + audio file":
+            self.zyngui.show_confirm("Clear this clip pad and DELETE its audio file from disk?",
+                                     self.clear_clip_confirmed, (phrase, True))
 
     def rename_phrase(self, name):
         self.zynseq.set_sequence_param(self.zynseq.scene, self.zynseq.phrase, zynseq.PHRASE_CHANNEL, "name", name)
@@ -2525,7 +2628,12 @@ class zynthian_gui_mixer(zynthian_gui_base):
         # In launcher view, the REC button drives clip (session) recording instead of the global audio recorder
         if not self.launcher_mode:
             return False
-        # A clip recording in flight => punch out at the next bar (or cancel a pending arm)
+        # A recording in flight => stop MIDI capture and punch out clips at the next bar
+        handled = False
+        if self.state_manager.midi_record_pad is not None:
+            self.state_manager.stop_pad_midi_record()
+            self.set_title("MIDI recording stopped", None, None, 2)
+            handled = True
         for chain in self.zyngui.chain_manager.chains.values():
             proc = chain.get_clippy_processor()
             if proc is None:
@@ -2533,8 +2641,10 @@ class zynthian_gui_mixer(zynthian_gui_base):
             for (rec_proc, rec_phrase), rec in list(proc.engine.recordings.items()):
                 if rec["state"] != "saving":
                     proc.engine.toggle_clip_record(rec_proc, rec_phrase)
-                    return True
+                    handled = True
             break  # Single shared clippy engine => recordings already covers all chains
+        if handled:
+            return True
         # Selected pad is an empty clip => punch in (allows pedal-triggered recording)
         phrase = self.zynseq.phrase
         if self.highlighted_strip and phrase < self.zynseq.phrases:
@@ -2546,13 +2656,39 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 except Exception:
                     empty = False
                 state = self.zynseq.libseq.getPlayState(self.zynseq.scene, phrase, proc.midi_chan)
-                if empty and state == zynseq.SEQ_STOPPED and proc.engine.toggle_clip_record(proc, phrase):
+                if empty and state == zynseq.SEQ_STOPPED:
+                    if chain.capture_src is None:
+                        # No record source configured => ask for one, then arm
+                        self.prompt_record_source(chain, proc, phrase)
+                        return True
+                    if proc.engine.toggle_clip_record(proc, phrase):
+                        return True
+            elif chain and chain.chain_id and type(chain.midi_chan) is int and chain.midi_chan < 16:
+                # Selected pad is an empty MIDI pattern => start recording MIDI into it
+                state = self.zynseq.libseq.getPlayState(self.zynseq.scene, phrase, chain.midi_chan)
+                if state == zynseq.SEQ_STOPPED \
+                        and self.zynseq.libseq.isEmpty(self.zynseq.scene, phrase, chain.midi_chan) \
+                        and self.state_manager.toggle_pad_midi_record(phrase, chain.midi_chan):
+                    self.set_title(f"⏺ Recording MIDI: {chain.get_name()} · clip {phrase + 1}",
+                                   zynthian_gui_config.color_status_record, None, 3)
                     return True
         # Otherwise toggle session record mode
         self.state_manager.clip_record_mode = not self.state_manager.clip_record_mode
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_MODE,
                               mode=self.state_manager.clip_record_mode)
         return True
+
+    def prompt_record_source(self, chain, proc, phrase):
+        """Ask for a record source, then arm the requested clip recording"""
+
+        screen = self.zyngui.screens['chain_options']
+        screen.set_chain(chain)
+        screen.select_record_source(cb=lambda value: self.record_source_selected(proc, phrase, value))
+
+    def record_source_selected(self, proc, phrase, value):
+        self.zyngui.show_screen("launcher")
+        if value is not None:
+            proc.engine.toggle_clip_record(proc, phrase)
 
     def setup_zynpots(self):
         if zynthian_gui_config.num_zynpots > 3:

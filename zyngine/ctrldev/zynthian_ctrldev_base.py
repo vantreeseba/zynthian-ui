@@ -466,8 +466,15 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
     def toggle_pad(self, phrase, midi_chan):
         """Launch/stop the pad at phrase,midi_chan, routing clippy pads through
         the clip recorder when record mode is enabled or the pad is already in
-        a record state (togglePlayState does not understand record states)
+        a record state (togglePlayState does not understand record states).
+        MIDI pads capture incoming MIDI into their pattern in record mode.
         """
+        if midi_chan is not None and midi_chan < 16:
+            if self.state_manager.midi_record_pad == (phrase, midi_chan):
+                self.state_manager.stop_pad_midi_record()
+                return
+            if self.state_manager.clip_record_mode and self.state_manager.toggle_pad_midi_record(phrase, midi_chan):
+                return
         if midi_chan is not None and 15 < midi_chan < 32:
             state = self.zynseq.libseq.getPlayState(self.zynseq.scene, phrase, midi_chan)
             record_state = state in (zynseq.SEQ_RECORDING, zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD)

@@ -172,7 +172,13 @@ class zynthian_gui_chain_options(zynthian_gui_selector_info):
     def do_export_chain(self, path):
         self.zyngui.state_manager.export_chain(path, self.chain.chain_id)
 
-    def select_record_source(self):
+    def select_record_source(self, cb=None):
+        """ Show the record source picker
+
+        cb: Optional callback invoked with the chosen value after selection
+        """
+
+        self.record_source_cb = cb
         checked = "☒ "
         unchecked = "☐ "
         cs = self.chain.capture_src
@@ -202,6 +208,10 @@ class zynthian_gui_chain_options(zynthian_gui_selector_info):
     def set_record_source(self, label, value):
         self.chain.capture_src = value
         zynautoconnect.request_audio_connect(True)
+        cb = getattr(self, "record_source_cb", None)
+        if cb:
+            self.record_source_cb = None
+            cb(value)
 
     def remove_chain(self, params=None):
         self.zyngui.show_confirm("Do you really want to remove this chain?",

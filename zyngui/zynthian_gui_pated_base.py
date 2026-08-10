@@ -467,6 +467,8 @@ class zynthian_gui_pated_base(zynthian_gui_base):
 
     # Function to show GUI
     def build_view(self):
+        # Launcher pad MIDI capture shares the zynseq recorder and edited pattern => release it
+        self.zyngui.state_manager.stop_pad_midi_record()
         self.zynseq.libseq.selectSequence(self.zynseq.scene, self.phrase, self.sequence)
         # Temporarily set sequence to loop - do not update cache which is used to restore configured state on hide
         self.zynseq.libseq.setSequenceRepeat(self.zynseq.scene, self.phrase, self.sequence, 255)

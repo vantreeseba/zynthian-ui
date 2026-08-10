@@ -625,6 +625,7 @@ class zynthian_engine_clippy(zynthian_engine):
         self.recordings[(processor, phrase)] = {
             "state": "armed", "path": path, "tempo": tempo, "bpb": bpb, "channels": channels}
         self.libseq.setPlayState(self.zynseq.scene, phrase, processor.midi_chan, zynseq.SEQ_STARTING_RECORD)
+        self.state_manager.start_record_metronome()
         self.set_record_zctrl(processor, 1)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                               chan=processor.midi_chan, phrase=phrase, state=1)
@@ -699,6 +700,7 @@ class zynthian_engine_clippy(zynthian_engine):
             logging.error(f"Failed to save recorded clip => {e}")
         self.libclippy.disarmRecord()
         self.recordings.pop((processor, phrase), None)
+        self.state_manager.stop_record_metronome()
         self.set_record_zctrl(processor, 0)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                               chan=processor.midi_chan, phrase=phrase, state=0)
@@ -712,6 +714,7 @@ class zynthian_engine_clippy(zynthian_engine):
         if rec is None:
             return
         self.libclippy.disarmRecord()
+        self.state_manager.stop_record_metronome()
         self.set_record_zctrl(processor, 0)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                               chan=processor.midi_chan, phrase=phrase, state=0)
