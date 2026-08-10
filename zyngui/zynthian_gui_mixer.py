@@ -2501,13 +2501,37 @@ class zynthian_gui_mixer(zynthian_gui_base):
         return False
 
     def cuia_toggle_record(self, params=None):
-        # In launcher view, toggle clip (session) record mode instead of the global audio recorder
-        if self.launcher_mode:
-            self.state_manager.clip_record_mode = not self.state_manager.clip_record_mode
-            zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_MODE,
-                                  mode=self.state_manager.clip_record_mode)
-            return True
-        return False
+        # In launcher view, the REC button drives clip (session) recording instead of the global audio recorder
+        if not self.launcher_mode:
+            return False
+        # A clip recording in flight => punch out at the next bar (or cancel a pending arm)
+        for chain in self.zyngui.chain_manager.chains.values():
+            proc = chain.get_clippy_processor()
+            if proc is None:
+                continue
+            for (rec_proc, rec_phrase), rec in list(proc.engine.recordings.items()):
+                if rec["state"] != "saving":
+                    proc.engine.toggle_clip_record(rec_proc, rec_phrase)
+                    return True
+            break  # Single shared clippy engine => recordings already covers all chains
+        # Selected pad is an empty clip => punch in (allows pedal-triggered recording)
+        phrase = self.zynseq.phrase
+        if self.highlighted_strip and phrase < self.zynseq.phrases:
+            chain = self.highlighted_strip.chain
+            proc = chain.get_clippy_processor() if chain else None
+            if proc:
+                try:
+                    empty = not proc.controllers_dict[f"file {phrase + 1}"].get_value()
+                except Exception:
+                    empty = False
+                state = self.zynseq.libseq.getPlayState(self.zynseq.scene, phrase, proc.midi_chan)
+                if empty and state == zynseq.SEQ_STOPPED and proc.engine.toggle_clip_record(proc, phrase):
+                    return True
+        # Otherwise toggle session record mode
+        self.state_manager.clip_record_mode = not self.state_manager.clip_record_mode
+        zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_MODE,
+                              mode=self.state_manager.clip_record_mode)
+        return True
 
     def setup_zynpots(self):
         if zynthian_gui_config.num_zynpots > 3:
