@@ -351,15 +351,24 @@ class zynthian_state_manager:
         self.zynseq.libseq.stop()
         if self.session_record_mode:
             self.toggle_session_record()
-        for chain in self.chain_manager.chains.values():
-            proc = chain.get_clippy_processor()
-            if proc is None:
-                continue
-            engine = proc.engine
-            for rec_proc, rec_phrase in list(engine.recordings.keys()):
-                engine.cleanup_recording(rec_proc, rec_phrase)
-            for phrase in range(self.zynseq.phrases):
-                engine.clear_clip(proc, phrase, delete_file=True)
+        clippy_procs = [chain.get_clippy_processor() for chain in self.chain_manager.chains.values()]
+        clippy_procs = [proc for proc in clippy_procs if proc is not None]
+        if clippy_procs:
+            engine = clippy_procs[0].engine
+            # Abort armed/in-flight recordings; entries in "saving" belong to their save thread
+            for (rec_proc, rec_phrase), rec in list(engine.recordings.items()):
+                if rec["state"] != "saving":
+                    engine.cleanup_recording(rec_proc, rec_phrase)
+            # Wait for saves to drain: clearing a pad mid-save would free buffers still being written
+            timeout = monotonic() + 3
+            while engine.recordings and monotonic() < timeout:
+                sleep(0.1)
+            for proc in clippy_procs:
+                # Iterate the file zctrls, not the phrase count: pads beyond the current
+                # phrase count keep their controllers (and clips) when phrases are removed
+                for symbol in list(proc.controllers_dict):
+                    if symbol.startswith("file "):
+                        proc.engine.clear_clip(proc, int(symbol[5:]) - 1, delete_file=True)
         self.clean(chains=False, zynseq=True)
         self.end_busy("session reset")
         self.busy.clear()

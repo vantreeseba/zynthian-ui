@@ -2666,12 +2666,24 @@ class zynthian_gui_mixer(zynthian_gui_base):
         chain = self.highlighted_strip.chain
         proc = chain.get_clippy_processor() if chain else None
         if proc:
+            try:
+                pad_empty = not proc.controllers_dict[f"file {phrase + 1}"].get_value()
+            except Exception:
+                pad_empty = True
+            if not pad_empty and not sm.session_record_mode:
+                # Re-recording over an existing clip only in session record mode
+                self.set_title("Pad has a clip - enable session record to re-record", None, None, 2)
+                return True
             if chain.capture_src is None:
                 # No record source configured => ask for one, then arm
                 self.prompt_record_source(chain, proc, phrase)
                 return True
             proc.engine.toggle_clip_record(proc, phrase)
         elif chain and chain.chain_id and type(chain.midi_chan) is int and chain.midi_chan < 16:
+            if not sm.session_record_mode and not self.zynseq.libseq.isEmpty(self.zynseq.scene, phrase, chain.midi_chan):
+                # Overdubbing an existing pattern only in session record mode
+                self.set_title("Pad has a pattern - enable session record to overdub", None, None, 2)
+                return True
             if sm.toggle_pad_midi_record(phrase, chain.midi_chan):
                 self.set_title(f"⏺ Recording MIDI: {chain.get_name()} · clip {phrase + 1}",
                                zynthian_gui_config.color_status_record, None, 3)

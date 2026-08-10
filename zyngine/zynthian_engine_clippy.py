@@ -483,15 +483,13 @@ class zynthian_engine_clippy(zynthian_engine):
         file_zctrl.set_value("", False)
         self.set_file(processor, phrase)
         if delete_file and fpath and os.path.isfile(fpath):
-            # Don't delete a file still referenced by another clip pad
+            # Don't delete a file still referenced by another clip pad, including pads
+            # beyond the current phrase count (their controllers survive phrase removal)
             for proc in self.processors:
-                for note in range(1, self.zynseq.phrases + 1):
-                    try:
-                        if proc.controllers_dict[f"file {note}"].value == fpath:
-                            logging.warning(f"Not deleting '{fpath}' => still used by another clip pad")
-                            return True
-                    except Exception:
-                        pass
+                for symbol, zctrl in proc.controllers_dict.items():
+                    if symbol.startswith("file ") and zctrl.value == fpath:
+                        logging.warning(f"Not deleting '{fpath}' => still used by another clip pad")
+                        return True
             try:
                 os.remove(fpath)
             except OSError as e:
