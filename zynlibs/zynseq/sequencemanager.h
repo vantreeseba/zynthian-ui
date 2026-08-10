@@ -184,6 +184,16 @@ class SequenceManager {
     */
     void stopGroup(uint8_t group);
 
+    /** @brief  Set maximum quantity of bars an open-ended clip recording may capture
+        @param  bars Quantity of bars (0 to disable safety cap)
+    */
+    void setMaxRecordBars(uint16_t bars);
+
+    /** @brief  Get sequence currently in a clippy record state
+        @retval Sequence* Pointer to sequence or nullptr if none recording
+    */
+    Sequence* getRecordingSequence();
+
     /** @brief  Get MIDI note number used to trigger sequence
         @param  phraseSeq phrase and sequence encoded into 32-bit word
         @retval uint8_t MIDI note number [0xFF for none]
@@ -390,5 +400,7 @@ class SequenceManager {
     // Note: Maps are used for patterns and sequences to allow addition and removal of sequences whilst maintaining consistent access to remaining instances
     std::map<uint32_t, Pattern*> m_mPatterns;  // Map of pattern pointers indexed by pattern number
     std::vector<Sequence*> m_vPlayingSequences; // Vector of pointers to currently playing sequences (used to optimise play control)
+    Sequence* m_pRecordingSequence = nullptr;   // Pointer to sequence in a clippy record state (only one at a time)
+    uint16_t m_nMaxRecordBars = 32;             // Maximum bars of open-ended clip recording before forced punch-out (0 = no cap)
     std::map<uint8_t, uint16_t> m_mTriggers;   // Map of phrase,sequence indexed by MIDI note triggers
 };

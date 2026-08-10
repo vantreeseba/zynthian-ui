@@ -27,7 +27,7 @@ import os
 import re
 import ctypes
 import logging
-from threading import Timer
+from threading import Timer, Thread
 from collections import deque
 
 import zynautoconnect
@@ -44,6 +44,14 @@ from zyngine.zynthian_controller import zynthian_controller
 MAX_BEATS = 256 # Maximum quantity of beats in a clip
 MAX_DURATION = 120 # Maximum audio duration to warp, in seconds
 MAX_FRAMES = 999999999 # Maximum number of frames
+
+# Clippy recorder states (mirrors REC_STATE in clippy.h)
+REC_IDLE = 0
+REC_ARMED = 1
+REC_RECORDING = 2
+REC_DONE = 3
+REC_ABORTED = 4
+REC_OVERFLOW = 5
 
 
 zctrl_symbols = ("file", "crop_start", "crop_end", "zoom", "gain", "warp", "beats", "mode", "beat_slice")
@@ -79,6 +87,8 @@ class zynthian_engine_clippy(zynthian_engine):
         self.samplerate = zynautoconnect.get_jackd_samplerate()
 
         self.monitors_dict = {}
+        # Live clip recordings in flight: (processor, phrase) => {state, path, tempo, bpb, channels}
+        self.recordings = {}
         self.custom_gui_fpath = "/zynthian/zynthian-ui/zyngui/zynthian_widget_audio_file.py"
 
         self.libclippy =  None
@@ -94,14 +104,24 @@ class zynthian_engine_clippy(zynthian_engine):
         self.libclippy.getGain.restype = ctypes.c_float
         self.libclippy.getJackname.restype = ctypes.c_char_p
         self.libclippy.getClipPath.restype = ctypes.c_char_p
+        self.libclippy.armRecord.argtypes = [ctypes.c_uint8, ctypes.c_uint8, ctypes.c_uint8, ctypes.c_float, ctypes.c_uint32]
+        self.libclippy.armRecord.restype = ctypes.c_uint8
+        self.libclippy.getRecordState.restype = ctypes.c_uint8
+        self.libclippy.getRecordChannel.restype = ctypes.c_uint8
+        self.libclippy.getRecordedFrames.restype = ctypes.c_uint32
+        self.libclippy.getRecordedBeats.restype = ctypes.c_uint16
+        self.libclippy.saveClip.argtypes = [ctypes.c_uint8, ctypes.c_uint8, ctypes.c_char_p]
         self.jackname = self.libclippy.getJackname().decode("utf-8")
         self.zynseq.clippy = self
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TEMPO, self.start_tempo_timer)
+        zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.on_seq_play_state)
 
     def stop(self):
         logging.info("Stopping Engine " + self.name)
         self.zynseq.clippy = None
         zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TEMPO, self.start_tempo_timer)
+        zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.on_seq_play_state)
+        self.recordings = {}
         self.libclippy.end()
 
     # ---------------------------------------------------------------------------
@@ -159,6 +179,9 @@ class zynthian_engine_clippy(zynthian_engine):
         phrase: Index of phrase to insert new phrase before
         """
 
+        if self.recordings:
+            logging.warning("Phrase operation blocked while recording a clip")
+            return
         for processor in self.processors:
             self.libclippy.insertClip(processor.midi_chan - 16, phrase)
             for idx in range(self.zynseq.phrases, phrase, -1):
@@ -177,6 +200,9 @@ class zynthian_engine_clippy(zynthian_engine):
         phrase: Index of phrase to remove
         """
 
+        if self.recordings:
+            logging.warning("Phrase operation blocked while recording a clip")
+            return
         for processor in self.processors:
             self.libclippy.removeClip(processor.midi_chan - 16, phrase)
             for idx in range(phrase + 1, self.zynseq.phrases + 1):
@@ -214,6 +240,9 @@ class zynthian_engine_clippy(zynthian_engine):
             forward: True to move forward, else move backwards
         """
 
+        if self.recordings:
+            logging.warning("Phrase operation blocked while recording a clip")
+            return
         for processor in self.processors:
             self.libclippy.nudgeClip(processor.midi_chan - 16, phrase, forward)
             phrase2 = phrase + 1 if forward else phrase - 1
@@ -236,6 +265,9 @@ class zynthian_engine_clippy(zynthian_engine):
             phrase_to: Index of phrase to copy to
         """
 
+        if self.recordings:
+            logging.warning("Clip copy blocked while recording a clip")
+            return
         #self.libclippy.insertClip(proc_to.midi_chan - 16, phrase_to)
 
         if self.set_state_pre_note(proc_to, phrase_to + 1):
@@ -263,8 +295,15 @@ class zynthian_engine_clippy(zynthian_engine):
         """
 
         note = phrase + 1
+        if (processor, phrase) in self.recordings:
+            # Clip is being recorded / saved => clippy already holds the audio in RAM
+            return
         file_zctrl = processor.controllers_dict[f"file {note}"]
         fpath = file_zctrl.value
+        if fpath and not os.path.exists(fpath):
+            logging.warning(f"Missing clip audio file '{fpath}' => clearing clip {note}")
+            file_zctrl.value = ""
+            fpath = ""
         if fpath:
             filename = os.path.basename(fpath)
 
@@ -445,6 +484,10 @@ class zynthian_engine_clippy(zynthian_engine):
         self.reload_timers.pop((processor, phrase), None)
 
     def start_tempo_timer(self, tempo=None):
+        if self.recordings:
+            # Defer rewarping whilst recording a clip. The recorded clip keeps its
+            # arm-time tempo; the bpm token in its filename warps it correctly later.
+            return
         # When synced to external clock => add some hysteresis to avoid spurious rewarping: +-3%
         if zynautoconnect.get_ext_clock_zmip() >= 0:
             # Calculate tempo average
@@ -483,6 +526,166 @@ class zynthian_engine_clippy(zynthian_engine):
                     self.set_file(proc, phrase)
             except:
                 continue
+
+    # ---------------------------------------------------------------
+    # Live clip recording (bar-quantized capture into a clip pad)
+    # ---------------------------------------------------------------
+
+    def get_record_info(self, processor, phrase):
+        """Get in-flight recording info for a clip or None if not recording"""
+        return self.recordings.get((processor, phrase))
+
+    def toggle_clip_record(self, processor=None, phrase=None):
+        """ Arm, cancel or punch-out a bar-quantized clip recording
+
+        processor: Clippy processor (default: selected)
+        phrase: Phrase index (default: selected)
+        Returns: True on success
+        """
+
+        if processor is None:
+            processor = self.selected_proc
+        if phrase is None:
+            phrase = self.selected_phrase
+        if processor is None:
+            return False
+        chan = processor.midi_chan
+        state = self.libseq.getPlayState(self.zynseq.scene, phrase, chan)
+        if state == zynseq.SEQ_STARTING_RECORD:
+            # Cancel arm => clock cleanup aborts the clippy recorder
+            self.libseq.setPlayState(self.zynseq.scene, phrase, chan, zynseq.SEQ_STOPPED)
+            return True
+        if state in (zynseq.SEQ_RECORDING, zynseq.SEQ_STOPPING_RECORD):
+            # Request punch-out at next bar / cancel a pending punch-out
+            self.libseq.toggleRecordState(self.zynseq.scene, phrase, chan)
+            return True
+        return self.arm_clip_record(processor, phrase)
+
+    def arm_clip_record(self, processor, phrase):
+        if self.recordings or self.libclippy.getRecordState() in (REC_ARMED, REC_RECORDING):
+            logging.warning("A clip recording is already in progress")
+            return False
+        chain = self.state_manager.chain_manager.get_chain(processor.chain_id)
+        if chain is None or chain.capture_src is None:
+            logging.warning("No record source configured => select one in chain options")
+            return False
+        if isinstance(chain.capture_src, list) and len(chain.capture_src) == 1:
+            channels = 1
+        else:
+            channels = 2
+        tempo = self.libseq.getTempo()
+        bpb = self.zynseq.bpb
+        if bpb < 1:
+            bpb = 4
+        # Cap open-ended recordings to what fits in the capture buffer and MAX_BEATS
+        beats_cap = min(MAX_BEATS, int(MAX_DURATION * tempo / 60))
+        self.libseq.setMaxRecordBars(max(1, beats_cap // bpb))
+        base = self.state_manager.get_new_capture_fpath("wav")[:-4]
+        chain_name = chain.get_name().replace("/", "_").replace(" ", "_")
+        path = f"{base}_{chain_name}_clip{phrase + 1}_{round(tempo)}bpm.wav"
+        res = self.libclippy.armRecord(processor.midi_chan - 16, phrase + 1, channels, tempo, 0)
+        if res != 0:
+            logging.error(f"Failed to arm clip recorder => error {res}")
+            return False
+        self.recordings[(processor, phrase)] = {
+            "state": "armed", "path": path, "tempo": tempo, "bpb": bpb, "channels": channels}
+        self.libseq.setPlayState(self.zynseq.scene, phrase, processor.midi_chan, zynseq.SEQ_STARTING_RECORD)
+        self.set_record_zctrl(processor, 1)
+        zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
+                              chan=processor.midi_chan, phrase=phrase, state=1)
+        return True
+
+    def on_seq_play_state(self, phrase=None, chan=None, **kwargs):
+        if not self.recordings:
+            return
+        for (processor, rec_phrase), rec in list(self.recordings.items()):
+            if processor.midi_chan != chan or rec_phrase != phrase:
+                continue
+            state = self.libseq.getPlayState(self.zynseq.scene, phrase, chan)
+            if state == zynseq.SEQ_RECORDING:
+                if rec["state"] == "armed":
+                    rec["state"] = "recording"
+                    zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
+                                          chan=chan, phrase=phrase, state=2)
+            elif state == zynseq.SEQ_PLAYING:
+                if rec["state"] == "recording":
+                    self.finalize_recording(processor, phrase)
+            elif state == zynseq.SEQ_STOPPED:
+                # Cancelled arm, force-stop or abort
+                self.cleanup_recording(processor, phrase)
+
+    def finalize_recording(self, processor, phrase):
+        """Punch-out committed => update controllers and save the clip to disk"""
+
+        rec = self.recordings.get((processor, phrase))
+        if rec is None:
+            return
+        note = phrase + 1
+        clip_channel = processor.midi_chan - 16
+        if self.libclippy.getRecordState() != REC_DONE:
+            logging.warning("Clip recording did not complete => aborting")
+            self.libseq.setPlayState(self.zynseq.scene, phrase, processor.midi_chan, zynseq.SEQ_STOPPED)
+            self.cleanup_recording(processor, phrase)
+            return
+        frames = self.libclippy.getRecordedFrames()
+        beats = self.libclippy.getRecordedBeats()
+        path = rec["path"]
+        try:
+            proc_dict = processor.controllers_dict
+            self.update_controllers(processor, note, frames)
+            proc_dict[f"file {note}"].set_value(path, False)
+            proc_dict[f"beats {note}"].set_value(min(beats, MAX_BEATS), False)
+            proc_dict[f"warp {note}"].set_value(1, False)
+            proc_dict[f"beat_slice {note}"].set_value(1, False)
+            proc_dict[f"crop_start {note}"].set_value(0, False)
+            proc_dict[f"crop_end {note}"].set_value(frames, False)
+            mode_zctrl = proc_dict[f"mode {note}"]
+            if mode_zctrl.value == 0:
+                mode_zctrl.set_value(1, False)
+            self.set_mode(phrase, processor.midi_chan, mode_zctrl.value)
+            self.update_nudge(processor, note, frames)
+        except Exception as e:
+            logging.error(f"Can't update clip controllers after recording => {e}")
+        filename = os.path.splitext(os.path.basename(path))[0]
+        self.zynseq.set_sequence_param(self.zynseq.scene, phrase, processor.midi_chan, "name", filename)
+        self.libseq.updateSequenceInfo()
+        rec["state"] = "saving"
+        zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
+                              chan=processor.midi_chan, phrase=phrase, state=3)
+        Thread(target=self._save_recording, args=(processor, phrase, clip_channel, note, path),
+               name="clippy_save", daemon=True).start()
+
+    def _save_recording(self, processor, phrase, clip_channel, note, path):
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            if self.libclippy.saveClip(clip_channel, note, bytes(path, "utf-8")):
+                logging.error(f"Failed to save recorded clip to '{path}'")
+        except Exception as e:
+            logging.error(f"Failed to save recorded clip => {e}")
+        self.libclippy.disarmRecord()
+        self.recordings.pop((processor, phrase), None)
+        self.set_record_zctrl(processor, 0)
+        zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
+                              chan=processor.midi_chan, phrase=phrase, state=0)
+        if processor == self.selected_proc and phrase == self.selected_phrase:
+            self.set_phrase(processor, phrase)
+
+    def cleanup_recording(self, processor, phrase):
+        """Abort path: free clippy recorder resources and clear tracking"""
+
+        rec = self.recordings.pop((processor, phrase), None)
+        if rec is None:
+            return
+        self.libclippy.disarmRecord()
+        self.set_record_zctrl(processor, 0)
+        zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
+                              chan=processor.midi_chan, phrase=phrase, state=0)
+
+    def set_record_zctrl(self, processor, value):
+        try:
+            processor.controllers_dict["record"].set_value(value, False)
+        except Exception:
+            pass
 
     # ---------------------------------------------------------------
     # Controller management
@@ -631,10 +834,7 @@ class zynthian_engine_clippy(zynthian_engine):
 
     def send_controller_value(self, zctrl):
         if zctrl.symbol == "record":
-            if zctrl.value:
-                self.state_manager.audio_recorder.start_recording()
-            else:
-                self.state_manager.audio_recorder.stop_recording()
+            self.toggle_clip_record(zctrl.processor, self.selected_phrase)
             return
 
         proc = zctrl.processor
@@ -792,9 +992,15 @@ class zynthian_engine_clippy(zynthian_engine):
         self.set_phrase(processor, self.zynseq.phrase)
 
     def remove_processor(self, processor):
+        for key in list(self.recordings):
+            if key[0] == processor:
+                self.recordings.pop(key, None)
         self.zynseq.enable_channel(processor.midi_chan, False)
         if self.libclippy.removePlayer(processor.midi_chan - 16) != 0:
             return
+        # removePlayer aborts any capture on this player => free the recorder buffers
+        if self.libclippy.getRecordState() != REC_IDLE and self.libclippy.getRecordChannel() == processor.midi_chan - 16:
+            self.libclippy.disarmRecord()
         for phrase in range(self.zynseq.phrases):
             self.zynseq.set_sequence_param(self.zynseq.scene, phrase, processor.midi_chan, "name", "")
             self.set_mode(phrase, processor.midi_chan, 0)

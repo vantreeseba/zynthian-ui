@@ -576,7 +576,7 @@ class zynthian_ctrldev_akai_apc_40_mk2(zynthian_ctrldev_zynpad, zynthian_ctrldev
                     zynthian_gui_config.zyngui.screens["mixer"].edit_pad()
                 # Toggle Play/Stop PAD
                 else:
-                    self.zynseq.libseq.togglePlayState(self.zynseq.scene, phrase, midi_chan)
+                    self.toggle_pad(phrase, midi_chan)
             # Scene buttons => Phrase launcher
             elif LED_SCENE_LAUNCH_1 <= note <= LED_SCENE_LAUNCH_5:
                 row = note - LED_SCENE_LAUNCH_1
@@ -745,6 +745,14 @@ class zynthian_ctrldev_akai_apc_40_mk2(zynthian_ctrldev_zynpad, zynthian_ctrldev
                 lib_zyncore.dev_send_note_on(self.idev_out, RGB_MODE_PRIMARY, note, led_colour_primary)
                 led_colour = zynthian_gui_config.LAUNCHER_STOPPING_COLOUR["apc"]
                 led_mode = RGB_MODE_BLINK_4
+            elif state == zynseq.SEQ_RECORDING:
+                lib_zyncore.dev_send_note_on(self.idev_out, RGB_MODE_PRIMARY, note, led_colour_primary)
+                led_colour = zynthian_gui_config.LAUNCHER_REC_COLOUR["apc"]
+                led_mode = RGB_MODE_PULSE_2
+            elif state in (zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD):
+                lib_zyncore.dev_send_note_on(self.idev_out, RGB_MODE_PRIMARY, note, led_colour_primary)
+                led_colour = zynthian_gui_config.LAUNCHER_REC_COLOUR["apc"]
+                led_mode = RGB_MODE_BLINK_8
         except:
             pass
         lib_zyncore.dev_send_note_on(self.idev_out, led_mode, note, led_colour)

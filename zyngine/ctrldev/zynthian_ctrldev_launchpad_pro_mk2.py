@@ -488,7 +488,7 @@ class zynthian_ctrldev_launchpad_pro_mk2(zynthian_ctrldev_zynpad, zynthian_ctrld
                     if midi_chan is not None:
                         phrase = row + self.scroll_v
                         try:
-                            self.zynseq.libseq.togglePlayState(self.zynseq.scene, phrase, midi_chan)
+                            self.toggle_pad(phrase, midi_chan)
                         except:
                             print("Error toggling play state for phrase {}, channel {}".format(phrase, midi_chan))
                             pass
@@ -832,6 +832,12 @@ class zynthian_ctrldev_launchpad_pro_mk2(zynthian_ctrldev_zynpad, zynthian_ctrld
             elif state == zynseq.SEQ_STARTING:
                 chan = 1
                 vel = zynthian_gui_config.LAUNCHER_STARTING_COLOUR["launchpad"]
+            elif state == zynseq.SEQ_RECORDING:
+                chan = 2
+                vel = zynthian_gui_config.LAUNCHER_REC_COLOUR["launchpad"]
+            elif state in (zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD):
+                chan = 1
+                vel = zynthian_gui_config.LAUNCHER_REC_COLOUR["launchpad"]
         except:
             pass
         lib_zyncore.dev_send_note_on(self.idev_out, chan, note, vel)

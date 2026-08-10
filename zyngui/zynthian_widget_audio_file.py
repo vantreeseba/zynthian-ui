@@ -160,11 +160,11 @@ class zynthian_widget_audio_file(zynthian_widget_base.zynthian_widget_base):
         self.refreshing = False
         super().show()
         if self.clip_info:
-            zynsigman.register_queued(zynsigman.S_AUDIO_RECORDER, zynsigman.SS_AUDIO_RECORDER_STATE, self.audio_recorder_cb)
+            zynsigman.register_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE, self.clippy_rec_cb)
 
     def hide(self):
         if self.clip_info:
-            zynsigman.unregister(zynsigman.S_AUDIO_RECORDER, zynsigman.SS_AUDIO_RECORDER_STATE, self.audio_recorder_cb)
+            zynsigman.unregister(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE, self.clippy_rec_cb)
         super().hide()
 
     def on_size(self, event):
@@ -468,21 +468,13 @@ class zynthian_widget_audio_file(zynthian_widget_base.zynthian_widget_base):
         return f"{int(time / 60):02d}:{int(time % 60):02d}.{int(modf(time)[0] * 1000):03}"
 
     # -------------------------------------------------------------------------
-    # Audio recorder signal callback
+    # Clip recording signal callback
     # -------------------------------------------------------------------------
 
-    def audio_recorder_cb(self, state):
-        if self.clip_info:
-            #self.zyngui.state_manager.audio_recorder.status:
-            try:
-                self.processor.controllers_dict['record'].set_value(state, False)
-            except:
-                logging.error("Clippy processor doesn't have a record controller!")
-            # Manage stop recording => load recorded sample!
-            if not state:
-                fpath = self.zyngui.state_manager.audio_recorder.filename
-                if os.path.isfile(fpath):
-                    self.zctrl.set_value(fpath)
+    def clippy_rec_cb(self, chan=None, phrase=None, state=None):
+        if self.clip_info and chan == self.clip_info[2] and phrase == self.clip_info[1] and state == 0:
+            # Recording finished and saved => refresh view with the new clip
+            self.get_clippy_values()
 
     # -------------------------------------------------------------------------
     # CUIA & LEDs methods
@@ -521,9 +513,9 @@ class zynthian_widget_audio_file(zynthian_widget_base.zynthian_widget_base):
                 logging.error(f"Can't get clip audio values for clip {self.clip_info} => {e}")
 
     def cuia_toggle_record(self, param=None):
-        # Handle transport for clippy
+        # Handle transport for clippy => arm / punch-out a bar-quantized clip recording
         if self.clip_info:
-            self.zyngui.state_manager.audio_recorder.toggle_recording()
+            self.processor.engine.toggle_clip_record(self.processor, self.clip_info[1])
             return True
         return False
 
@@ -546,18 +538,20 @@ class zynthian_widget_audio_file(zynthian_widget_base.zynthian_widget_base):
         if self.clip_info:
             wsl = self.zyngui.wsleds
             color_default = wsl.wscolor_active2
+            play_state = self.zyngui.state_manager.zynseq.libseq.getPlayState(self.clip_info[0], self.clip_info[1], self.clip_info[2])
             # REC Button
-            if self.zyngui.state_manager.audio_recorder.status:
+            if play_state in (10, 11):  # SEQ_STARTING_RECORD / SEQ_STOPPING_RECORD
+                wsl.blink(leds[1], wsl.wscolor_red)
+            elif play_state == 9:  # SEQ_RECORDING
                 wsl.set_led(leds[1], wsl.wscolor_red)
             else:
                 wsl.set_led(leds[1], color_default)
             # STOP button:
             wsl.set_led(leds[2], color_default)
             # PLAY button:
-            play_state = self.zyngui.state_manager.zynseq.libseq.getPlayState(self.clip_info[0], self.clip_info[1], self.clip_info[2])
             if play_state in (2, 3, 4, 5):
                 wsl.blink(leds[3], wsl.wscolor_green)
-            elif play_state == 1:
+            elif play_state in (1, 9):
                 wsl.set_led(leds[3], wsl.wscolor_green)
             else:  # play_state == 0:`
                 wsl.set_led(leds[3], color_default)

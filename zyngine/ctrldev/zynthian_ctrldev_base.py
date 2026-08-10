@@ -463,6 +463,26 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
                 if 0 <= col < self.cols:
                     self.update_pad(row, col, pad_info)
 
+    def toggle_pad(self, phrase, midi_chan):
+        """Launch/stop the pad at phrase,midi_chan, routing clippy pads through
+        the clip recorder when record mode is enabled or the pad is already in
+        a record state (togglePlayState does not understand record states)
+        """
+        if midi_chan is not None and 15 < midi_chan < 32:
+            state = self.zynseq.libseq.getPlayState(self.zynseq.scene, phrase, midi_chan)
+            record_state = state in (zynseq.SEQ_RECORDING, zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD)
+            if record_state or self.state_manager.clip_record_mode:
+                try:
+                    chain_id = self.chain_manager.get_chain_ids_by_midi_chan(midi_chan)[0]
+                    proc = self.chain_manager.chains[chain_id].get_clippy_processor()
+                    if proc and proc.engine.toggle_clip_record(proc, phrase):
+                        return
+                except Exception as e:
+                    logging.error(f"Failed to toggle clip record => {e}")
+                if record_state:
+                    return
+        self.zynseq.libseq.togglePlayState(self.zynseq.scene, phrase, midi_chan)
+
     def update_pad(self, row, col, pad_info):
         """Update the pad at row,col
         *SHOULD* be implemented by child class

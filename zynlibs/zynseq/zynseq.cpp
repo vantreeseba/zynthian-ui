@@ -2579,7 +2579,7 @@ void setPlayState(uint8_t scene, uint8_t phrase, uint8_t sequence, uint8_t state
     Sequence* pSequence = g_seqMan.getSequence(scene, phrase, sequence);
     if (pSequence == nullptr)
         return;
-    if (state == STARTING || state == PLAYING) {
+    if (state == STARTING || state == PLAYING || state == STARTING_RECORD || state == RECORDING) {
         // If no playing sequences, set BPB to the sequence's phrase's timesig
         // This is disabled. We could want to enable it in the future, or not ;-)
         //if (g_seqMan.getPlayingSequencesCount() == 0) {
@@ -2626,6 +2626,46 @@ void togglePlayState(uint8_t scene, uint8_t phrase, uint8_t sequence) {
             break;
     }
     setPlayState(scene, phrase, sequence, nState);
+}
+
+void toggleRecordState(uint8_t scene, uint8_t phrase, uint8_t sequence) {
+    Sequence* pSequence = g_seqMan.getSequence(scene, phrase, sequence);
+    if (!pSequence)
+        return;
+    // Record states only valid for clippy (audio clip) sequences
+    uint8_t nGroup = pSequence->getGroup();
+    if (nGroup < 16 || nGroup > 31)
+        return;
+    uint8_t nState = pSequence->getPlayState();
+    switch (nState) {
+        case STOPPED:
+        case STARTING:
+        case STOPPING:
+        case STOPPING_SYNC:
+        case PLAYING:
+            // Arm to record (re-record if currently playing)
+            nState = STARTING_RECORD;
+            break;
+        case STARTING_RECORD:
+            // Cancel arm (clock emits abort to clippy)
+            nState = STOPPED;
+            break;
+        case RECORDING:
+            // Request punch out at next bar sync
+            nState = STOPPING_RECORD;
+            break;
+        case STOPPING_RECORD:
+            // Cancel punch out request
+            nState = RECORDING;
+            break;
+        default:
+            return;
+    }
+    setPlayState(scene, phrase, sequence, nState);
+}
+
+void setMaxRecordBars(uint16_t bars) {
+    g_seqMan.setMaxRecordBars(bars);
 }
 
 uint32_t getSequenceState(uint8_t scene, uint8_t phrase, uint8_t sequence) {

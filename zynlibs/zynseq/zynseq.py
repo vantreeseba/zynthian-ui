@@ -97,6 +97,10 @@ SEQ_FORCED_STOP = 4
 SEQ_STOPPING_SYNC = 5
 SEQ_CHILD_PLAYING = 6
 SEQ_CHILD_STOPPING = 8
+# Clippy (audio clip) record states. Low 2 bits mirror the non-record equivalent.
+SEQ_RECORDING = 9        # Recording audio (PLAYING | 8)
+SEQ_STARTING_RECORD = 10 # Armed, waiting for bar sync to punch in (STARTING | 8)
+SEQ_STOPPING_RECORD = 11 # Recording, waiting for bar sync to punch out (STOPPING | 8)
 
 FOLLOW_ACTION_NONE  = 0
 FOLLOW_ACTION_RELATIVE = 1

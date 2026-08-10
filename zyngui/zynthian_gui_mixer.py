@@ -401,6 +401,15 @@ class zynthian_gui_launcher_pad():
                     case zynseq.SEQ_STOPPED:
                         color_state = zynthian_gui_config.PAD_COLOUR_STOPPED
                         state_text = "⏹"
+                    case zynseq.SEQ_RECORDING:
+                        color_state = zynthian_gui_config.PAD_COLOUR_RECORDING
+                        state_text = "⏺"
+                    case zynseq.SEQ_STARTING_RECORD:
+                        color_state = zynthian_gui_config.PAD_COLOUR_REC_ARMED
+                        state_text = "⏺"
+                    case zynseq.SEQ_STOPPING_RECORD:
+                        color_state = zynthian_gui_config.PAD_COLOUR_RECORDING
+                        state_text = "⏹"
                     case _:
                         color_mode = zynthian_gui_config.PAD_COLOUR_STATE_DISABLED
                         color_text = zynthian_gui_config.PAD_COLOUR_STATE_DISABLED
@@ -456,6 +465,17 @@ class zynthian_gui_launcher_pad():
             midi_chan = 32
         if midi_chan is None or midi_chan > 32:
             return
+        if 15 < midi_chan < 32:
+            # Clippy pad: in record mode arm/punch-out, and always route record states
+            # through toggle_clip_record so a recording pad can be punched out
+            state = self.gui_mixer.zynseq.libseq.getPlayState(self.gui_mixer.zynseq.scene, self.phrase, midi_chan)
+            record_state = state in (zynseq.SEQ_RECORDING, zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD)
+            if record_state or self.gui_mixer.state_manager.clip_record_mode:
+                proc = self.chain.get_clippy_processor()
+                if proc and proc.engine.toggle_clip_record(proc, self.phrase):
+                    return
+                if record_state:
+                    return
         self.gui_mixer.zynseq.libseq.togglePlayState(self.gui_mixer.zynseq.scene, self.phrase, midi_chan)
 
     def on_clip_bold_press(self):
@@ -2477,6 +2497,15 @@ class zynthian_gui_mixer(zynthian_gui_base):
     def cuia_back(self, params):
         if params and params[0] == 'B':
             self.zyngui.show_screen("chain_manager")
+            return True
+        return False
+
+    def cuia_toggle_record(self, params=None):
+        # In launcher view, toggle clip (session) record mode instead of the global audio recorder
+        if self.launcher_mode:
+            self.state_manager.clip_record_mode = not self.state_manager.clip_record_mode
+            zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_MODE,
+                                  mode=self.state_manager.clip_record_mode)
             return True
         return False
 

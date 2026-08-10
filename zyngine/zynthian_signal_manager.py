@@ -53,6 +53,7 @@ class zynthian_signal_manager:
     S_MIDI = 12
     S_TRANSPORT = 13
     S_PROCESSOR = 14
+    S_CLIPPY = 15
 
     #-------------------------------------------------------------------------
     # Signal sub-id (owned by each corresponding class)
@@ -117,7 +118,11 @@ class zynthian_signal_manager:
     SS_AUDIO_RECORDER_STATE = 1
     SS_AUDIO_RECORDER_ARM = 2
 
-    last_signal = 14
+    # Clippy (clip launcher recording)
+    SS_CLIPPY_REC_STATE = 1 # Clip record state change (chan, phrase, state: 0=idle, 1=armed, 2=recording, 3=saving)
+    SS_CLIPPY_REC_MODE = 2 # Session record mode toggled (mode)
+
+    last_signal = 15
     last_subsignal = 10
 
     def __init__(self):

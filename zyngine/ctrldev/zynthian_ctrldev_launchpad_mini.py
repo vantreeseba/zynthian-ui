@@ -51,6 +51,8 @@ class zynthian_ctrldev_launchpad_mini(zynthian_ctrldev_zynpad):
     STARTING_COLOUR = 0x38   # Blinking Green
     STOPPING_COLOUR = 0x0B   # Blinking Red
     ACTIVE_COLOUR = 0x3C     # Solid Green
+    RECORDING_COLOUR = 0x0F  # Solid Red
+    REC_ARMED_COLOUR = 0x0B  # Blinking Red
 
     def init(self):
         super().init()
@@ -99,6 +101,10 @@ class zynthian_ctrldev_launchpad_mini(zynthian_ctrldev_zynpad):
                 vel = self.STOPPING_COLOUR
             elif state == zynseq.SEQ_STARTING:
                 vel = self.STARTING_COLOUR
+            elif state == zynseq.SEQ_RECORDING:
+                vel = self.RECORDING_COLOUR
+            elif state in (zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD):
+                vel = self.REC_ARMED_COLOUR
             else:
                 vel = self.OFF_COLOUR
         except:
@@ -122,7 +128,7 @@ class zynthian_ctrldev_launchpad_mini(zynthian_ctrldev_zynpad):
             if midi_chan is not None:
                 phrase = row + self.scroll_v
                 try:
-                    self.zynseq.libseq.togglePlayState(self.zynseq.scene, phrase, midi_chan)
+                    self.toggle_pad(phrase, midi_chan)
                 except:
                     pass
             return True

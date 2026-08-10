@@ -98,6 +98,12 @@ class zynthian_ctrldev_launchpad_x(zynthian_ctrldev_zynpad):
             elif state == zynseq.SEQ_STARTING:
                 midi_chan = 1
                 color = zynthian_gui_config.LAUNCHER_STARTING_COLOUR["launchpad"]
+            elif state == zynseq.SEQ_RECORDING:
+                midi_chan = 2
+                color = zynthian_gui_config.LAUNCHER_REC_COLOUR["launchpad"]
+            elif state in (zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD):
+                midi_chan = 1
+                color = zynthian_gui_config.LAUNCHER_REC_COLOUR["launchpad"]
         except:
             pass
         # Send MIDI event to controller
@@ -130,7 +136,7 @@ class zynthian_ctrldev_launchpad_x(zynthian_ctrldev_zynpad):
                 if midi_chan is not None:
                     phrase = row + self.scroll_v
                     try:
-                        self.zynseq.libseq.togglePlayState(self.zynseq.scene, phrase, midi_chan)
+                        self.toggle_pad(phrase, midi_chan)
                     except:
                         pass
             return True

@@ -2,6 +2,14 @@
 
 #define MAX_CLIPS 127   // Maximum quantity of clips per player/channel
 #define MIN_FRAMES 4096 // Minimum quantity of frames to allow in audio files
+#define MAX_DURATION 120 // Maximum clip duration in seconds (also default record buffer capacity)
+
+// Note-on velocities used by the zynseq=>clippy control protocol
+#define CLIPPY_VEL_START 1     // Start clip (note 1..127) or stop player (note 0)
+#define CLIPPY_VEL_RETRIG 3    // Retrigger (loop repeat) clip
+#define CLIPPY_VEL_REC_START 5 // Punch-in: begin capture at event time
+#define CLIPPY_VEL_REC_STOP 6  // Punch-out: commit recording as clip and start looping it
+#define CLIPPY_VEL_REC_ABORT 7 // Abort recording without committing
 
 enum STATE {
     STATE_IDLE,     // Not ready for use
@@ -24,6 +32,15 @@ enum ERROR {
     ERROR_ACTIVATE,     // Cannot activate jack
     ERROR_SRC,          // Error during samplerate conversion
     ERROR_STRETCH       // Error during time stretch
+};
+
+enum REC_STATE {
+    REC_IDLE,       // No recording armed
+    REC_ARMED,      // Waiting for punch-in message
+    REC_RECORDING,  // Capturing audio
+    REC_DONE,       // Recording committed as clip (awaiting save/disarm)
+    REC_ABORTED,    // Recording aborted (awaiting disarm)
+    REC_OVERFLOW    // Capture buffer exhausted, recording abandoned (awaiting disarm)
 };
 
 enum MIDI_COMMANDS {
@@ -221,6 +238,60 @@ uint32_t getFileSamplerate(const char* path);
     @retval uint32_t Duration in frames or 0 on error
 */
 uint32_t getFileFrames(const char* path);
+
+/** @brief  Arm the recorder to capture audio into a clip slot
+    @param  channel MIDI channel
+    @param  note MIDI note to trigger clip (1..127)
+    @param  channels Quantity of channels to capture (1 or 2)
+    @param  tempo Tempo in BPM at time of arming (stored in committed clip)
+    @param  max_frames Capture buffer capacity in frames (0 for default MAX_DURATION * samplerate)
+    @retval uint8_t Error code
+    @note   Only one recording may be armed at a time. Recording starts on
+            CLIPPY_VEL_REC_START and commits on CLIPPY_VEL_REC_STOP received
+            on the MIDI input port. Poll getRecordState() then call
+            saveClip() and disarmRecord().
+*/
+uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, uint32_t max_frames);
+
+/** @brief  Disarm the recorder from any state, freeing uncommitted capture buffers
+    @retval uint8_t Error code
+    @note   Must be called after REC_DONE (post save), REC_ABORTED or REC_OVERFLOW.
+*/
+uint8_t disarmRecord();
+
+/** @brief  Get recorder state
+    @retval uint8_t REC_STATE value
+*/
+uint8_t getRecordState();
+
+/** @brief  Get MIDI channel the recorder is / was armed for
+    @retval uint8_t MIDI channel
+*/
+uint8_t getRecordChannel();
+
+/** @brief  Get MIDI note the recorder is / was armed for
+    @retval uint8_t MIDI note
+*/
+uint8_t getRecordNote();
+
+/** @brief  Get quantity of frames captured so far (or in committed clip)
+    @retval uint32_t Quantity of frames
+*/
+uint32_t getRecordedFrames();
+
+/** @brief  Get quantity of beats captured so far (or in committed clip)
+    @retval uint16_t Quantity of beats
+*/
+uint16_t getRecordedBeats();
+
+/** @brief  Save a loaded clip's sample data to a wav file and set its path
+    @param  channel MIDI channel
+    @param  note MIDI note to trigger clip
+    @param  path Full path and filename of file to create
+    @retval int Error code (0 on success)
+    @note   Blocking (disk I/O) - call from a background thread.
+*/
+int saveClip(uint8_t channel, uint8_t note, const char* path);
 
 /** @brief  Write sample data to file
     @param  dst_path Full path and filename of file to create

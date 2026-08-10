@@ -152,6 +152,7 @@ class zynthian_state_manager:
         self.ctrldev_manager = None
         self.audio_player = None
         self.aubio_in = [1, 2]  # List of aubio inputs
+        self.clip_record_mode = False  # True when launcher pads arm clip recording (Ableton session record)
 
         # List of lists [rate, cb, schedule] for registered regularly repeating callbacks
         self.slow_update_callbacks = []
@@ -1432,6 +1433,13 @@ class zynthian_state_manager:
                     chain.midi_out = chain_state["midi_out"]
                 if "audio_in" in chain_state:
                     chain.audio_in = chain_state["audio_in"]
+                chain.capture_src = None
+                if "capture_src" in chain_state:
+                    capture_src = chain_state["capture_src"]
+                    if isinstance(capture_src, list):
+                        chain.capture_src = capture_src
+                    elif capture_src in self.chain_manager.chains:
+                        chain.capture_src = capture_src
                 chain.audio_out = []
                 if "audio_out" in chain_state:
                     for out in chain_state["audio_out"]:
@@ -1647,6 +1655,11 @@ class zynthian_state_manager:
                 if chain.midi_out:
                     chain_state["midi_out"] = chain.midi_out.copy()
             chain_state["audio_in"] = chain.audio_in.copy()
+            if chain.capture_src is not None:
+                if isinstance(chain.capture_src, list):
+                    chain_state["capture_src"] = chain.capture_src.copy()
+                else:
+                    chain_state["capture_src"] = chain.capture_src
             chain_state["audio_out"] = []
             for out in chain.audio_out:
                 if out in zynautoconnect.get_sidechain_portnames():

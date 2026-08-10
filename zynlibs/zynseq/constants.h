@@ -64,6 +64,23 @@
 #define STOPPING_SYNC 5 // Sequence is playing waiting to stop at next sync point
 #define CHILD_PLAYING 6 // Child (of phrase launcher) sequence is playing
 #define CHILD_STOPPING 8 // Child (of phrase launcher) sequence is stopping
+// Clippy (audio clip) record states. Low 2 bits mirror the non-record equivalent so
+// (state & 0x3) logic keeps working. Note bit 3 alone is NOT a record test (CHILD_STOPPING == 8).
+#define RECORDING 9        // Clippy sequence is recording audio (PLAYING | 8)
+#define STARTING_RECORD 10 // Clippy sequence is armed, waiting for sync point to punch in (STARTING | 8)
+#define STOPPING_RECORD 11 // Clippy sequence is recording, waiting for sync point to punch out (STOPPING | 8)
+
+// Test for clippy record states
+inline bool isRecordState(uint8_t state) {
+    return state == RECORDING || state == STARTING_RECORD || state == STOPPING_RECORD;
+}
+
+// Note-on velocities used by the zynseq=>clippy control protocol
+#define CLIPPY_VEL_START 1     // Start clip (note 1..127) or stop player (note 0)
+#define CLIPPY_VEL_RETRIG 3    // Retrigger (loop repeat) clip
+#define CLIPPY_VEL_REC_START 5 // Punch-in: begin capture at event time
+#define CLIPPY_VEL_REC_STOP 6  // Punch-out: commit recording as clip and start looping it
+#define CLIPPY_VEL_REC_ABORT 7 // Abort recording without committing
 
 // Metronome modes
 enum METRO_MODES {

@@ -280,6 +280,45 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
                         pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_CHAN_PRESSURE | nChannel), beatPos, 0}});
                     }
                     break;
+                case STARTING_RECORD:
+                    // Punch in at bar sync (record message emplaced before coincident beat tick so clippy counts exact beats)
+                    if (bSync) {
+                        nPlayState = RECORDING;
+                        pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), nNote, CLIPPY_VEL_REC_START}});
+                        pSequence->setPlayState(RECORDING);
+                        pSequence->setPlayed(0);
+                        pSequence->setPlayPosition(0);
+                    }
+                    // Send beat sync messages to clippy
+                    if (bBeat) {
+                        pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_CHAN_PRESSURE | nChannel), beatPos, 0}});
+                    }
+                    break;
+                case RECORDING:
+                case STOPPING_RECORD: {
+                    uint32_t nPos = pSequence->getPlayPosition() + 1;
+                    if (bSync) {
+                        uint32_t nLength = pSequence->getLength();
+                        uint32_t nMaxTicks = m_nMaxRecordBars * m_nTimeSig * PPQN_INTERNAL;
+                        // Punch out when user requested, preset length reached (0 = open-ended) or safety cap reached
+                        if (nPlayState == STOPPING_RECORD || (nLength && nPos >= nLength) || (nMaxTicks && nPos >= nMaxTicks)) {
+                            pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), nNote, CLIPPY_VEL_REC_STOP}});
+                            // Set sequence length to the exact recorded duration and loop the committed clip
+                            pSequence->updateLength(nPos);
+                            pSequence->setPlayState(PLAYING);
+                            pSequence->setPlayed(0);
+                            nPlayState = PLAYING;
+                            nPos = 0;
+                            m_pRecordingSequence = nullptr;
+                        }
+                    }
+                    pSequence->setPlayPosition(nPos);
+                    // Send beat sync messages to clippy
+                    if (bBeat) {
+                        pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_CHAN_PRESSURE | nChannel), beatPos, 0}});
+                    }
+                    break;
+                }
             }
         }
         // Step or phrase sequence
@@ -364,18 +403,24 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
 
             // Stop clippy if no other clippy sequences in same group are running
             if (bIsClippy && nPlayState == STOPPED) {
-                bool bStopClippy = true;
-                // TODO => Is this needed?
-                for (auto seq: m_vPlayingSequences) {
-                    if (seq != pSequence && seq->getGroup() == nGroup) {
-                        bStopClippy = false;
-                        break;
+                uint8_t nChannel = nGroup - 16;
+                if (pSequence == m_pRecordingSequence) {
+                    // A recording (or armed) sequence was stopped => abort the recording
+                    pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), uint8_t(pSequence->getPhrase() + 1), CLIPPY_VEL_REC_ABORT}});
+                    m_pRecordingSequence = nullptr;
+                } else {
+                    bool bStopClippy = true;
+                    // TODO => Is this needed?
+                    for (auto seq: m_vPlayingSequences) {
+                        if (seq != pSequence && seq->getGroup() == nGroup) {
+                            bStopClippy = false;
+                            break;
+                        }
                     }
-                }
-                if (bStopClippy) {
-                    // Send clippy stop event => Note 0 stops playing
-                    uint8_t nChannel = nGroup - 16;
-                    pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), 0, 1}});
+                    if (bStopClippy) {
+                        // Send clippy stop event => Note 0 stops playing
+                        pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), 0, 1}});
+                    }
                 }
             }
             m_vPlayingSequences.erase(m_vPlayingSequences.begin() + nSequence);
@@ -385,6 +430,9 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
         if (pSequence->getPlayState() & 0x01) {
             if (nGroup < 32 && pSequence->getLength())
                 m_aGroupProgress[nGroup] = (100 * pSequence->getPlayPosition() / pSequence->getLength());
+            else if (nGroup < 32 && isRecordState(pSequence->getPlayState()))
+                // Open-ended recording (no length yet) => report progress through current bar
+                m_aGroupProgress[nGroup] = (100 * barPos / (m_nTimeSig * PPQN_INTERNAL));
             else if (nGroup == 32) {
                 uint8_t nTimeSig = pSequence->getTimeSig();
                 if (nTimeSig)
@@ -402,7 +450,21 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
 void SequenceManager::setPlayState(Sequence* pSequence, uint8_t state) {
     if (!pSequence)
         return;
-    if (state == STARTING || state == PLAYING) {
+    if (isRecordState(state)) {
+        // Record states only valid for clippy (audio clip) sequences
+        uint8_t nGroup = pSequence->getGroup();
+        if (nGroup < 16 || nGroup > 31)
+            return;
+        // Only one recording at a time
+        if (m_pRecordingSequence && m_pRecordingSequence != pSequence)
+            return;
+        if (state == STARTING_RECORD || state == RECORDING)
+            m_pRecordingSequence = pSequence;
+    } else if (pSequence == m_pRecordingSequence && state != STOPPED) {
+        // Leaving record state other than via clock punch-out / stop => clear tracking
+        m_pRecordingSequence = nullptr;
+    }
+    if (state == STARTING || state == PLAYING || state == STARTING_RECORD || state == RECORDING) {
         bool bAddToList = true;
         // Stop other sequences in same group
         size_t nInsert = 0;
@@ -414,7 +476,7 @@ void SequenceManager::setPlayState(Sequence* pSequence, uint8_t state) {
                 if (pPlayingSequence->getPlayState() == STARTING)
                     pPlayingSequence->setPlayState(STOPPED);
                 else if (pPlayingSequence->getPlayState() != STOPPED) {
-                    pPlayingSequence->setPlayState(state == STARTING?STOPPING:STOPPED);
+                    pPlayingSequence->setPlayState((state == STARTING || state == STARTING_RECORD)?STOPPING:STOPPED);
                 }
                 if (pPlayingSequence->isPhraseLauncher())
                     ++nInsert;
@@ -492,6 +554,16 @@ void SequenceManager::stop() {
         pSequence->setPlayState(STOPPED);
     }
     m_vPlayingSequences.clear();
+    // Recording cannot survive stop-all. Caller (Python) must also disarm the clippy recorder.
+    m_pRecordingSequence = nullptr;
+}
+
+void SequenceManager::setMaxRecordBars(uint16_t bars) {
+    m_nMaxRecordBars = bars;
+}
+
+Sequence* SequenceManager::getRecordingSequence() {
+    return m_pRecordingSequence;
 }
 
 bool SequenceManager::isTempoChanged() { return m_bTempoChanged; }

@@ -1136,6 +1136,37 @@ def audio_autoconnect():
                 except:
                     pass
 
+    # Connect clip-record capture sources to clippy player inputs
+    for chain in chain_manager.chains.values():
+        if chain.capture_src is None:
+            continue
+        clippy_proc = chain.get_clippy_processor()
+        if clippy_proc is None or clippy_proc.midi_chan is None:
+            continue
+        clippy_chan = clippy_proc.midi_chan - 16
+        dst_a = f"clippy:input_{clippy_chan + 1:02d}a"
+        dst_b = f"clippy:input_{clippy_chan + 1:02d}b"
+        if dst_a not in required_routes or dst_b not in required_routes:
+            continue
+        try:
+            if isinstance(chain.capture_src, list):
+                # Raw hardware capture inputs (1-based indices)
+                capture_ports = get_audio_capture_ports()
+                srcs = [capture_ports[i - 1].name for i in chain.capture_src]
+            else:
+                # Post-fader output of source chain's mixer strip
+                src_chain = chain_manager.get_chain(chain.capture_src)
+                mixer_proc = src_chain.zynmixer_proc
+                if mixer_proc.eng_code == "MI":
+                    port = f"zynmixer_chan:output_{mixer_proc.mixer_chan:02d}"
+                else:
+                    port = f"zynmixer_bus:output_{mixer_proc.mixer_chan:02d}"
+                srcs = [f"{port}a", f"{port}b"]
+            required_routes[dst_a].add(srcs[0])
+            required_routes[dst_b].add(srcs[min(1, len(srcs) - 1)])
+        except Exception as e:
+            logger.warning(f"Failed to route clip-record source for chain {chain.chain_id}: {e}")
+
     # Remove mod-ui routes
     for dst in list(required_routes.keys()):
         if dst.startswith("mod-monitor:"):

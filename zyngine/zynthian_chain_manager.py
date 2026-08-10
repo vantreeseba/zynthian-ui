@@ -373,6 +373,11 @@ class zynthian_chain_manager:
                 self.chains.pop(chain_id)
                 del chain
 
+        # Clear clip-record source references to removed chains
+        for other_chain in self.chains.values():
+            if isinstance(other_chain.capture_src, int) and other_chain.capture_src in chains_to_remove:
+                other_chain.capture_src = None
+
         self.rebuild_optimisation_cache()
 
         zynautoconnect.request_audio_connect(fast_refresh)

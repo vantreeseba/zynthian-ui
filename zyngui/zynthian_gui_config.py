@@ -658,6 +658,8 @@ PAD_COLOUR_PLAYING = '#00FF00'
 PAD_COLOUR_STOPPING = '#FF0000'
 PAD_COLOUR_STOPPED = '#E0E0E0'
 PAD_COLOUR_PHRASE = '#707070'
+PAD_COLOUR_REC_ARMED = '#A00000'
+PAD_COLOUR_RECORDING = '#FF2020'
 LAUNCHER_COLOUR = [
     # MIDI Channels 1..16 (offset 0..15)
     {"rgb": "#0000FF", "launchpad": 79,  "apc": 45, "apc_mk1": 3},  #1:blue
@@ -701,6 +703,7 @@ LAUNCHER_COLOUR = [
 LAUNCHER_PLAYING_COLOUR = {"rgb": "#009000", "launchpad": 21, "apc": 87, "apc_mk1": 3} #green
 LAUNCHER_STARTING_COLOUR = {"rgb": "#009000", "launchpad": 21, "apc": 87, "apc_mk1": 3} #green
 LAUNCHER_STOPPING_COLOUR = {"rgb": "#D00000", "launchpad": 5, "apc": 72, "apc_mk1": 1} #red
+LAUNCHER_REC_COLOUR = {"rgb": "#FF2020", "launchpad": 5, "apc": 72, "apc_mk1": 1} #red (clip recording)
 
 def get_color_relux(hex_color):
     if len(hex_color) != 7:

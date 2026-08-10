@@ -27,6 +27,7 @@ import logging
 import os
 
 # Zynthian specific modules
+import zynautoconnect
 from zyngui import zynthian_gui_config
 from zyngui.zynthian_gui_selector_info import zynthian_gui_selector_info
 
@@ -94,6 +95,10 @@ class zynthian_gui_chain_options(zynthian_gui_selector_info):
 
         self.list_data.append((self.rename_chain, None, "Rename chain",
                                ["Change the name of the chain. Clear name to reset to default name.", "rename.png"]))
+
+        if self.chain.get_clippy_processor():
+            self.list_data.append((self.select_record_source, None, "Record source...",
+                                   ["Select the audio source to record into clips: another chain's output or hardware audio inputs.", "audio_input.png"]))
 
         self.list_data.append((self.export_chain, None, "Export chain as snapshot...",
                                 ["Save this chain as a snapshot.\n\nThe saved snapshot may loaded or may be imported into another snapshot.", "snapshot_chains.png"]))
@@ -166,6 +171,37 @@ class zynthian_gui_chain_options(zynthian_gui_selector_info):
 
     def do_export_chain(self, path):
         self.zyngui.state_manager.export_chain(path, self.chain.chain_id)
+
+    def select_record_source(self):
+        checked = "☒ "
+        unchecked = "☐ "
+        cs = self.chain.capture_src
+        options = {}
+        prefix = checked if cs is None else unchecked
+        options[prefix + "None"] = [None, ["Do not record clips from any source.", "audio_input.png"]]
+        for chain_id, chain in self.zyngui.chain_manager.chains.items():
+            if chain == self.chain or chain.zynmixer_proc is None or not chain.is_audio():
+                continue
+            prefix = checked if cs == chain_id else unchecked
+            options[prefix + chain.get_name()] = [chain_id,
+                [f"Record clips from the post-fader output of chain '{chain.get_name()}'.", "audio_input.png"]]
+        capture_ports = zynautoconnect.get_audio_capture_ports()
+        for i in range(0, len(capture_ports) - 1, 2):
+            value = [i + 1, i + 2]
+            prefix = checked if cs == value else unchecked
+            options[prefix + f"Audio input {i + 1}+{i + 2}"] = [value,
+                [f"Record clips in stereo from hardware audio inputs {i + 1} and {i + 2}.", "audio_input.png"]]
+        for i in range(len(capture_ports)):
+            value = [i + 1]
+            prefix = checked if cs == value else unchecked
+            options[prefix + f"Audio input {i + 1}"] = [value,
+                [f"Record clips in mono from hardware audio input {i + 1}.", "audio_input.png"]]
+        self.zyngui.screens['option'].config("Record source", options, self.set_record_source)
+        self.zyngui.show_screen('option')
+
+    def set_record_source(self, label, value):
+        self.chain.capture_src = value
+        zynautoconnect.request_audio_connect(True)
 
     def remove_chain(self, params=None):
         self.zyngui.show_confirm("Do you really want to remove this chain?",

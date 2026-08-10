@@ -61,6 +61,8 @@ typedef struct {
     uint32_t beat;           // Beat counter
     jack_port_t* jack_out_a; // Left jack output port
     jack_port_t* jack_out_b; // Right jack output port
+    jack_port_t* jack_in_a;  // Left jack capture input port
+    jack_port_t* jack_in_b;  // Right jack capture input port
     SNDFILE* sndfile;        // Pointer to an open sndfile used to read current clip data
     Clip* clips[MAX_CLIPS];  // Array of pointers to clip objects
     Clip* current_clip;      // Pointer to the currently playing clip
@@ -86,6 +88,22 @@ static jack_port_t* midi_input_port;
 static jack_client_t* jack_client;
 static volatile uint8_t mutex = 0;
 Player* players[16]; // Up to 16 players, 1 per MIDI channel
+
+typedef struct {
+    volatile uint8_t state; // Record state (REC_STATE)
+    uint8_t channel;        // MIDI channel being recorded
+    uint8_t clip_id;        // Clip index (note - 1) being recorded
+    uint8_t channels;       // Quantity of channels to capture (1 or 2)
+    uint32_t max_frames;    // Capture buffer capacity in frames
+    uint32_t frames;        // Quantity of frames captured so far
+    uint16_t beats;         // Quantity of beat ticks counted whilst recording
+    float tempo;            // Tempo (BPM) when armed
+    float* data[2];         // Capture buffers, handed over to pending_clip at commit
+    Clip* pending_clip;     // Preallocated clip shell committed at punch-out (RT-safe pointer swap)
+    Clip* old_clip;         // Clip displaced at commit, freed later by disarmRecord()
+} Recorder;
+
+static Recorder g_recorder = {REC_IDLE}; // Single global recorder => only one clip records at a time
 
 static void inline getMutex() {
     while (mutex)
@@ -149,6 +167,11 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
     jack_nframes_t numMidiEvents = jack_midi_get_event_count(midi_buffer);
     jack_midi_event_t event;
 
+    // Clip capture bookkeeping for this cycle
+    uint8_t rec_commit = 0;             // Punch-out received this cycle
+    jack_nframes_t rec_from = 0;        // First frame to capture (punch-in offset)
+    jack_nframes_t rec_to = frames;     // Frame after last frame to capture (punch-out offset)
+
     // Received MIDI messages
     for (uint32_t i = 0; i < numMidiEvents; ++i) {
         if (jack_midi_event_get(&event, midi_buffer, i) != 0)
@@ -165,12 +188,42 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                     player = players[channel];
                     if (!player)
                         break;
+                    if (event.buffer[2] >= CLIPPY_VEL_REC_START && event.buffer[2] <= CLIPPY_VEL_REC_ABORT) {
+                        // Record punch messages only act on the armed recorder target
+                        uint8_t clip_id = event.buffer[1] - 1;
+                        switch (event.buffer[2]) {
+                            case CLIPPY_VEL_REC_START:
+                                if (g_recorder.state == REC_ARMED && channel == g_recorder.channel && clip_id == g_recorder.clip_id) {
+                                    g_recorder.frames = 0;
+                                    g_recorder.beats = 0;
+                                    g_recorder.state = REC_RECORDING;
+                                    rec_from = event.time;
+                                    // Recording replaces any playing clip => fade it out this cycle
+                                    if (player->state == STATE_PLAYING)
+                                        player->state = STATE_STOPPING;
+                                }
+                                break;
+                            case CLIPPY_VEL_REC_STOP:
+                                if (g_recorder.state == REC_RECORDING && !rec_commit && channel == g_recorder.channel && clip_id == g_recorder.clip_id) {
+                                    rec_to = event.time;
+                                    rec_commit = 1;
+                                    // Coincident beat tick (emitted after this message) increments to 1, matching a normal clip start
+                                    player->beat = 0;
+                                }
+                                break;
+                            case CLIPPY_VEL_REC_ABORT:
+                                if ((g_recorder.state == REC_ARMED || g_recorder.state == REC_RECORDING) && channel == g_recorder.channel)
+                                    g_recorder.state = REC_ABORTED;
+                                break;
+                        }
+                        break;
+                    }
                     if (event.buffer[1] == 0) {
                         // Note 0 stops playback
                         if (player->state == STATE_PLAYING) {
                             player->state = STATE_STOPPING;
                         } else {
-                            player->state == STATE_READY;
+                            player->state = STATE_READY;
                         }
                     } else {
                         if (player->state == STATE_READY || player->state == STATE_PLAYING) {
@@ -190,7 +243,7 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                                     if (player->state == STATE_PLAYING) {
                                         player->state = STATE_STOPPING;
                                     } else {
-                                        player->state == STATE_READY;
+                                        player->state = STATE_READY;
                                     }
                                 }
                             }
@@ -208,6 +261,9 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
             case MIDI_AFTERTOUCH:
                 // Used for beat sync
                 uint8_t channel = event.buffer[0] & 0x0f;
+                // Count beats whilst capturing (a tick coincident with punch-out arrives after the punch message so is not counted)
+                if (g_recorder.state == REC_RECORDING && !rec_commit && channel == g_recorder.channel)
+                    g_recorder.beats++;
                 player = players[channel];
                 if (!player)
                     break;
@@ -230,6 +286,55 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                 player->beat++;
                 //printf("Beat => %d\n", player->beat);
                 break;
+        }
+    }
+
+    // Capture audio into record buffer
+    if (g_recorder.state == REC_RECORDING) {
+        Player* rp = players[g_recorder.channel];
+        jack_nframes_t n = (rec_to > rec_from) ? (rec_to - rec_from) : 0;
+        jack_nframes_t avail = (g_recorder.max_frames > g_recorder.frames) ? (g_recorder.max_frames - g_recorder.frames) : 0;
+        if (n > avail) {
+            // Capture buffer exhausted => abandon recording (safety net - zynseq's bar cap should punch out first)
+            g_recorder.state = REC_OVERFLOW;
+        } else if (rp && rp->jack_in_a && rp->jack_in_b) {
+            if (n) {
+                float* in = jack_port_get_buffer(rp->jack_in_a, frames);
+                memcpy(g_recorder.data[0] + g_recorder.frames, in + rec_from, n * sizeof(float));
+                if (g_recorder.channels == 2) {
+                    in = jack_port_get_buffer(rp->jack_in_b, frames);
+                    memcpy(g_recorder.data[1] + g_recorder.frames, in + rec_from, n * sizeof(float));
+                }
+                g_recorder.frames += n;
+            }
+            if (rec_commit) {
+                // Commit recording as the clip and start looping it (pointer swaps only)
+                Clip* clip = g_recorder.pending_clip;
+                clip->frames = g_recorder.frames;
+                clip->nbeats = g_recorder.beats ? g_recorder.beats : 1;
+                clip->channels = g_recorder.channels;
+                clip->tempo = g_recorder.tempo;
+                clip->start = 0;
+                clip->end = clip->frames;
+                clip->data[0] = g_recorder.data[0];
+                clip->data[1] = (g_recorder.channels == 2) ? g_recorder.data[1] : g_recorder.data[0];
+                clip->state = STATE_READY;
+                g_recorder.old_clip = rp->clips[g_recorder.clip_id];
+                if (rp->current_clip == g_recorder.old_clip) {
+                    rp->current_clip = NULL;
+                    rp->current_clip_id = -1;
+                }
+                rp->clips[g_recorder.clip_id] = clip;
+                // Seamless record => loop: start playback of the new clip at the punch-out frame
+                // (playback section below consumes starting_clip and sets STATE_PLAYING)
+                rp->starting_clip = clip;
+                rp->starting_clip_id = g_recorder.clip_id;
+                rp->start_frame = rec_to;
+                g_recorder.data[0] = NULL;
+                g_recorder.data[1] = NULL;
+                g_recorder.pending_clip = NULL;
+                g_recorder.state = REC_DONE;
+            }
         }
     }
 
@@ -285,6 +390,9 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
 }
 
 void reset() {
+    // Recording cannot survive a samplerate change => abandon it
+    if (g_recorder.state != REC_IDLE)
+        disarmRecord();
     getMutex();
     for (uint8_t ch = 0; ch < 16; ch++) {
         Player* player = players[ch];
@@ -293,7 +401,8 @@ void reset() {
         player->state=STATE_LOAD;
         for (uint8_t id = 0; id < MAX_CLIPS; ++id) {
             Clip* clip = player->clips[id];
-            if (clip) {
+            // Skip clips not yet saved to file (recorded, empty path) => cannot be reloaded
+            if (clip && clip->path[0]) {
                 releaseMutex();
                 loadClip(ch, id + 1, clip->path, clip->nbeats, clip->start,
                          clip->end, clip->quality, clip->tempo, clip->tempo_lock);
@@ -328,8 +437,8 @@ void changeTempo(float tempo) {
                 continue;
             uint8_t id = (ids[ch] + i) % MAX_CLIPS;
             Clip* clip = player->clips[id];
-            // Don't process clips with tempo=0 (no timestretch) or locked tempo.
-            if (clip && !clip->tempo_lock && clip->tempo > 0 && tempo != clip->tempo) {
+            // Don't process clips with tempo=0 (no timestretch), locked tempo or no file (recorded, unsaved).
+            if (clip && clip->path[0] && !clip->tempo_lock && clip->tempo > 0 && tempo != clip->tempo) {
                 loadClip(ch, id + 1, clip->path, clip->nbeats, clip->start, clip->end, clip->quality, tempo, clip->tempo_lock);
             }
         }
@@ -353,7 +462,7 @@ void changeClipTempo(uint8_t channel, uint8_t id, float tempo) {
     Player* player = players[channel];
     if (!player) return;
     Clip* clip = player->clips[id];
-    if (clip && tempo != clip->tempo) {
+    if (clip && clip->path[0] && tempo != clip->tempo) {
         // Reload clip, recalculating timestretch with new tempo
         loadClip(channel, id + 1, clip->path, clip->nbeats, clip->start, clip->end, clip->quality, tempo, clip->tempo_lock);
     }
@@ -380,6 +489,7 @@ static int onSamplerate(jack_nframes_t frames, __attribute__((unused)) void* arg
 }
 
 void end() {
+    disarmRecord();
     for (uint8_t i = 0; i < 16; ++i)
         removePlayer(i);
     if (jack_client)
@@ -457,6 +567,12 @@ uint8_t addPlayer(uint8_t channel) {
     player->jack_out_b = jack_port_register(jack_client, name, JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
     if (player->jack_out_a == NULL || player->jack_out_b == NULL)
         fprintf(stderr, "Clippy error: failed to create jack output ports\n");
+    sprintf(name, "input_%02ua", channel + 1);
+    player->jack_in_a = jack_port_register(jack_client, name, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0);
+    sprintf(name, "input_%02ub", channel + 1);
+    player->jack_in_b = jack_port_register(jack_client, name, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0);
+    if (player->jack_in_a == NULL || player->jack_in_b == NULL)
+        fprintf(stderr, "Clippy error: failed to create jack input ports\n");
     for (uint32_t id = 0; id < MAX_CLIPS; ++id)
         player->clips[id] = NULL;
     player->current_clip_id = -1;
@@ -473,6 +589,12 @@ uint8_t removePlayer(uint8_t channel) {
     Player* player = players[channel];
     if(player == NULL)
         return ERROR_CREATE;
+    // Abort any recording targeting this player
+    if ((g_recorder.state == REC_ARMED || g_recorder.state == REC_RECORDING) && g_recorder.channel == channel) {
+        getMutex();
+        g_recorder.state = REC_ABORTED;
+        releaseMutex();
+    }
     getMutex();
     players[channel] = NULL;
     releaseMutex();
@@ -485,6 +607,8 @@ uint8_t removePlayer(uint8_t channel) {
     }
     jack_port_unregister(jack_client, player->jack_out_a);
     jack_port_unregister(jack_client, player->jack_out_b);
+    jack_port_unregister(jack_client, player->jack_in_a);
+    jack_port_unregister(jack_client, player->jack_in_b);
     free(player);
     return ERROR_SUCCESS;
 }
@@ -917,6 +1041,12 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
     uint8_t id = note - 1;
     if(id >= MAX_CLIPS)
         return ERROR_RANGE;
+    // Abort any recording targeting this clip slot
+    if ((g_recorder.state == REC_ARMED || g_recorder.state == REC_RECORDING) && g_recorder.channel == channel && g_recorder.clip_id == id) {
+        getMutex();
+        g_recorder.state = REC_ABORTED;
+        releaseMutex();
+    }
     Clip* clip = player->clips[id];
     if(clip == NULL)
         return ERROR_RANGE;
@@ -931,6 +1061,110 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
         free(clip->data[i]);
     free(clip);
     return ERROR_SUCCESS;
+}
+
+uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, uint32_t max_frames) {
+    // Auto-clean a finished / aborted recording
+    if (g_recorder.state == REC_DONE || g_recorder.state == REC_ABORTED || g_recorder.state == REC_OVERFLOW)
+        disarmRecord();
+    if (g_recorder.state != REC_IDLE)
+        return ERROR_EXISTS;
+    if (channel >= 16 || note == 0 || note > MAX_CLIPS || channels < 1 || channels > 2)
+        return ERROR_RANGE;
+    if (!players[channel])
+        return ERROR_RANGE;
+    if (max_frames == 0)
+        max_frames = MAX_DURATION * samplerate;
+    Clip* clip = malloc(sizeof(Clip));
+    if (!clip)
+        return ERROR_CREATE;
+    memset(clip, 0, sizeof(Clip));
+    clip->gain = 1.0f;
+    clip->state = STATE_IDLE;
+    g_recorder.data[0] = malloc(max_frames * sizeof(float));
+    g_recorder.data[1] = (channels == 2) ? malloc(max_frames * sizeof(float)) : NULL;
+    if (!g_recorder.data[0] || (channels == 2 && !g_recorder.data[1])) {
+        free(g_recorder.data[0]);
+        free(g_recorder.data[1]);
+        g_recorder.data[0] = NULL;
+        g_recorder.data[1] = NULL;
+        free(clip);
+        return ERROR_CREATE;
+    }
+    g_recorder.channel = channel;
+    g_recorder.clip_id = note - 1;
+    g_recorder.channels = channels;
+    g_recorder.max_frames = max_frames;
+    g_recorder.frames = 0;
+    g_recorder.beats = 0;
+    g_recorder.tempo = tempo;
+    g_recorder.pending_clip = clip;
+    g_recorder.old_clip = NULL;
+    getMutex();
+    g_recorder.state = REC_ARMED;
+    releaseMutex();
+    return ERROR_SUCCESS;
+}
+
+uint8_t disarmRecord() {
+    getMutex();
+    g_recorder.state = REC_IDLE;
+    releaseMutex();
+    // Free anything not handed over to a committed clip
+    free(g_recorder.data[0]);
+    free(g_recorder.data[1]);
+    g_recorder.data[0] = NULL;
+    g_recorder.data[1] = NULL;
+    if (g_recorder.pending_clip) {
+        free(g_recorder.pending_clip);
+        g_recorder.pending_clip = NULL;
+    }
+    if (g_recorder.old_clip) {
+        for (int i = 0; i < g_recorder.old_clip->channels; i++)
+            free(g_recorder.old_clip->data[i]);
+        free(g_recorder.old_clip);
+        g_recorder.old_clip = NULL;
+    }
+    return ERROR_SUCCESS;
+}
+
+uint8_t getRecordState() {
+    return g_recorder.state;
+}
+
+uint8_t getRecordChannel() {
+    return g_recorder.channel;
+}
+
+uint8_t getRecordNote() {
+    return g_recorder.clip_id + 1;
+}
+
+uint32_t getRecordedFrames() {
+    return g_recorder.frames;
+}
+
+uint16_t getRecordedBeats() {
+    return g_recorder.beats;
+}
+
+int saveClip(uint8_t channel, uint8_t note, const char* path) {
+    if (channel >= 16 || note == 0 || note > MAX_CLIPS || !path)
+        return 1;
+    Player* player = players[channel];
+    if (!player)
+        return 1;
+    Clip* clip = player->clips[note - 1];
+    if (!clip)
+        return 1;
+    if (strlen(path) >= sizeof(clip->path)) {
+        fprintf(stderr, "saveClip(): Path too long '%s'.\n", path);
+        return 1;
+    }
+    if (saveFile(path, clip->data, samplerate, clip->channels, clip->frames))
+        return 1;
+    strcpy(clip->path, path);
+    return 0;
 }
 
 float toDb(float val) {

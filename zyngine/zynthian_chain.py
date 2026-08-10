@@ -71,6 +71,8 @@ class zynthian_chain:
         self.midi_out = []
         self.audio_in = []
         self.audio_out = []
+        # Clip record source (clippy chains): None | source chain_id | list of 1-2 hw capture port indices
+        self.capture_src = None
 
         self.status = ""  # Arbitary status text => THIS IS NOT USED AT ALL, RIGHT?
 
