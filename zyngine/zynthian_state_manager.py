@@ -153,6 +153,9 @@ class zynthian_state_manager:
         self.audio_player = None
         self.aubio_in = [1, 2]  # List of aubio inputs
         self.session_record_mode = False  # True when pad presses arm clip recording (Ableton session record)
+        self.record_quantize = 16  # Live MIDI record quantize grid: note divisor (2=1/2, 4=1/4, 8=1/8, 16=1/16)
+        self.record_quantize_enabled = True  # Toggled off keeps record_quantize for restoring
+        self.apply_record_quantize()
         self.midi_record_pad = None  # (phrase, midi_chan) of launcher pad capturing MIDI input, None when idle
         self.record_metronome_depth = 0  # Count of in-flight recordings forcing the metronome on
         self.saved_metronome_mode = None  # Metronome mode to restore when recordings finish
@@ -1003,6 +1006,10 @@ class zynthian_state_manager:
             'chains': self.chain_manager.get_state(),
             'zs3': self.zs3,
             'last_zs3_id': self.last_zs3_id,
+            'record_quantize': {
+                'enabled': self.record_quantize_enabled,
+                'value': self.record_quantize
+            },
             'gui': {
                 'pinned_chains': self.chain_manager.get_pinned_count()
             }
@@ -1057,7 +1064,7 @@ class zynthian_state_manager:
                         except:
                             pass
 
-            for key in ["last_snapshot_fpath", "midi_profile_state", "zynseq"]:
+            for key in ["last_snapshot_fpath", "midi_profile_state", "zynseq", "record_quantize"]:
                 try:
                     del state[key]
                 except:
@@ -1160,7 +1167,7 @@ class zynthian_state_manager:
 
                     if merge:
                         # Remove elements that are not to be merged
-                        for key in ["last_snapshot_fpath", "last_zs3_id", "midi_profile_state", "zynseq"]:
+                        for key in ["last_snapshot_fpath", "last_zs3_id", "midi_profile_state", "zynseq", "record_quantize"]:
                             try:
                                 del state[key]
                             except:
@@ -1250,6 +1257,11 @@ class zynthian_state_manager:
                 # GUI
                 if "gui" in state:
                     self.chain_manager.set_pinned(state["gui"].get("pinned_chains", 1))
+
+                if "record_quantize" in state:
+                    self.record_quantize = state["record_quantize"].get("value", 16)
+                    self.record_quantize_enabled = bool(state["record_quantize"].get("enabled", True))
+                    self.apply_record_quantize()
 
 
             # Save last snapshot info and get snapshot's program number
@@ -2392,6 +2404,35 @@ class zynthian_state_manager:
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_MODE,
                               mode=self.session_record_mode)
         return self.session_record_mode
+
+    def toggle_record_quantize(self):
+        """Toggle live MIDI record quantize on/off, keeping the configured grid size"""
+
+        self.record_quantize_enabled = not self.record_quantize_enabled
+        self.apply_record_quantize()
+        return self.record_quantize_enabled
+
+    def set_record_quantize(self, value):
+        """Set the live MIDI record quantize grid
+
+        value: Note divisor (2=1/2, 4=1/4, 8=1/8, 16=1/16) or 0/None to disable, keeping the last grid
+        """
+
+        if value:
+            self.record_quantize = value
+            self.record_quantize_enabled = True
+        else:
+            self.record_quantize_enabled = False
+        self.apply_record_quantize()
+
+    def apply_record_quantize(self):
+        """Push the record quantize grid to the sequencer as clocks per grid line"""
+
+        if self.record_quantize_enabled and self.record_quantize:
+            clocks = self.zynseq.PPQN * 4 // self.record_quantize
+        else:
+            clocks = 0
+        self.zynseq.libseq.setInputQuantize(clocks)
 
     def start_record_metronome(self):
         """Force the metronome audible while a clip/pattern recording is in flight"""

@@ -1450,6 +1450,17 @@ class zynthian_gui:
     def cuia_toggle_session_record(self, params=None):
         self.state_manager.toggle_session_record()
 
+    def cuia_toggle_record_quantize(self, params=None):
+        # Toggle live MIDI record quantize on/off (the configured grid size is kept)
+        self.state_manager.toggle_record_quantize()
+
+    def cuia_set_record_quantize(self, params=None):
+        # Set the record quantize grid: 0=OFF, N=1/N note (2, 4, 8 or 16)
+        try:
+            self.state_manager.set_record_quantize(int(params[0]))
+        except (TypeError, ValueError, IndexError):
+            logging.error(f"Bad record quantize value: {params} (expected 0, 2, 4, 8 or 16)")
+
     def cuia_toggle_pad_record(self, params=None):
         # Punch in/out clip/MIDI recording on the selected launcher pad
         self.screens["mixer"].cuia_toggle_pad_record(params)

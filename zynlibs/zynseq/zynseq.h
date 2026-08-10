@@ -804,6 +804,18 @@ uint8_t getQuantizeNotes();
 */
 void setQuantizeNotes(uint8_t qn);
 
+/** @brief  Set the live MIDI record input quantization grid
+    @param  clocks Grid size in sequencer clock cycles (0 to disable), e.g. PPQN for 1/4 note snap
+    @note   Note starts are snapped to the nearest grid line as they are recorded into the pattern.
+            Durations keep their played length. Applies to all live MIDI capture.
+*/
+void setInputQuantize(uint32_t clocks);
+
+/** @brief  Get the live MIDI record input quantization grid
+    @retval uint32_t Grid size in sequencer clock cycles (0 = disabled)
+*/
+uint32_t getInputQuantize();
+
 /** @brief  Get the "Interpolate CC values" flag for a given CC number
 	@param  ccnum
 	@retval bool flag

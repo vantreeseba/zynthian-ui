@@ -55,6 +55,7 @@
 // Structure to capture live recorded MIDI events
 struct ev_start {
     uint32_t start;
+    uint32_t raw;  // Unquantized start position (clocks) => duration keeps the played length
     uint8_t velocity;
     float offset;
 };
@@ -87,6 +88,7 @@ uint32_t g_nTransportClients        = 0;            // Bitwise flags indicating 
 uint8_t g_nTransportState           = STOPPED;      // State of local (non-jack) transport
 bool g_bTransportRolling            = false;        // True if (arranger) transport rolling forward bars
 bool g_bMidiRecord                  = false;        // True to add notes to current pattern from MIDI input
+uint32_t g_nInputQuantize           = 0;            // Live MIDI record note-start snap grid in clocks (0 = off)
 uint8_t g_nSustainValue             = 0;            // Last sustain pedal value during note input (recording)
 uint32_t g_nSustainStart            = 0;            // Step when sustain pedal was last pressed
 uint32_t g_nLastStepCC              = 0;            // Step when last => WARNING!! Doesn't work if capturing several CC at once!
@@ -341,6 +343,14 @@ int onJackProcess(jack_nframes_t nFrames, void* pArgs) {
                     double dclk = double(fpos) / g_dFramesPerTick;
                     uint32_t nPlayPos = g_seqMan.getSequence(g_nScene, g_nPhrase, g_nSequence)->getPlayPosition() + int(dclk);
                     //fprintf(stderr, "START NOTE %d => %d (DCLK = %f)\n", nNum1, nPlayPos, dclk);
+                    startEvents[nNum1].raw = nPlayPos;
+                    if (g_nInputQuantize) {
+                        // Snap note start to the nearest musical grid line, wrapping at the loop end
+                        uint32_t nLength = g_seqMan.getSequence(g_nScene, g_nPhrase, g_nSequence)->getLength();
+                        nPlayPos = ((nPlayPos + g_nInputQuantize / 2) / g_nInputQuantize) * g_nInputQuantize;
+                        if (nLength && nPlayPos >= nLength)
+                            nPlayPos %= nLength;
+                    }
                     startEvents[nNum1].start = nPlayPos;
                     startEvents[nNum1].velocity = nNum2;
                 }
@@ -355,7 +365,8 @@ int onJackProcess(jack_nframes_t nFrames, void* pArgs) {
                         uint32_t nClocksPerStep = g_pPattern->getClocksPerStep();
                         uint32_t nStart = startEvents[nNum1].start / nClocksPerStep;
                         float fOffset = double(startEvents[nNum1].start % nClocksPerStep) / nClocksPerStep;
-                        float fDuration = double(int(nPlayPos) - int(startEvents[nNum1].start)) / nClocksPerStep;
+                        // Duration keeps the played length: measured from the unquantized start
+                        float fDuration = double(int(nPlayPos) - int(startEvents[nNum1].raw)) / nClocksPerStep;
                         // Constrain duration
                          if (fDuration < 0.0)
                             fDuration += g_pPattern->getSteps();
@@ -2413,6 +2424,14 @@ uint8_t getQuantizeNotes() {
 void setQuantizeNotes(uint8_t qn) {
     if (g_pPattern)
         g_pPattern->setQuantizeNotes(qn);
+}
+
+void setInputQuantize(uint32_t clocks) {
+    g_nInputQuantize = clocks;
+}
+
+uint32_t getInputQuantize() {
+    return g_nInputQuantize;
 }
 
 void setInterpolateCC(uint8_t ccnum, bool flag) {

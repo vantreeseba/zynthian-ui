@@ -2015,6 +2015,11 @@ class zynthian_gui_mixer(zynthian_gui_base):
             title += f": {name}"
         #options["> Phrase Options"] = None
         options[f"⏺ Session record ({'ON' if self.state_manager.session_record_mode else 'OFF'})"] = None
+        if self.state_manager.record_quantize_enabled:
+            rq_label = f"1/{self.state_manager.record_quantize}"
+        else:
+            rq_label = "OFF"
+        options[f"Record quantize ({rq_label})"] = None
         if repeat == 0:
             options["Duration (DISABLED)"] = repeat
         else:
@@ -2113,6 +2118,14 @@ class zynthian_gui_mixer(zynthian_gui_base):
             index = option_screen.index
             self.phrase_menu()
             option_screen.select(index)
+        elif option.startswith("Record quantize"):
+            sm = self.state_manager
+            option_screen.enable_param_editor(option_screen, "record_quantize", {
+                'name': 'Record quantize',
+                'ticks': [0, 2, 4, 8, 16],
+                'labels': ['OFF', '1/2', '1/4', '1/8', '1/16'],
+                'value': sm.record_quantize if sm.record_quantize_enabled else 0,
+            }, assert_cb=self.cb_assert_param_editor)
         elif option.startswith("Rename"):
             self.zyngui.show_keyboard(self.rename_phrase, params, 8)
         elif option.startswith("Append phrase"):
@@ -2369,6 +2382,8 @@ class zynthian_gui_mixer(zynthian_gui_base):
         if chan is None:
             chan = zynseq.PHRASE_CHANNEL
         match zctrl.symbol:
+            case "record_quantize":
+                self.state_manager.set_record_quantize(zctrl.value)
             case "tempo":
                 self.zynseq.set_sequence_param(self.zynseq.scene, phrase, zynseq.PHRASE_CHANNEL, "tempo", zctrl.value)
                 if "CL" in self.chain_manager.zyngines:
