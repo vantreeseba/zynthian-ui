@@ -1191,6 +1191,12 @@ class zynthian_gui:
         self.state_manager.clean_sequences()
         self.show_screen_reset('launcher')
 
+    def session_reset(self, params=None):
+        if self.chain_manager.get_chain_count() > 1:
+            self.state_manager.save_last_state_snapshot()
+        self.state_manager.session_reset()
+        self.show_screen_reset('launcher')
+
     # -------------------------------------------------------------------
     # Callable UI Actions
     # -------------------------------------------------------------------
@@ -1447,6 +1453,14 @@ class zynthian_gui:
     def cuia_toggle_pad_record(self, params=None):
         # Punch in/out clip/MIDI recording on the selected launcher pad
         self.screens["mixer"].cuia_toggle_pad_record(params)
+
+    def cuia_session_reset(self, params=None):
+        # Remove all sequences, pads and clips (audio files deleted from disk), keeping chains
+        if params == ['CONFIRM']:
+            self.session_reset()
+        else:
+            self.show_confirm("Reset session?\n\nAll sequences, pads and clips will be removed and clip audio files DELETED from disk.\n\nChains and settings are kept.",
+                              self.session_reset)
 
     def cuia_stop(self, params=None):
         if self.get_alt_mode():

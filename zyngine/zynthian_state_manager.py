@@ -341,6 +341,29 @@ class zynthian_state_manager:
         self.end_busy("clean sequences")
         self.busy.clear()  # Sometimes it's needed, why??
 
+    def session_reset(self):
+        """Reset the session content built up in the pad/session view: stop playback,
+        abort in-flight recordings, clear all clip pads (deleting their audio files
+        from disk) and remove all sequences. Chains, mixer and other settings are kept."""
+
+        self.start_busy("session reset", "resetting session...")
+        self.stop_pad_midi_record()
+        self.zynseq.libseq.stop()
+        if self.session_record_mode:
+            self.toggle_session_record()
+        for chain in self.chain_manager.chains.values():
+            proc = chain.get_clippy_processor()
+            if proc is None:
+                continue
+            engine = proc.engine
+            for rec_proc, rec_phrase in list(engine.recordings.keys()):
+                engine.cleanup_recording(rec_proc, rec_phrase)
+            for phrase in range(self.zynseq.phrases):
+                engine.clear_clip(proc, phrase, delete_file=True)
+        self.clean(chains=False, zynseq=True)
+        self.end_busy("session reset")
+        self.busy.clear()
+
     def mute(self, mute=True, wait=0.01):
         self.main_mixbus_proc.controllers_dict["mute"].set_value(mute)
         sleep(wait)
