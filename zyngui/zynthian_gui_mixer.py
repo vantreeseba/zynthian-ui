@@ -2017,6 +2017,14 @@ class zynthian_gui_mixer(zynthian_gui_base):
         else:
             options[f"Rename"] = ""
         options["> EDIT"] = None
+        try:
+            clippy_proc = self.highlighted_strip.chain.get_clippy_processor()
+            has_clip = bool(clippy_proc.controllers_dict[f"file {phrase + 1}"].get_value())
+        except Exception:
+            has_clip = False
+        if has_clip:
+            options["Clear clip"] = phrase
+            options["Delete clip + audio file"] = phrase
         options["Insert phrase"] = phrase
         options["Clone phrase"] = phrase
         if self.zynseq.phrases > 1:
@@ -2078,6 +2086,10 @@ class zynthian_gui_mixer(zynthian_gui_base):
             self.zyngui.show_screen("launcher")
         elif option.startswith("Delete phrase"):
             self.zyngui.show_confirm(f"Remove phrase {params + 1}?", self.remove_phrase, params)
+        elif option == "Clear clip":
+            self.zyngui.show_confirm("Clear this clip pad?\n(The audio file is kept on disk)", self.clear_clip_confirmed, (params, False))
+        elif option == "Delete clip + audio file":
+            self.zyngui.show_confirm("Clear this clip pad and DELETE its audio file from disk?", self.clear_clip_confirmed, (params, True))
         elif option.startswith("Move phrase"):
             self.moving_phrase = True
             self.zyngui.show_screen("launcher")
@@ -2182,6 +2194,15 @@ class zynthian_gui_mixer(zynthian_gui_base):
     def remove_phrase(self, phrase):
         self.zynseq.remove_phrase(self.zynseq.scene, phrase)
         self.build_launchers()
+        self.zyngui.show_screen("launcher")
+
+    def clear_clip_confirmed(self, params):
+        phrase, delete_file = params
+        try:
+            proc = self.highlighted_strip.chain.get_clippy_processor()
+            proc.engine.clear_clip(proc, phrase, delete_file)
+        except Exception as e:
+            logging.error(f"Can't clear clip => {e}")
         self.zyngui.show_screen("launcher")
 
     def drag_launcher(self, dy):

@@ -458,6 +458,41 @@ class zynthian_engine_clippy(zynthian_engine):
             logging.error(e)
         return False
 
+    def clear_clip(self, processor, phrase, delete_file=False):
+        """ Clear a clip pad and optionally delete its audio file from disk
+
+        processor: Clippy processor
+        phrase: Phrase index
+        delete_file: True to also delete the audio file (skipped if another pad still references it)
+        Returns: True on success
+        """
+
+        if (processor, phrase) in self.recordings:
+            logging.warning("Can't clear a clip while it is recording")
+            return False
+        try:
+            file_zctrl = processor.controllers_dict[f"file {phrase + 1}"]
+        except Exception:
+            return False
+        fpath = file_zctrl.value
+        file_zctrl.set_value("", False)
+        self.set_file(processor, phrase)
+        if delete_file and fpath and os.path.isfile(fpath):
+            # Don't delete a file still referenced by another clip pad
+            for proc in self.processors:
+                for note in range(1, self.zynseq.phrases + 1):
+                    try:
+                        if proc.controllers_dict[f"file {note}"].value == fpath:
+                            logging.warning(f"Not deleting '{fpath}' => still used by another clip pad")
+                            return True
+                    except Exception:
+                        pass
+            try:
+                os.remove(fpath)
+            except OSError as e:
+                logging.error(f"Can't delete clip audio file '{fpath}' => {e}")
+        return True
+
     # ---------------------------------------------------------------
     # Callbacks to re-warp sample file when needed (on-the-fly)
     # ---------------------------------------------------------------
