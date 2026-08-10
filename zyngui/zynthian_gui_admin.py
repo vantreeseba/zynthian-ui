@@ -125,6 +125,15 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
                 self.list_data.append((self.toggle_bank_change, 0, "\u2610 MIDI Bank Change",
                                        ["Don't select bank when MIDI Program Change received", "midi_settings.png"]))
 
+        if zynthian_gui_config.master_midi_channel >= 0:
+            info_txt = "Dispatch MIDI-learned CC bindings received on the master channel. Other master channel messages keep their special behaviour."
+            if zynthian_gui_config.master_midi_learn_cc:
+                self.list_data.append((self.toggle_master_learn_cc, 0, "☒ MIDI-learn on Master channel",
+                                       [info_txt, "midi_settings.png"]))
+            else:
+                self.list_data.append((self.toggle_master_learn_cc, 0, "☐ MIDI-learn on Master channel",
+                                       [info_txt, "midi_settings.png"]))
+
         gtrans = lib_zyncore.get_global_transpose()
         if gtrans > 0:
             display_val = f"+{gtrans}"
@@ -682,6 +691,20 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         # Save config
         zynconf.update_midi_profile({
             "ZYNTHIAN_MIDI_BANK_CHANGE": str(int(zynthian_gui_config.midi_bank_change))
+        })
+        self.update_list()
+
+    def toggle_master_learn_cc(self):
+        if zynthian_gui_config.master_midi_learn_cc:
+            logging.info("Master channel MIDI-learn CC OFF")
+            zynthian_gui_config.master_midi_learn_cc = 0
+        else:
+            logging.info("Master channel MIDI-learn CC ON")
+            zynthian_gui_config.master_midi_learn_cc = 1
+
+        # Save config
+        zynconf.update_midi_profile({
+            "ZYNTHIAN_MIDI_MASTER_LEARN_CC": str(zynthian_gui_config.master_midi_learn_cc)
         })
         self.update_list()
 

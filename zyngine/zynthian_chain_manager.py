@@ -1754,17 +1754,18 @@ class zynthian_chain_manager:
         except:
             return None
 
-    def midi_control_change(self, zmip, midi_chan, cc_num, cc_val):
+    def midi_control_change(self, zmip, midi_chan, cc_num, cc_val, learned_only=False):
         """Send MIDI CC message to relevant chain
 
         zmip : Index of MIDI input device
         midi_chan : MIDI channel
         cc_num : CC number
         cc_val : CC value
+        learned_only : True to only dispatch MIDI-learned CC bindings (no bank change)
         """
         # Handle bank change (CC0/32)
         # TODO: Validate and optimise bank change code
-        if zynthian_gui_config.midi_bank_change:
+        if zynthian_gui_config.midi_bank_change and not learned_only:
             for chain_id in self._midi_chan_2_chain_ids[midi_chan]:
                 chain = self.chains[chain_id]
                 if cc_num == 0:

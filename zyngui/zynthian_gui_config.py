@@ -418,6 +418,7 @@ def set_mmc_config():
     global master_midi_program_base, master_midi_bank_change_ccnum
     global master_midi_bank_change_up, master_midi_bank_change_down
     global master_midi_bank_change_down_ccnum, master_midi_bank_base
+    global master_midi_learn_cc
 
     # Master Channel Features
     master_midi_channel = int(os. environ.get("ZYNTHIAN_MIDI_MASTER_CHANNEL", 0))
@@ -428,6 +429,9 @@ def set_mmc_config():
         mmc_hex = hex(master_midi_channel)[2]
     else:
         mmc_hex = None
+
+    # Dispatch MIDI-learned CC bindings received on the master channel
+    master_midi_learn_cc = get_env_int("ZYNTHIAN_MIDI_MASTER_LEARN_CC", 0)
 
     # Predefined config for MMC Bank/Program change UP/DOWN (incremental)
     master_midi_change_type = os.environ.get("ZYNTHIAN_MIDI_MASTER_CHANGE_TYPE", "Roland")

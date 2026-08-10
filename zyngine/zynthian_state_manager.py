@@ -853,6 +853,10 @@ class zynthian_state_manager:
                         else:
                             if self.midi_learn_zctrl:
                                 self.chain_manager.add_midi_learn(chan, ccnum, self.midi_learn_zctrl, izmip)
+                            elif zynthian_gui_config.master_midi_learn_cc:
+                                # Dispatch MIDI-learned CC bindings only => other master channel
+                                # messages keep their special behaviour
+                                self.chain_manager.midi_control_change(izmip, chan, ccnum, ccval, learned_only=True)
                     # Master Note CUIA with ZynSwitch emulation
                     elif evtype == 0x8 or evtype == 0x9:
                         note = str(ev[1] & 0x7F)
