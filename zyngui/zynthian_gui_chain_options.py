@@ -100,7 +100,7 @@ class zynthian_gui_chain_options(zynthian_gui_selector_info):
             self.list_data.append((self.select_record_source, None, "Record source...",
                                    ["Select the audio source to record into clips: another chain's output or hardware audio inputs.", "audio_input.png"]))
             self.list_data.append((self.select_monitor_mode, None, f"Monitor record source ({self.chain.monitor_mode.upper()})",
-                                   ["Pass the record source through to this chain's output so you can hear yourself while playing live.\n\nOnly affects hardware input sources: a source chain is already audible through its own strip.", "audio_input.png"]))
+                                   ["Pass the record source through to this chain's output so you can hear yourself while playing live.\n\nIf the source is a chain that is also routed to the main mix, monitoring will double its signal.", "audio_input.png"]))
 
         self.list_data.append((self.export_chain, None, "Export chain as snapshot...",
                                 ["Save this chain as a snapshot.\n\nThe saved snapshot may loaded or may be imported into another snapshot.", "snapshot_chains.png"]))
@@ -231,7 +231,7 @@ class zynthian_gui_chain_options(zynthian_gui_selector_info):
         options[(checked if mm == "auto" else unchecked) + "Auto"] = ["auto",
             ["Hear the record source only while a clip recording is armed or in progress.", "audio_input.png"]]
         options[(checked if mm == "on" else unchecked) + "On"] = ["on",
-            ["Always hear the record source through this chain, e.g. to play live over looping clips.\n\nOnly affects hardware input sources: a source chain is already audible through its own strip.", "audio_input.png"]]
+            ["Always hear the record source through this chain, e.g. to play live over looping clips.\n\nIf the source is a chain that is also routed to the main mix, monitoring will double its signal.", "audio_input.png"]]
         self.zyngui.screens['option'].config("Monitor record source", options, self.set_monitor_mode)
         self.zyngui.show_screen('option')
 

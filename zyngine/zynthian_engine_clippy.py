@@ -727,7 +727,7 @@ class zynthian_engine_clippy(zynthian_engine):
 
         try:
             chain = self.state_manager.chain_manager.get_chain(processor.chain_id)
-            if chain and chain.monitor_mode == "auto" and isinstance(chain.capture_src, list):
+            if chain and chain.monitor_mode == "auto" and chain.capture_src is not None:
                 zynautoconnect.request_audio_connect(True)
         except Exception:
             pass
