@@ -322,6 +322,21 @@ class zynthian_gui_base(tkinter.Frame):
             text="\uf04b",
             state=tkinter.HIDDEN)
 
+        # Clip session-record mode: red circle boxed in a red outline
+        x = int(self.status_fs * 7.8)
+        y1 = self.status_h - 3
+        y0 = y1 - self.status_fs
+        pad = max(2, self.status_fs // 4)
+        self.status_clip_rec_box = self.status_canvas.create_rectangle(
+            x, y0, x + self.status_fs, y1,
+            outline=zynthian_gui_config.color_status_record,
+            state=tkinter.HIDDEN)
+        self.status_clip_rec = self.status_canvas.create_oval(
+            x + pad, y0 + pad, x + self.status_fs - pad, y1 - pad,
+            fill=zynthian_gui_config.color_status_record,
+            outline="",
+            state=tkinter.HIDDEN)
+
         self.status_midi = self.status_canvas.create_text(
             self.status_l,
             self.status_h - 2,
@@ -461,6 +476,18 @@ class zynthian_gui_base(tkinter.Frame):
             else:
                 self.status_canvas.itemconfig(
                     self.status_seq_play, state=tkinter.HIDDEN)
+
+            # Display clip session-record mode flag
+            if self.state_manager.clip_record_mode:
+                self.status_canvas.itemconfig(
+                    self.status_clip_rec_box, state=tkinter.NORMAL)
+                self.status_canvas.itemconfig(
+                    self.status_clip_rec, state=tkinter.NORMAL)
+            else:
+                self.status_canvas.itemconfig(
+                    self.status_clip_rec_box, state=tkinter.HIDDEN)
+                self.status_canvas.itemconfig(
+                    self.status_clip_rec, state=tkinter.HIDDEN)
 
             # Display MIDI activity flag
             if self.state_manager.status_midi:
