@@ -118,12 +118,14 @@ class zynthian_engine_clippy(zynthian_engine):
         self.zynseq.clippy = self
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TEMPO, self.start_tempo_timer)
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.on_seq_play_state)
+        zynsigman.register_queued(zynsigman.S_MIXER, zynsigman.SS_ZYNMIXER_SET_VALUE, self.on_mixer_set_value)
 
     def stop(self):
         logging.info("Stopping Engine " + self.name)
         self.zynseq.clippy = None
         zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TEMPO, self.start_tempo_timer)
         zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.on_seq_play_state)
+        zynsigman.unregister(zynsigman.S_MIXER, zynsigman.SS_ZYNMIXER_SET_VALUE, self.on_mixer_set_value)
         self.recordings = {}
         self.libclippy.end()
 
@@ -729,7 +731,8 @@ class zynthian_engine_clippy(zynthian_engine):
         """Set clippy live input monitoring for a processor per its chain's monitor mode
 
         on: always monitor
-        auto: monitor while session record mode is enabled or a recording is armed/in flight
+        auto: monitor while the track's record arm is on, session record mode is
+        enabled or a recording is armed/in flight
         Only hardware input sources monitor - a source chain is audible via its own strip
         """
 
@@ -742,12 +745,20 @@ class zynthian_engine_clippy(zynthian_engine):
                 elif chain.monitor_mode == "auto":
                     if self.state_manager.clip_record_mode:
                         enable = 1
+                    elif chain.zynmixer_proc and chain.zynmixer_proc.controllers_dict["record"].value:
+                        enable = 1
                     elif any(proc == processor and rec["state"] in ("armed", "recording")
                              for (proc, _), rec in list(self.recordings.items())):
                         enable = 1
             self.libclippy.setInputMonitor(processor.midi_chan - 16, enable)
         except Exception as e:
             logging.warning(f"Failed to update clip input monitoring => {e}")
+
+    def on_mixer_set_value(self, chan=None, symbol=None, value=None, mixbus=None, **kwargs):
+        """Refresh monitoring when a track's record arm changes"""
+
+        if symbol == "record":
+            self.state_manager.update_clip_monitors()
 
     def set_record_zctrl(self, processor, value):
         try:
