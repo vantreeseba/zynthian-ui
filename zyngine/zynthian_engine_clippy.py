@@ -629,6 +629,9 @@ class zynthian_engine_clippy(zynthian_engine):
         base = self.state_manager.get_new_capture_fpath("wav")[:-4]
         chain_name = chain.get_name().replace("/", "_").replace(" ", "_")
         path = f"{base}_{chain_name}_clip{phrase + 1}_{round(tempo)}bpm.wav"
+        if zynthian_gui_config.clip_record_ram:
+            # tmpfs => the take never touches disk and vanishes at power-off
+            path = os.path.join(zynthian_gui_config.clip_record_ram_dir, os.path.basename(path))
         res = self.libclippy.armRecord(processor.midi_chan - 16, phrase + 1, channels, tempo, 0)
         if res != 0:
             logging.error(f"Failed to arm clip recorder => error {res}")

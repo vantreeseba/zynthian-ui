@@ -2346,7 +2346,7 @@ class zynthian_state_manager:
     def is_capture_fpath(self, fpath):
         """True if fpath lives directly in a capture directory, i.e. it is a recorded take"""
 
-        dirs = [capture_dir_sdc] + zynthian_gui_config.get_external_storage_dirs(ex_data_dir)
+        dirs = [capture_dir_sdc, zynthian_gui_config.clip_record_ram_dir] + zynthian_gui_config.get_external_storage_dirs(ex_data_dir)
         return os.path.dirname(fpath) in dirs
 
     def get_new_capture_fpath(self, ext="mid"):

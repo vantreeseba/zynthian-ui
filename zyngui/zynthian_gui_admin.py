@@ -172,6 +172,12 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         self.list_data.append((self.pfl, 0, f"PFL Output ({zynthian_gui_config.pfl_output})", ["Select the audio output device for pre-fader listening.", "headphones.png"]))
         self.list_data.append((self.monitor_out, 0, f"Monitor Output ({zynthian_gui_config.monitor_output})",
                                ["Select the audio output for clip chain live input monitoring.\n\nMain routes monitoring through each chain's strip into the main mixbus. A hardware output monitors directly, following the main mixbus volume.", "headphones.png"]))
+        if zynthian_gui_config.clip_record_ram:
+            self.list_data.append((self.toggle_clip_record_ram, 0, "☒ Clip Recording in RAM",
+                                   ["Clip takes are recorded to RAM (tmpfs), never written to disk, and LOST at power-off.", "audio_recording.png"]))
+        else:
+            self.list_data.append((self.toggle_clip_record_ram, 0, "☐ Clip Recording in RAM",
+                                   ["Clip takes are recorded to the capture directory on disk.", "audio_recording.png"]))
         self.list_data.append((self.show_tts, 0, "ZynVoice", ["Text to speech accessibility options", "audio_options.png"]))
         if self.state_manager.allow_rbpi_headphones():
             if zynthian_gui_config.rbpi_headphones:
@@ -547,6 +553,14 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         self.enable_param_editor(self, "Toggle Control",
                                  {'labels': ['solo', 'pfl', 'mono', 'phase', 'ms', 'record'], 'value': zynthian_gui_config.mixer_toggle},
                                  self.mixer_toggle_cb)
+
+    def toggle_clip_record_ram(self):
+        zynthian_gui_config.clip_record_ram = not zynthian_gui_config.clip_record_ram
+        logging.info(f"Clip Recording in RAM => {zynthian_gui_config.clip_record_ram}")
+        zynconf.save_config({
+            "ZYNTHIAN_CLIP_RECORD_RAM": str(int(zynthian_gui_config.clip_record_ram))
+        })
+        self.update_list()
 
     def toggle_snapshot_mixer_settings(self):
         if zynthian_gui_config.snapshot_mixer_settings:

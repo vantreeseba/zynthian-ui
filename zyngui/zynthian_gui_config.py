@@ -625,6 +625,10 @@ metronome_output = os.environ.get('ZYNTHIAN_METRONOME_OUTPUT', "Main")
 # Clip live-input monitor output: "Main" => through each clip chain's strip into the main
 # mixbus, else direct hardware output selection following the main mixbus volume
 monitor_output = os.environ.get('ZYNTHIAN_MONITOR_OUTPUT', "Main")
+# Record clip takes into RAM (tmpfs) instead of the capture directory => no disk writes,
+# takes are lost at power-off
+clip_record_ram = get_env_int('ZYNTHIAN_CLIP_RECORD_RAM', 0)
+clip_record_ram_dir = "/dev/shm/zynthian-capture"
 
 # ------------------------------------------------------------------------------
 # Text To Speech Options
