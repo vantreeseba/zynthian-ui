@@ -2067,6 +2067,9 @@ class zynthian_state_manager:
                     key_low = key & 0xff7f
                     mcstate[uid]["midi_learn"][key_low] = []
                     for zctrl in zctrls:
+                        if zctrl.processor is None:
+                            logging.warning(f"Can't save MIDI learn for '{zctrl.symbol}' => controller has no processor")
+                            continue
                         mcstate[uid]["midi_learn"][key_low].append([zctrl.processor.id, zctrl.symbol])
 
         mcstate["zynmidi"] = {"midi_learn": {}}
@@ -2076,6 +2079,9 @@ class zynthian_state_manager:
                 key_low = key & 0xff7f
                 mcstate["zynmidi"]["midi_learn"][key_low] = []
                 for zctrl in zctrls:
+                    if zctrl.processor is None:
+                        logging.warning(f"Can't save MIDI learn for '{zctrl.symbol}' => controller has no processor")
+                        continue
                     mcstate["zynmidi"]["midi_learn"][key_low].append([zctrl.processor.id, zctrl.symbol])
 
         return mcstate
@@ -2336,6 +2342,12 @@ class zynthian_state_manager:
     # ---------------------------------------------------------------------------
     # Global MIDI Player
     # ---------------------------------------------------------------------------
+
+    def is_capture_fpath(self, fpath):
+        """True if fpath lives directly in a capture directory, i.e. it is a recorded take"""
+
+        dirs = [capture_dir_sdc] + zynthian_gui_config.get_external_storage_dirs(ex_data_dir)
+        return os.path.dirname(fpath) in dirs
 
     def get_new_capture_fpath(self, ext="mid"):
         exdirs = zynthian_gui_config.get_external_storage_dirs(ex_data_dir)

@@ -123,6 +123,10 @@ class zynthian_engine_tempo(zynthian_engine):
                     "metro_volume": self.state_manager.zynseq.zctrl_metro_volume,
                     "ppqn": self.state_manager.zynseq.zctrl_ppqn
                 }
+                # The shared zynseq zctrls are created without a processor: bind them here
+                # so MIDI-learn bindings can be saved/restored ([processor.id, symbol])
+                for zctrl in processor.controllers_dict.values():
+                    zctrl.processor = processor
             return processor.controllers_dict
         return  {
             "bpm": self.state_manager.zynseq.zctrl_tempo,
