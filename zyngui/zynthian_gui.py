@@ -1465,6 +1465,10 @@ class zynthian_gui:
         # Punch in/out clip/MIDI recording on the selected launcher pad
         self.screens["mixer"].cuia_toggle_pad_record(params)
 
+    def cuia_clear_pad(self, params=None):
+        # Clear the selected launcher pad (aborts an in-flight recording)
+        self.screens["mixer"].cuia_clear_pad(params)
+
     def cuia_session_reset(self, params=None):
         # Remove all sequences, pads and clips (audio files deleted from disk), keeping chains
         if params == ['CONFIRM']:

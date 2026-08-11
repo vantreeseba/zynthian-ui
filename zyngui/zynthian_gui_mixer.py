@@ -2705,6 +2705,49 @@ class zynthian_gui_mixer(zynthian_gui_base):
                                zynthian_gui_config.color_status_record, None, 3)
         return True
 
+    def cuia_clear_pad(self, params=None):
+        """Clear the selected launcher pad (pedal-friendly undo/reset)
+
+        Recording in flight on the pad => abort the take, keeping previous pad content
+        Audio clip pad => clear the clip, deleting the file only if it is a recorded take
+        MIDI pad => clear the pad's pattern
+        """
+
+        sm = self.state_manager
+        phrase = self.zynseq.phrase
+        if self.highlighted_strip is None or phrase >= self.zynseq.phrases:
+            return True
+        chain = self.highlighted_strip.chain
+        proc = chain.get_clippy_processor() if chain else None
+        if proc:
+            chan = proc.midi_chan
+            state = self.zynseq.libseq.getPlayState(self.zynseq.scene, phrase, chan)
+            if state in (zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_RECORDING, zynseq.SEQ_STOPPING_RECORD):
+                # Force-stop aborts the clippy recorder (clock cleanup emits the abort message)
+                self.zynseq.libseq.setPlayState(self.zynseq.scene, phrase, chan, zynseq.SEQ_STOPPED)
+                self.set_title("Recording aborted", None, None, 2)
+                return True
+            try:
+                fpath = proc.controllers_dict[f"file {phrase + 1}"].get_value()
+            except Exception:
+                fpath = ""
+            if not fpath:
+                return True
+            # Recorded takes are deleted from disk, library samples are kept
+            if proc.engine.clear_clip(proc, phrase, delete_file=sm.is_capture_fpath(fpath)):
+                self.set_title("Pad cleared", None, None, 2)
+        elif chain and chain.chain_id and type(chain.midi_chan) is int and chain.midi_chan < 16:
+            if sm.midi_record_pad == (phrase, chain.midi_chan):
+                sm.stop_pad_midi_record()
+            if self.zynseq.libseq.getPlayState(self.zynseq.scene, phrase, chain.midi_chan) != zynseq.SEQ_STOPPED:
+                self.zynseq.libseq.sendMidiCommand(0xB0 | chain.midi_chan, 123, 0)  # All notes off
+            pattern = self.zynseq.libseq.getPattern(self.zynseq.scene, phrase, chain.midi_chan, 0, 0)
+            if pattern > 0:
+                self.zynseq.libseq.clearPattern(pattern)
+                self.zynseq.libseq.updateSequenceInfo()
+                self.set_title("Pad cleared", None, None, 2)
+        return True
+
     def prompt_record_source(self, chain, proc, phrase):
         """Ask for a record source, then arm the requested clip recording"""
 
