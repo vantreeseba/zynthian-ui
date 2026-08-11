@@ -31,6 +31,7 @@ from threading import Timer, Thread
 from collections import deque
 
 import zynautoconnect
+from zyngui import zynthian_gui_config
 from zynlibs.zynseq import zynseq
 from zyngine.zynthian_engine import zynthian_engine
 from zyngine.zynthian_signal_manager import zynsigman
@@ -114,8 +115,15 @@ class zynthian_engine_clippy(zynthian_engine):
         self.libclippy.setInputMonitor.argtypes = [ctypes.c_uint8, ctypes.c_uint8]
         self.libclippy.setInputMonitor.restype = None
         self.libclippy.getInputMonitor.restype = ctypes.c_uint8
+        self.libclippy.setMonitorRoute.argtypes = [ctypes.c_uint8]
+        self.libclippy.setMonitorRoute.restype = None
+        self.libclippy.getMonitorRoute.restype = ctypes.c_uint8
+        self.libclippy.setMonitorGain.argtypes = [ctypes.c_float]
+        self.libclippy.setMonitorGain.restype = None
+        self.libclippy.getMonitorGain.restype = ctypes.c_float
         self.jackname = self.libclippy.getJackname().decode("utf-8")
         self.zynseq.clippy = self
+        self.refresh_monitor_routing()
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TEMPO, self.start_tempo_timer)
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.on_seq_play_state)
         zynsigman.register_queued(zynsigman.S_MIXER, zynsigman.SS_ZYNMIXER_SET_VALUE, self.on_mixer_set_value)
@@ -757,12 +765,42 @@ class zynthian_engine_clippy(zynthian_engine):
         except Exception as e:
             logging.warning(f"Failed to update clip input monitoring => {e}")
 
+    def refresh_monitor_routing(self):
+        """Apply the global monitor output config to the clippy monitor route/gain
+
+        "Main" mixes monitored inputs into each player's output (through the chain
+        strip into the main mixbus). Any other value mixes them into the dedicated
+        clippy:monitor_a/b ports, whose gain follows the main mixbus volume.
+        """
+
+        direct = zynthian_gui_config.monitor_output != "Main"
+        self.libclippy.setMonitorRoute(1 if direct else 0)
+        self.update_monitor_gain()
+
+    def update_monitor_gain(self):
+        """Mirror the main mixbus fader/mute onto the direct monitor output gain"""
+
+        if zynthian_gui_config.monitor_output == "Main":
+            return
+        try:
+            mixbus = self.state_manager.zynmixer_bus
+            if mixbus.get_mute(0):
+                gain = 0.0
+            else:
+                gain = mixbus.get_level(0)
+            self.libclippy.setMonitorGain(gain)
+        except Exception as e:
+            logging.warning(f"Failed to update monitor gain => {e}")
+
     def on_mixer_set_value(self, chan=None, symbol=None, value=None, mixbus=None, **kwargs):
         """Refresh monitoring when a track's record arm changes"""
 
         if symbol == "record":
             logging.info(f"Clippy monitor: record arm changed (chan={chan}, value={value}, mixbus={mixbus})")
             self.state_manager.update_clip_monitors()
+        elif mixbus and chan == 0 and symbol in ("level", "mute"):
+            # Direct monitor output follows the main mixbus volume
+            self.update_monitor_gain()
 
     def set_record_zctrl(self, processor, value):
         try:

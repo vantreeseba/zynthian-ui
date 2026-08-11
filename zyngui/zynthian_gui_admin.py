@@ -170,6 +170,8 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
 
         #self.list_data.append((self.audio_levels, 0, "Audio Levels", ["Show audio levels view.", "meters.png"]))
         self.list_data.append((self.pfl, 0, f"PFL Output ({zynthian_gui_config.pfl_output})", ["Select the audio output device for pre-fader listening.", "headphones.png"]))
+        self.list_data.append((self.monitor_out, 0, f"Monitor Output ({zynthian_gui_config.monitor_output})",
+                               ["Select the audio output for clip chain live input monitoring.\n\nMain routes monitoring through each chain's strip into the main mixbus. A hardware output monitors directly, following the main mixbus volume.", "headphones.png"]))
         self.list_data.append((self.show_tts, 0, "ZynVoice", ["Text to speech accessibility options", "audio_options.png"]))
         if self.state_manager.allow_rbpi_headphones():
             if zynthian_gui_config.rbpi_headphones:
@@ -401,6 +403,28 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
             "ZYNTHIAN_PFL_OUTPUT": zynthian_gui_config.pfl_output
         })
         zynautoconnect.request_audio_connect(True)
+        self.update_list()
+
+    def monitor_out(self, t='S'):
+        logging.info("Monitor routing")
+        port_count = len(zynautoconnect.get_hw_audio_dst_ports())
+        labels = ["Main"]
+        for i in range(0, port_count, 2):
+            labels.append(f"{i+1}")
+            labels.append(f"{i+2}")
+            labels.append(f"{i+1}+{i+2}")
+        self.enable_param_editor(self, "Monitor Output",
+                {'labels': labels, 'value': zynthian_gui_config.monitor_output},
+                self.monitor_out_cb)
+
+    def monitor_out_cb(self, value):
+        label = self.param_editor_zctrl.get_value2label(value)
+        zynthian_gui_config.monitor_output = label
+        zynconf.save_config({
+            "ZYNTHIAN_MONITOR_OUTPUT": zynthian_gui_config.monitor_output
+        })
+        zynautoconnect.request_audio_connect(True)
+        self.state_manager.update_clip_monitors()
         self.update_list()
 
     def show_tts(self, t='S'):

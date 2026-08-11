@@ -2408,10 +2408,14 @@ class zynthian_state_manager:
     def update_clip_monitors(self):
         """Refresh live input monitoring of all clip launcher chains"""
 
+        engines = set()
         for chain in self.chain_manager.chains.values():
             proc = chain.get_clippy_processor()
             if proc is not None and proc.engine:
                 proc.engine.update_monitor(proc)
+                engines.add(proc.engine)
+        for engine in engines:
+            engine.refresh_monitor_routing()
 
     def toggle_session_record(self):
         """Toggle global session record mode - pad presses record into empty clips while enabled"""

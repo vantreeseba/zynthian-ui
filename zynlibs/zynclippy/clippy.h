@@ -297,6 +297,29 @@ void setInputMonitor(uint8_t channel, uint8_t enable);
 */
 uint8_t getInputMonitor(uint8_t channel);
 
+/** @brief  Set the global monitor routing
+    @param  direct 0 to mix monitored inputs into each player's output (default),
+                   1 to mix them into the dedicated monitor_a/b output ports
+    @note   RT-safe flag - takes effect on the next process cycle
+*/
+void setMonitorRoute(uint8_t direct);
+
+/** @brief  Get the global monitor routing
+    @retval uint8_t 1 if monitoring is routed to the dedicated monitor ports
+*/
+uint8_t getMonitorRoute();
+
+/** @brief  Set the gain applied to the dedicated monitor output ports
+    @param  gain Linear gain (>= 0.0); has no effect when routing through player outputs
+    @note   RT-safe - takes effect on the next process cycle
+*/
+void setMonitorGain(float gain);
+
+/** @brief  Get the gain applied to the dedicated monitor output ports
+    @retval float Linear gain
+*/
+float getMonitorGain();
+
 /** @brief  Save a loaded clip's sample data to a wav file and set its path
     @param  channel MIDI channel
     @param  note MIDI note to trigger clip

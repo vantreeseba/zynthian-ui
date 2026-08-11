@@ -620,6 +620,11 @@ hotplug_audio_enabled = get_env_int('ZYNTHIAN_HOTPLUG_AUDIO', 0)
 disabled_audio_in = os.environ.get('ZYNTHIAN_HOTPLUG_AUDIO_DISABLED_IN', "").split(',')
 disabled_audio_out = os.environ.get('ZYNTHIAN_HOTPLUG_AUDIO_DISABLED_OUT', 'headphones,b1,b2').split(',')
 pfl_output = os.environ.get('ZYNTHIAN_PFL_OUTPUT', "None")
+# Metronome output: "Main" => main mixbus, else hardware output selection ("1", "2", "1+2", ...)
+metronome_output = os.environ.get('ZYNTHIAN_METRONOME_OUTPUT', "Main")
+# Clip live-input monitor output: "Main" => through each clip chain's strip into the main
+# mixbus, else direct hardware output selection following the main mixbus volume
+monitor_output = os.environ.get('ZYNTHIAN_MONITOR_OUTPUT', "Main")
 
 # ------------------------------------------------------------------------------
 # Text To Speech Options

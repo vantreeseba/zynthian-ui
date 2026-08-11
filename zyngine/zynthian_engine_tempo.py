@@ -26,9 +26,11 @@ import logging
 from time import monotonic
 from collections import deque
 
+import zynconf
 from zyncoder.zyncore import lib_zyncore
 from zyngine.zynthian_engine import zynthian_engine
 from zyngine.zynthian_controller import zynthian_controller
+from zyngui import zynthian_gui_config
 import zynautoconnect
 
 # ------------------------------------------------------------------------------
@@ -43,7 +45,7 @@ class zynthian_engine_tempo(zynthian_engine):
     # ---------------------------------------------------------------------------
 
     _ctrl_screens = [
-        ["Tempo", ["bpm", "metro_enable", "metro_volume", "ppqn"]]
+        ["Tempo", ["bpm", "metro_enable", "metro_volume", "metro_out"]]
     ]
 
     # ----------------------------------------------------------------------------
@@ -70,6 +72,7 @@ class zynthian_engine_tempo(zynthian_engine):
         self.options['replace'] = False
 
         self.zctrls = None
+        self.zctrl_metro_out = None
 
     # ---------------------------------------------------------------------------
     # Processor Management
@@ -109,11 +112,35 @@ class zynthian_engine_tempo(zynthian_engine):
     # Controllers Managament
     # ----------------------------------------------------------------------------
 
+    def get_metro_out_zctrl(self):
+        """Build (once) the metronome output selector: Main mixbus or a hardware output"""
+
+        if self.zctrl_metro_out is None:
+            labels = ["Main"]
+            try:
+                port_count = len(zynautoconnect.get_hw_audio_dst_ports())
+            except Exception:
+                port_count = 0
+            for i in range(0, port_count, 2):
+                labels.append(f"{i+1}")
+                labels.append(f"{i+2}")
+                labels.append(f"{i+1}+{i+2}")
+            if zynthian_gui_config.metronome_output in labels:
+                value = zynthian_gui_config.metronome_output
+            else:
+                value = "Main"
+            self.zctrl_metro_out = zynthian_controller(self, 'metro_out', {
+                'name': 'Metronome Output',
+                'labels': labels,
+                'value': value
+            })
+        return self.zctrl_metro_out
+
     def get_controllers_dict(self, processor=None, ctrl_list=None):
         if zynautoconnect.get_ext_clock_zmip() < 0:
-            self._ctrl_screens = [["Tempo", ["bpm", "metro_enable", "metro_volume"]]]
+            self._ctrl_screens = [["Tempo", ["bpm", "metro_enable", "metro_volume", "metro_out"]]]
         else:
-            self._ctrl_screens = [["Tempo", ["ppqn", "metro_enable", "metro_volume"]]]
+            self._ctrl_screens = [["Tempo", ["ppqn", "metro_enable", "metro_volume", "metro_out"]]]
 
         if processor:
             if not processor.controllers_dict:
@@ -121,7 +148,8 @@ class zynthian_engine_tempo(zynthian_engine):
                     "bpm": self.state_manager.zynseq.zctrl_tempo,
                     "metro_enable": self.state_manager.zynseq.zctrl_metro_mode,
                     "metro_volume": self.state_manager.zynseq.zctrl_metro_volume,
-                    "ppqn": self.state_manager.zynseq.zctrl_ppqn
+                    "ppqn": self.state_manager.zynseq.zctrl_ppqn,
+                    "metro_out": self.get_metro_out_zctrl()
                 }
                 # The shared zynseq zctrls are created without a processor: bind them here
                 # so MIDI-learn bindings can be saved/restored ([processor.id, symbol])
@@ -132,11 +160,19 @@ class zynthian_engine_tempo(zynthian_engine):
             "bpm": self.state_manager.zynseq.zctrl_tempo,
             "metro_enable": self.state_manager.zynseq.zctrl_metro_mode,
             "metro_volume": self.state_manager.zynseq.zctrl_metro_volume,
-            "ppqn": self.state_manager.zynseq.zctrl_ppqn
+            "ppqn": self.state_manager.zynseq.zctrl_ppqn,
+            "metro_out": self.get_metro_out_zctrl()
         }
 
     def send_controller_value(self, zctrl):
-        pass
+        if zctrl.symbol == "metro_out":
+            label = zctrl.get_value2label()
+            if label != zynthian_gui_config.metronome_output:
+                zynthian_gui_config.metronome_output = label
+                zynconf.save_config({
+                    "ZYNTHIAN_METRONOME_OUTPUT": label
+                })
+                zynautoconnect.request_audio_connect(True)
 
     # ----------------------------------------------------------------------------
     # Special

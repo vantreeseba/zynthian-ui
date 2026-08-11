@@ -106,6 +106,13 @@ typedef struct {
 
 static Recorder g_recorder = {REC_IDLE}; // Single global recorder => only one clip records at a time
 
+// Live input monitor routing: 0 => mix into each player's output (feeds the mixbus),
+// 1 => mix into the dedicated monitor_a/b ports (direct hardware monitoring)
+static jack_port_t* monitor_port_a = NULL;
+static jack_port_t* monitor_port_b = NULL;
+static volatile uint8_t monitor_direct = 0;
+static volatile float monitor_gain = 1.0f; // Gain applied on the direct monitor ports only
+
 static void inline getMutex() {
     while (mutex)
         usleep(100);
@@ -339,6 +346,16 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
         }
     }
 
+    // Clear the direct monitor output buffers (accumulated with += below)
+    float* mon_buff_a = NULL;
+    float* mon_buff_b = NULL;
+    if (monitor_port_a && monitor_port_b) {
+        mon_buff_a = jack_port_get_buffer(monitor_port_a, frames);
+        mon_buff_b = jack_port_get_buffer(monitor_port_b, frames);
+        memset(mon_buff_a, 0, frames * sizeof(float));
+        memset(mon_buff_b, 0, frames * sizeof(float));
+    }
+
     // Populate player audio output buffers from sample data buffers
     for (uint8_t channel = 0; channel < 16; channel++) {
         player = players[channel];
@@ -350,12 +367,21 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
 
         // Live input monitoring: pass capture input through to the player output
         // (before clip mixing which accumulates with += and may continue early)
+        // or, in direct mode, to the dedicated monitor ports with the monitor gain
         if (player->monitor && player->jack_in_a && player->jack_in_b) {
             float* in_a = jack_port_get_buffer(player->jack_in_a, frames);
             float* in_b = jack_port_get_buffer(player->jack_in_b, frames);
-            for (jack_nframes_t i = 0; i < frames; ++i) {
-                out_buff_a[channel][i] += in_a[i];
-                out_buff_b[channel][i] += in_b[i];
+            if (monitor_direct && mon_buff_a) {
+                float gain = monitor_gain;
+                for (jack_nframes_t i = 0; i < frames; ++i) {
+                    mon_buff_a[i] += in_a[i] * gain;
+                    mon_buff_b[i] += in_b[i] * gain;
+                }
+            } else {
+                for (jack_nframes_t i = 0; i < frames; ++i) {
+                    out_buff_a[channel][i] += in_a[i];
+                    out_buff_b[channel][i] += in_b[i];
+                }
             }
         }
 
@@ -536,6 +562,14 @@ int init() {
     midi_input_port = jack_port_register(jack_client, "in", JACK_DEFAULT_MIDI_TYPE, JackPortIsInput, 0);
     if (midi_input_port == NULL) {
         fprintf(stderr, "Could not open MIDI input port\n");
+        end();
+        return ERROR_PORT;
+    }
+
+    monitor_port_a = jack_port_register(jack_client, "monitor_a", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
+    monitor_port_b = jack_port_register(jack_client, "monitor_b", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
+    if (monitor_port_a == NULL || monitor_port_b == NULL) {
+        fprintf(stderr, "Could not open monitor output ports\n");
         end();
         return ERROR_PORT;
     }
@@ -1170,6 +1204,24 @@ uint8_t getInputMonitor(uint8_t channel) {
     if (channel >= 16 || !players[channel])
         return 0;
     return players[channel]->monitor;
+}
+
+void setMonitorRoute(uint8_t direct) {
+    monitor_direct = direct ? 1 : 0;
+}
+
+uint8_t getMonitorRoute() {
+    return monitor_direct;
+}
+
+void setMonitorGain(float gain) {
+    if (gain < 0.0f)
+        gain = 0.0f;
+    monitor_gain = gain;
+}
+
+float getMonitorGain() {
+    return monitor_gain;
 }
 
 int saveClip(uint8_t channel, uint8_t note, const char* path) {

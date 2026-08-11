@@ -1097,9 +1097,25 @@ def audio_autoconnect():
                         required_routes[dst.name].add(src.name)
 
     try:
-        # Connect metronome to aux
-        required_routes["zynmixer_bus:input_01a"].add("zynseq:metronome")
-        required_routes["zynmixer_bus:input_01b"].add("zynseq:metronome")
+        # Connect metronome to its selected output (main mixbus aux by default)
+        try:
+            outs = zynthian_gui_config.metronome_output.split("+")
+            hw_ports = get_hw_audio_dst_ports()
+            metro_dsts = [hw_ports[int(outs[0]) - 1].name, hw_ports[int(outs[-1]) - 1].name]
+        except:
+            metro_dsts = ["zynmixer_bus:input_01a", "zynmixer_bus:input_01b"]
+        for dst in metro_dsts:
+            required_routes[dst].add("zynseq:metronome")
+
+        # Connect clippy direct monitor to its selected output ("Main" monitors
+        # through each clip chain's strip instead => monitor ports stay silent)
+        try:
+            outs = zynthian_gui_config.monitor_output.split("+")
+            hw_ports = get_hw_audio_dst_ports()
+            required_routes[hw_ports[int(outs[0]) - 1].name].add("clippy:monitor_a")
+            required_routes[hw_ports[int(outs[-1]) - 1].name].add("clippy:monitor_b")
+        except:
+            pass
 
         # Connect solo trunk
         required_routes[f"zynmixer_bus:solo_a"].add("zynmixer_chan:solo_a")
