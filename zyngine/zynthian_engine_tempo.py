@@ -113,27 +113,35 @@ class zynthian_engine_tempo(zynthian_engine):
     # ----------------------------------------------------------------------------
 
     def get_metro_out_zctrl(self):
-        """Build (once) the metronome output selector: Main mixbus or a hardware output"""
+        """Build the metronome output selector: Main mixbus or a hardware output
 
-        if self.zctrl_metro_out is None:
-            labels = ["Main"]
-            try:
-                port_count = len(zynautoconnect.get_hw_audio_dst_ports())
-            except Exception:
-                port_count = 0
-            for i in range(0, port_count, 2):
-                labels.append(f"{i+1}")
-                labels.append(f"{i+2}")
-                labels.append(f"{i+1}+{i+2}")
+        Rebuilt whenever the available outputs change: the tempo processor is
+        created before autoconnect starts, so the first build may only see "Main"
+        (a single-label zctrl is a trigger, which would be stuck otherwise).
+        """
+
+        labels = ["Main"]
+        try:
+            port_count = len(zynautoconnect.get_hw_audio_dst_ports())
+        except Exception:
+            port_count = 0
+        for i in range(0, port_count, 2):
+            labels.append(f"{i+1}")
+            labels.append(f"{i+2}")
+            labels.append(f"{i+1}+{i+2}")
+        if self.zctrl_metro_out is None or self.zctrl_metro_out.labels != labels:
             if zynthian_gui_config.metronome_output in labels:
                 value = zynthian_gui_config.metronome_output
             else:
                 value = "Main"
-            self.zctrl_metro_out = zynthian_controller(self, 'metro_out', {
+            zctrl = zynthian_controller(self, 'metro_out', {
                 'name': 'Metronome Output',
                 'labels': labels,
                 'value': value
             })
+            if self.zctrl_metro_out is not None:
+                zctrl.processor = self.zctrl_metro_out.processor
+            self.zctrl_metro_out = zctrl
         return self.zctrl_metro_out
 
     def get_controllers_dict(self, processor=None, ctrl_list=None):
@@ -155,6 +163,11 @@ class zynthian_engine_tempo(zynthian_engine):
                 # so MIDI-learn bindings can be saved/restored ([processor.id, symbol])
                 for zctrl in processor.controllers_dict.values():
                     zctrl.processor = processor
+            else:
+                # The output selector may have been rebuilt with fresh port labels
+                zctrl = self.get_metro_out_zctrl()
+                zctrl.processor = processor
+                processor.controllers_dict["metro_out"] = zctrl
             return processor.controllers_dict
         return  {
             "bpm": self.state_manager.zynseq.zctrl_tempo,
