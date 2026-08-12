@@ -88,11 +88,14 @@ class zynthian_gui_launcher_pad():
 
         chain_id = self.chain.chain_id
         if chain_id == 0:
+            # The main track carries the loop-info gutter, making it wider
+            # than the rest; stretch its pads across the full track so their
+            # edges line up with the fader and button chips above. The loop
+            # markers draw over the pad's left edge when visible.
             loop_info_width = int(LOOP_INFO_WIDTH * self.width)
-        else:
-            loop_info_width = 0
+            self.width += loop_info_width
 
-        self.x = x + loop_info_width
+        self.x = x
         self.y = y
 
         tags = ("launcher", "launcher_show", f"strip_{chain_id}", f"launcher_{chain_id}_{phrase}")
@@ -696,10 +699,10 @@ class zynthian_gui_mixer_strip():
             if self.chain.chain_id == 0:
                 self.dpm_labels = self.canvas.create_image(self.dpm_a_x0, self.dpm_y0, anchor="ne", image=self.get_bg_img("dpm_lbl", parent.loop_info_width, self.dpm_length), state=dpm_xstate)
         else:
-            # MIDI-only chain: there is no fader, mute or meter to draw. Dim
-            # the empty fader well and caption it so the bare column reads as
-            # intentional rather than as a missing control.
-            self.canvas.itemconfig(self.fader_bg, fill=zynthian_gui_config.color_scale(self.gui_mixer.fader_bg_color, 0.6))
+            # MIDI-only chain: there is no fader, mute or meter to draw. Keep
+            # the well at the normal panel color (dimming it made it vanish
+            # into the window ground) and caption it so the bare column reads
+            # as intentional rather than as a missing control.
             self.canvas.create_text(
                 self.centre_x, (self.fader_y + self.legend_y) // 2,
                 text="MIDI", angle=90,
@@ -933,6 +936,9 @@ class zynthian_gui_mixer_strip():
             toggle_val = self.chain.zynmixer_proc.controllers_dict[zynthian_gui_config.mixer_toggle].value
         if toggle_val:
             bgcolor = self.gui_mixer.toggle_color
+            # The active fill is bright amber: white text washes out on it,
+            # so flip the label dark.
+            txcolor = zynthian_gui_config.color_bg
         else:
             bgcolor = self.gui_mixer.button_bgcol
 
@@ -967,7 +973,13 @@ class zynthian_gui_mixer_strip():
                 if self.gui_mixer.moving_chain and self.chain == self.chain_manager.active_chain:
                     strip_txt = f"⇦⇨"
                 elif self.chain.is_generator():
-                    if self.chain.midi_chan is not None and 15 < self.chain.midi_chan < 32:
+                    # Prefer a slug of the chain's displayed name so the legend
+                    # maps to what the user calls the track, not an internal
+                    # channel letter; fall back to the letter if nameless.
+                    title = (self.chain.get_title() or "").strip()
+                    if title:
+                        strip_txt = title[:3]
+                    elif self.chain.midi_chan is not None and 15 < self.chain.midi_chan < 32:
                         strip_txt = f"{SPEAKER_ICON} {zynseq.CHANNEL_CHARS[self.chain.midi_chan]}"
                     else:
                         strip_txt = SPEAKER_ICON
@@ -1364,18 +1376,23 @@ class zynthian_gui_mixer(zynthian_gui_base):
 
         # Style
         self.fader_bg_color = zynthian_gui_config.color_panel_bg
-        self.fader_color = zynthian_gui_config.color_off
-        self.fader_color_hl = zynthian_gui_config.color_variant(zynthian_gui_config.color_off, 40)
+        # Fader fill needs >2:1 contrast against the well to read at a
+        # glance on a small screen; the highlighted variant sits another
+        # clear step above so the focused strip still stands out.
+        self.fader_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_off, 24)
+        self.fader_color_hl = zynthian_gui_config.color_variant(zynthian_gui_config.color_off, 64)
         self.legend_txt_color = zynthian_gui_config.color_tx
         self.legend_bg_color = zynthian_gui_config.color_panel_bg
         self.legend_bg_color_hl = zynthian_gui_config.color_select_bg
-        self.main_legend_bg_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_low_on, -80)
-        self.bus_legend_bg_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_midi, -120)
+        self.main_legend_bg_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_low_on, -48)
+        # Scale rather than subtract: subtraction gutted the blue channel and
+        # left the bus legend indistinguishable from the window ground.
+        self.bus_legend_bg_color = zynthian_gui_config.color_scale(zynthian_gui_config.color_midi, 0.55)
         # Buttons sit one layer above the window ground so they read as
         # tappable chips; the strip backdrop stays on the window ground.
         self.button_bgcol = zynthian_gui_config.color_panel_hl
         self.button_txcol = zynthian_gui_config.color_tx
-        self.balance_bg_color = zynthian_gui_config.color_off
+        self.balance_bg_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_off, 16)
         self.balance_fg_color = zynthian_gui_config.color_hl
         self.high_color = zynthian_gui_config.color_tx_off
         self.rec_color = zynthian_gui_config.color_on
@@ -1441,7 +1458,8 @@ class zynthian_gui_mixer(zynthian_gui_base):
         div = self.chain_manager.get_pinned_pos()
         x0 = 0
         canvas = self.left_canvas
-        for idx, chain in enumerate(list(self.chain_manager.chains.values())):
+        chains = list(self.chain_manager.chains.values())
+        for idx, chain in enumerate(chains):
             # Pinned chains goes to right canvas
             if idx == div:
                 x0 = 0
@@ -1451,8 +1469,12 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 width = self.strip_width + self.loop_info_width
             else:
                 width = self.strip_width
+            # The gutter separates a strip from its right neighbour; the last
+            # (rightmost) strip keeps full width so it lines up with the
+            # screen edge like the topbar.
+            gap = 0 if idx == len(chains) - 1 else self.strip_gap
             # Create the strip objects
-            strip = zynthian_gui_mixer_strip(self, canvas, x0, width - self.strip_gap, self.height, chain, self.launcher_mode)
+            strip = zynthian_gui_mixer_strip(self, canvas, x0, width - gap, self.height, chain, self.launcher_mode)
             x0 += self.strip_width
             self.chain_strips.append(strip)
             # Add to optimisation map

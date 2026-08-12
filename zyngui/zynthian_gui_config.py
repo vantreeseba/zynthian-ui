@@ -620,12 +620,12 @@ color_warn = os.environ.get('ZYNTHIAN_UI_COLOR_WARN', "#ff9800")
 color_surface_0 = color_bg                        # window / screen ground
 color_surface_1 = color_panel_bg                  # panels, cards, list bodies
 color_surface_2 = color_panel_hl                  # raised rows, separators
-color_surface_3 = color_variant(color_panel_hl, 18)  # active / pressed / selected rows
+color_surface_3 = color_variant(color_panel_hl, 32)  # active / pressed / selected rows (~2:1 vs surface_1)
 
 # Selection accent: amber marks the selected/focused item everywhere.
 # Red (color_on) is reserved for record/danger, green (color_hl) for play.
 color_select = color_ml
-color_select_bg = color_scale(color_ml, 0.30)     # dark amber row fill behind bright text
+color_select_bg = color_scale(color_ml, 0.42)     # dark amber row fill behind bright text (~2.4:1 vs panels)
 
 # Color Scheme
 color_panel_bd = color_bg
@@ -730,7 +730,7 @@ ui_status_fps = max(1, min(60, get_env_int('ZYNTHIAN_UI_STATUS_FPS', 10)))
 # Encoder legend: bottom strip labelling what each encoder does on screens
 # that provide labels (see zynthian_gui_base.get_zynpot_labels). Can also be
 # toggled at runtime from Admin > Encoder Legend.
-show_encoder_legend = get_env_int('ZYNTHIAN_UI_ENCODER_LEGEND', 1)
+show_encoder_legend = get_env_int('ZYNTHIAN_UI_ENCODER_LEGEND', 0)
 
 # ------------------------------------------------------------------------------
 # Audio Options
