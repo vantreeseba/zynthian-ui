@@ -2717,6 +2717,10 @@ void setTempoFromLoop(bool enable) {
     g_seqMan.setTempoFromLoop(enable);
 }
 
+uint16_t getPunchBeatsRemaining() {
+    return g_seqMan.getPunchBeatsRemaining();
+}
+
 void setMaxRecordBars(uint16_t bars) {
     g_seqMan.setMaxRecordBars(bars);
 }

@@ -223,6 +223,11 @@ class SequenceManager {
     */
     bool consumeBarResync();
 
+    /** @brief  Get beats remaining until the pending record punch in or out
+        @retval uint16_t Quantity of beats (0 if no punch pending)
+    */
+    uint16_t getPunchBeatsRemaining();
+
     /** @brief  Get sequence currently in a clippy record state
         @retval Sequence* Pointer to sequence or nullptr if none recording
     */
@@ -416,6 +421,12 @@ class SequenceManager {
     uint8_t fileRead8(FILE* pFile);
     void refreshPhrases(uint8_t scene);
 
+    /** @brief  Get beats from a bar position to the next punch quantize point
+        @param  beatPos Beats elapsed since the bar start
+        @retval uint16_t Quantity of beats to the nearer of bar sync and punch grid
+    */
+    uint16_t beatsToPunch(uint8_t beatPos);
+
     bool m_bTempoChanged = false;     // True if tempo changed by sequence
     float m_fTempo = DEFAULT_TEMPO;   // Current tempo
     bool m_bTimeSigChanged = false;   // True if time signature changed by sequence
@@ -443,5 +454,6 @@ class SequenceManager {
     bool m_bTempoFromLoop = false;              // True to free-record a take armed from stopped transport (tempo derived from loop)
     bool m_bFreeRecordTake = false;             // True whilst the current record take is free-length (immediate punch in/out)
     bool m_bBarResync = false;                  // True to restart the bar grid at the current tick (free take punched out)
+    uint16_t m_nPunchBeats = 0;                 // Beats remaining until the pending punch in/out (0 = none pending)
     std::map<uint8_t, uint16_t> m_mTriggers;   // Map of phrase,sequence indexed by MIDI note triggers
 };

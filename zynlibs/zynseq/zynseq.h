@@ -1026,6 +1026,13 @@ void setTempoFromLoop(bool enable);
 */
 uint8_t getTransportState();
 
+/** @brief  Get beats remaining until the pending clip record punch in or out
+    @retval uint16_t Quantity of beats (0 if no punch pending)
+    @note   Counts down whilst a record is armed (punch in), a punch out is
+            requested or a fixed/preset record length approaches
+*/
+uint16_t getPunchBeatsRemaining();
+
 /** @brief  Set maximum quantity of bars an open-ended clip recording may capture
     @param  bars Quantity of bars before forced punch out (0 to disable safety cap)
 */

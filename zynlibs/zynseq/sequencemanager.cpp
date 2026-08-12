@@ -302,6 +302,12 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
                         pSequence->setPlayState(RECORDING);
                         pSequence->setPlayed(0);
                         pSequence->setPlayPosition(0);
+                        m_nPunchBeats = 0;
+                    } else if (m_nCountInSyncs) {
+                        // Beats remaining until the punch in ending the count-in
+                        m_nPunchBeats = m_nCountInSyncs * m_nTimeSig - beatPos;
+                    } else {
+                        m_nPunchBeats = beatsToPunch(beatPos);
                     }
                     // Send beat sync messages to clippy
                     if (bBeat) {
@@ -340,6 +346,17 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
                             barPos = 0;
                             beatPos = 0;
                         }
+                    }
+                    // Advertise beats remaining until the pending punch out (0 = none pending)
+                    if (bPunchOut || m_bFreeRecordTake) {
+                        m_nPunchBeats = 0;
+                    } else if (nPlayState == STOPPING_RECORD) {
+                        m_nPunchBeats = beatsToPunch(beatPos);
+                    } else {
+                        // Fixed record length or preset length ends the take without user action
+                        uint32_t nRecTicks = m_nRecordBars * m_nTimeSig * PPQN_INTERNAL;
+                        uint32_t nEndTicks = nRecTicks ? nRecTicks : pSequence->getLength();
+                        m_nPunchBeats = nEndTicks > nPos ? (nEndTicks - nPos + PPQN_INTERNAL - 1) / PPQN_INTERNAL : 0;
                     }
                     pSequence->setPlayPosition(nPos);
                     // Send beat sync messages to clippy
@@ -613,6 +630,21 @@ bool SequenceManager::consumeBarResync() {
     bool bResync = m_bBarResync;
     m_bBarResync = false;
     return bResync;
+}
+
+uint16_t SequenceManager::getPunchBeatsRemaining() {
+    return m_pRecordingSequence ? m_nPunchBeats : 0;
+}
+
+uint16_t SequenceManager::beatsToPunch(uint8_t beatPos) {
+    // Punch fires at bar sync or, with a punch quantize, the beat grid => whichever is nearer
+    uint16_t nBar = m_nTimeSig - beatPos;
+    if (m_nPunchQuantize) {
+        uint16_t nGrid = m_nPunchQuantize - beatPos % m_nPunchQuantize;
+        if (nGrid < nBar)
+            return nGrid;
+    }
+    return nBar;
 }
 
 void SequenceManager::setMaxRecordBars(uint16_t bars) {

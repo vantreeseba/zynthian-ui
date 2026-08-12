@@ -1155,6 +1155,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         self.zynseq = self.state_manager.zynseq
         self.bpb = 4
         self.beat = 0
+        self.rec_countdown_clip = None # (clip label, armed) of clip recording in flight, for punch countdown toasts
         self.chain_strips = [] # List of channel strips excluding main mixbus, indexed by strip position
         self.state_changed = True
         self.press_event = None
@@ -1541,6 +1542,17 @@ class zynthian_gui_mixer(zynthian_gui_base):
             if self.beat != self.zynseq.beat:
                 self.beat = self.zynseq.beat
                 self.status_canvas.itemconfig(self.status_timesig, text=f"{self.beat} | {self.bpb}/4")
+                if self.launcher_mode and self.rec_countdown_clip:
+                    # Beats remaining until the pending record punch in/out
+                    beats = self.zynseq.libseq.getPunchBeatsRemaining()
+                    if beats:
+                        clip, armed = self.rec_countdown_clip
+                        if armed:
+                            self.set_title(f"⏺ Armed: {clip} — recording in {beats}",
+                                           zynthian_gui_config.color_status_record, None, 2)
+                        else:
+                            self.set_title(f"⏺ Recording: {clip} — punch out in {beats}",
+                                           zynthian_gui_config.color_status_record, None, 2)
             for strip in self.chain_strips:
                 # Update MIDI activity indicators
                 if strip.chain.midi_chan is not None:
@@ -1699,14 +1711,19 @@ class zynthian_gui_mixer(zynthian_gui_base):
     def clip_rec_state_toast_cb(self, chan=None, phrase=None, state=None):
         """Show clip recording progress in the topbar title"""
 
-        if not self.launcher_mode:
-            return
         try:
             chain_id = self.chain_manager.get_chain_ids_by_midi_chan(chan)[0]
             name = self.chain_manager.chains[chain_id].get_name()
         except Exception:
             name = f"chan {chan}"
         clip = f"{name} · clip {phrase + 1}"
+        # Track the in-flight recording for the beat-driven punch countdown
+        if state in (1, 2):
+            self.rec_countdown_clip = (clip, state == 1)
+        else:
+            self.rec_countdown_clip = None
+        if not self.launcher_mode:
+            return
         if state == 1:
             self.set_title(f"⏺ Armed: {clip} — recording at next bar", zynthian_gui_config.color_status_record, None, 4)
         elif state == 2:
