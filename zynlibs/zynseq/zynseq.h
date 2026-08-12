@@ -987,12 +987,17 @@ void togglePlayState(uint8_t scene, uint8_t phrase, uint8_t sequence);
     @param  scene Index of scene containing sequence
     @param  phrase Index of phrase containing sequence
     @param  sequence Index of sequence (sequence) of sequence within phrase
-    @note   STOPPED/PLAYING => STARTING_RECORD (arm, punch in at next bar sync).
-    @note   STARTING_RECORD => STOPPED (cancel arm). RECORDING => STOPPING_RECORD (punch out at next bar sync).
+    @note   STOPPED/PLAYING => STARTING_RECORD (arm, punch in at next punch quantize point - see setPunchQuantize).
+    @note   STARTING_RECORD => STOPPED (cancel arm). RECORDING => STOPPING_RECORD (punch out at next punch quantize point).
     @note   STOPPING_RECORD => RECORDING (cancel punch out request).
     @note   Caller must arm the clippy recorder (armRecord) before punch in occurs.
 */
 void toggleRecordState(uint8_t scene, uint8_t phrase, uint8_t sequence);
+
+/** @brief  Set the quantize grid for clip record punch-in/out
+    @param  beats Grid size in beats, anchored to the bar start (0 for bar sync - default)
+*/
+void setPunchQuantize(uint16_t beats);
 
 /** @brief  Set maximum quantity of bars an open-ended clip recording may capture
     @param  bars Quantity of bars before forced punch out (0 to disable safety cap)

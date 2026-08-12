@@ -2683,6 +2683,10 @@ void toggleRecordState(uint8_t scene, uint8_t phrase, uint8_t sequence) {
     setPlayState(scene, phrase, sequence, nState);
 }
 
+void setPunchQuantize(uint16_t beats) {
+    g_seqMan.setPunchQuantize(beats);
+}
+
 void setMaxRecordBars(uint16_t bars) {
     g_seqMan.setMaxRecordBars(bars);
 }

@@ -155,6 +155,7 @@ class zynthian_state_manager:
         self.session_record_mode = False  # True when pad presses arm clip recording (Ableton session record)
         self.record_quantize = 16  # Live MIDI record quantize grid: note divisor (2=1/2, 4=1/4, 8=1/8, 16=1/16)
         self.record_quantize_enabled = True  # Toggled off keeps record_quantize for restoring
+        self.punch_quantize = "global"  # Clip record punch grid: "global" (follow record quantize), "bar", "2beat" or "beat"
         self.apply_record_quantize()
         self.midi_record_pad = None  # (phrase, midi_chan) of launcher pad capturing MIDI input, None when idle
         self.record_metronome_depth = 0  # Count of in-flight recordings forcing the metronome on
@@ -1014,6 +1015,7 @@ class zynthian_state_manager:
                 'enabled': self.record_quantize_enabled,
                 'value': self.record_quantize
             },
+            'punch_quantize': self.punch_quantize,
             'gui': {
                 'pinned_chains': self.chain_manager.get_pinned_count()
             }
@@ -1068,7 +1070,7 @@ class zynthian_state_manager:
                         except:
                             pass
 
-            for key in ["last_snapshot_fpath", "midi_profile_state", "zynseq", "record_quantize"]:
+            for key in ["last_snapshot_fpath", "midi_profile_state", "zynseq", "record_quantize", "punch_quantize"]:
                 try:
                     del state[key]
                 except:
@@ -1171,7 +1173,7 @@ class zynthian_state_manager:
 
                     if merge:
                         # Remove elements that are not to be merged
-                        for key in ["last_snapshot_fpath", "last_zs3_id", "midi_profile_state", "zynseq", "record_quantize"]:
+                        for key in ["last_snapshot_fpath", "last_zs3_id", "midi_profile_state", "zynseq", "record_quantize", "punch_quantize"]:
                             try:
                                 del state[key]
                             except:
@@ -1266,6 +1268,10 @@ class zynthian_state_manager:
                     self.record_quantize = state["record_quantize"].get("value", 16)
                     self.record_quantize_enabled = bool(state["record_quantize"].get("enabled", True))
                     self.apply_record_quantize()
+
+                if "punch_quantize" in state:
+                    self.punch_quantize = state["punch_quantize"]
+                    self.apply_punch_quantize()
 
 
             # Save last snapshot info and get snapshot's program number
@@ -2453,6 +2459,41 @@ class zynthian_state_manager:
         else:
             clocks = 0
         self.zynseq.libseq.setInputQuantize(clocks)
+        # Punch quantize may follow the record quantize grid => keep it in sync
+        self.apply_punch_quantize()
+
+    def set_punch_quantize(self, value):
+        """Set the clip record punch-in/out quantize grid
+
+        value: "global" (follow the record quantize grid), "bar", "2beat" or "beat"
+        """
+
+        self.punch_quantize = value
+        self.apply_punch_quantize()
+
+    def apply_punch_quantize(self):
+        """Push the clip record punch-in/out grid to the sequencer in beats (0 = bar sync)
+
+        Clip loops must be whole beats, so in "global" mode the record quantize
+        grid is clamped to 1 beat: 1/1 => bar, 1/2 => 2 beats, finer => 1 beat.
+        Record quantize disabled keeps the default bar sync.
+        """
+
+        mode = self.punch_quantize
+        if mode == "global":
+            if not self.record_quantize_enabled or self.record_quantize <= 1:
+                beats = 0
+            elif self.record_quantize == 2:
+                beats = 2
+            else:
+                beats = 1
+        elif mode == "2beat":
+            beats = 2
+        elif mode == "beat":
+            beats = 1
+        else:  # "bar"
+            beats = 0
+        self.zynseq.libseq.setPunchQuantize(beats)
 
     def start_record_metronome(self):
         """Force the metronome audible while a clip/pattern recording is in flight"""

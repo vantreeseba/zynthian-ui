@@ -212,6 +212,12 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
         }
     }
 
+    // Clip record punch-in/out point: bar sync by default, plus the configured
+    // beat grid (anchored to the bar start) when a punch quantize is set
+    bool bPunch = bSync;
+    if (m_nPunchQuantize && bBeat && (beatPos % m_nPunchQuantize) == 0)
+        bPunch = true;
+
     uint8_t nResult = 0; // Summary of playing sequences (0:None, 1:Starting, 2:Playing/stopping)
     size_t nSequence = 0;
     while (nSequence < m_vPlayingSequences.size()) {
@@ -281,8 +287,8 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
                     }
                     break;
                 case STARTING_RECORD:
-                    // Punch in at bar sync (record message emplaced before coincident beat tick so clippy counts exact beats)
-                    if (bSync) {
+                    // Punch in at the punch quantize point (record message emplaced before coincident beat tick so clippy counts exact beats)
+                    if (bPunch) {
                         nPlayState = RECORDING;
                         pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), nNote, CLIPPY_VEL_REC_START}});
                         pSequence->setPlayState(RECORDING);
@@ -297,7 +303,7 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
                 case RECORDING:
                 case STOPPING_RECORD: {
                     uint32_t nPos = pSequence->getPlayPosition() + 1;
-                    if (bSync) {
+                    if (bPunch) {
                         uint32_t nLength = pSequence->getLength();
                         uint32_t nMaxTicks = m_nMaxRecordBars * m_nTimeSig * PPQN_INTERNAL;
                         // Punch out when user requested, preset length reached (0 = open-ended) or safety cap reached
@@ -556,6 +562,10 @@ void SequenceManager::stop() {
     m_vPlayingSequences.clear();
     // Recording cannot survive stop-all. Caller (Python) must also disarm the clippy recorder.
     m_pRecordingSequence = nullptr;
+}
+
+void SequenceManager::setPunchQuantize(uint16_t beats) {
+    m_nPunchQuantize = beats;
 }
 
 void SequenceManager::setMaxRecordBars(uint16_t bars) {
