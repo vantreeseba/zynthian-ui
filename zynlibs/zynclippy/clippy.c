@@ -116,6 +116,10 @@ static Recorder g_recorder = {REC_IDLE}; // Single global recorder => only one c
 // User latency offset (frames) added to the JACK-reported capture latency when recording clips
 static volatile int32_t g_record_latency_offset = 0;
 
+// True to clear the player's live input monitor in the RT commit path at punch-out
+// (AUTO monitor mode => avoids the committed loop doubling the still-open monitor)
+static volatile uint8_t g_record_monitor_auto = 0;
+
 // Live input monitor routing: 0 => mix into each player's output (feeds the mixbus),
 // 1 => mix into the dedicated monitor_a/b ports (direct hardware monitoring)
 static jack_port_t* monitor_port_a = NULL;
@@ -395,6 +399,10 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                 rp->starting_clip = clip;
                 rp->starting_clip_id = g_recorder.clip_id;
                 rp->start_frame = rec_to;
+                if (g_record_monitor_auto)
+                    // AUTO monitor => mute the live input the moment the loop takes over,
+                    // otherwise it doubles the playback until the UI catches up
+                    rp->monitor = 0;
                 g_recorder.pending_clip = NULL;
                 if (latency) {
                     // Keep capturing until the loop's tail (delayed by the
@@ -1348,6 +1356,10 @@ void setRecordLatencyOffset(int32_t frames) {
 
 int32_t getRecordLatencyOffset() {
     return g_record_latency_offset;
+}
+
+void setRecordMonitorAuto(uint8_t enable) {
+    g_record_monitor_auto = enable ? 1 : 0;
 }
 
 void setInputMonitor(uint8_t channel, uint8_t enable) {

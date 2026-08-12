@@ -653,6 +653,16 @@ class zynthian_engine_clippy(zynthian_engine):
         # User latency offset (ms => frames), added to the JACK-reported capture latency
         self.libclippy.setRecordLatencyOffset(
             int(zynthian_gui_config.clip_record_latency * self.samplerate / 1000))
+        # AUTO monitor with no track record-arm => the RT commit clears the live
+        # monitor at punch-out so it never doubles the looping clip
+        monitor_auto = 0
+        if getattr(chain, "monitor_mode", None) == "auto":
+            try:
+                if not (chain.zynmixer_proc and chain.zynmixer_proc.controllers_dict["record"].value):
+                    monitor_auto = 1
+            except Exception:
+                monitor_auto = 1
+        self.libclippy.setRecordMonitorAuto(monitor_auto)
         res = self.libclippy.armRecord(processor.midi_chan - 16, phrase + 1, channels, tempo, 0)
         if res != 0:
             logging.error(f"Failed to arm clip recorder => error {res}")

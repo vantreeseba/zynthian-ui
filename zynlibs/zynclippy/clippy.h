@@ -283,6 +283,13 @@ void setRecordLatencyOffset(int32_t frames);
 */
 int32_t getRecordLatencyOffset();
 
+/** @brief  Set whether the recorded player's live input monitor clears at punch-out
+    @param  enable 1 to clear the monitor in the RT commit path (AUTO monitor mode)
+    @note   Set when arming: avoids the committed loop doubling the live input
+            during the gap before the UI updates the monitor state
+*/
+void setRecordMonitorAuto(uint8_t enable);
+
 /** @brief  Get recorder state
     @retval uint8_t REC_STATE value
 */
