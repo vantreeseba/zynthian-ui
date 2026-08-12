@@ -189,8 +189,7 @@ class zynthian_gui_engine(zynthian_gui_selector):
             justify=tkinter.LEFT,
             width=info_width,
             text="",
-            # font=(zynthian_gui_config.font_family, int(0.8 * zynthian_gui_config.font_size)),
-            font=("sans-serif", int(0.8 * zynthian_gui_config.font_size)),
+            font=zynthian_gui_config.font_small,
             fill=zynthian_gui_config.color_panel_tx)
 
     def update_layout(self):

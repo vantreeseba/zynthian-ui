@@ -74,7 +74,7 @@ class zynthian_gui_selector(zynthian_gui_base):
         self.listbox = tkinter.Listbox(
             self.main_frame,
             font=zynthian_gui_config.font_listbox,
-            bd=7,
+            bd=zynthian_gui_config.pad_md,
             highlightthickness=0,
             relief='flat',
             bg=self.lb_bg,
@@ -101,11 +101,12 @@ class zynthian_gui_selector(zynthian_gui_base):
             self.wide = wide
         else:
             self.wide = True
+        pad = zynthian_gui_config.pad_sm
         if self.wide:
-            self.padx = (0, 2)
+            self.padx = (0, pad)
         else:
-            self.padx = (2, 2)
-        self.pady = (0, 0)
+            self.padx = (pad, pad)
+        self.pady = (pad, pad)
         self.listbox.grid(
             row=self.layout['list_pos'][0],
             column=self.layout['list_pos'][1],

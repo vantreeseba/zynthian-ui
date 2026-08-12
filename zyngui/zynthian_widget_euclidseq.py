@@ -577,7 +577,7 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
             self.canvas.create_text(cx,cy,text=f"{self.note_numbers[k]}",fill="#00FF00",font=note_font)
 
             label_y_pos = cy + radius - 115
-            self.canvas.create_text(cx, label_y_pos, text=f"Ch: {k+1}", fill="red", font=("Arial", 16, "bold"))
+            self.canvas.create_text(cx, label_y_pos, text=f"Ch: {k+1}", fill="red", font=(zynthian_gui_config.font_family, 16, "bold"))
 
     def calculate_circle_hit_areas(self):
         r=25*self.scale; self.circle_hit_areas=[(self.graph_x[k]*self.scale+r, self.graph_y[k]*self.scale+r,r) for k in range(self.channels)]

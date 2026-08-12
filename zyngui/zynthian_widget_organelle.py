@@ -57,7 +57,7 @@ class OscButton(tk.Canvas):
         # Draw the circular button.
         self.button = self.create_oval(2, 2, diameter - 2, diameter - 2, fill=COLOR_BUTTON, outline=COLOR_OUTLINE, width=2)
         # Place the label at the center.
-        self.create_text(diameter // 2, diameter // 2, text=label, font=("Arial", 12), fill=COLOR_TEXT, anchor=tk.CENTER)
+        self.create_text(diameter // 2, diameter // 2, text=label, font=(zynthian_gui_config.font_family, 12), fill=COLOR_TEXT, anchor=tk.CENTER)
 
         # Bind press and release events.
         self.bind("<ButtonPress-1>", self.on_press)
@@ -123,7 +123,7 @@ class VolumeSlider(tk.Frame):
             command=self.on_value_change)
         self.slider.pack(side="top", pady=0)
         # Create and pack the label.
-        self.label = tk.Label(self, text="VOLUME", bg=COLOR_PANEL, fg=COLOR_TEXT, font=("Arial", height//3))
+        self.label = tk.Label(self, text="VOLUME", bg=COLOR_PANEL, fg=COLOR_TEXT, font=(zynthian_gui_config.font_family, height//3))
         self.label.pack(side="bottom", pady=0)
         # Set initial value
         self.slider.set(70)
@@ -198,7 +198,7 @@ class MarkedEncoder(tk.Canvas):
         )
 
         # Add label below the knob.
-        self.create_text(center, center, text=label, font=("Arial", 12), fill=COLOR_TEXT, anchor=tk.CENTER)
+        self.create_text(center, center, text=label, font=(zynthian_gui_config.font_family, 12), fill=COLOR_TEXT, anchor=tk.CENTER)
 
         # Bind events for interaction.
         self.bind("<ButtonPress-1>", self.on_press)

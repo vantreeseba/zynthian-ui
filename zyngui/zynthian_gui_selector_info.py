@@ -107,7 +107,7 @@ class zynthian_gui_selector_info(zynthian_gui_selector):
             image = self.get_icon(info[1])
             self.info_canvas.itemconfigure(self.info_icon, image=image)
             self.info_canvas.coords(self.info_text, 0, image.height() + 2)
-            self.info_canvas.itemconfigure(self.info_text, font=("sans-serif", fs), text=info[0], width=image.width())
+            self.info_canvas.itemconfigure(self.info_text, font=(zynthian_gui_config.font_family, fs), text=info[0], width=image.width())
 
     def get_icon(self, icon_fname):
         if not icon_fname:

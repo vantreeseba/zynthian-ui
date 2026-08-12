@@ -572,7 +572,9 @@ color_meter_over_hold = "#ef5350"
 # Font Family
 # ------------------------------------------------------------------------------
 
-font_family = os.environ.get('ZYNTHIAN_UI_FONT_FAMILY', "Audiowide")
+font_family = os.environ.get('ZYNTHIAN_UI_FONT_FAMILY', "Exo 2")
+# font_family = "Audiowide" #=> the classic zynthian look
+# font_family = "Rajdhani" #=> good narrow alternative
 # font_family = "Helvetica" #=> the original ;-)
 # font_family = "Economica" #=> small
 # font_family = "Orbitron" #=> Nice, but too strange
@@ -902,6 +904,16 @@ if "zynthian_main.py" in sys.argv[0]:
         # Global fonts
         font_listbox = (font_family, int(1.0*font_size))
         font_topbar = (font_family, topbar_fs)
+        font_family_mono = "Inconsolata"
+        font_body = (font_family, font_size)
+        font_small = (font_family, int(0.8*font_size))
+        font_bold = (font_family, font_size, "bold")
+        font_mono = (font_family_mono, font_size)
+
+        # Spacing scale (display-proportional via font_size)
+        pad_xs = max(1, font_size // 8)
+        pad_sm = max(2, font_size // 4)
+        pad_md = max(4, font_size // 2)
 
         # ------------------------------------------------------------------------------
         # Setup Root Frame for the GUI

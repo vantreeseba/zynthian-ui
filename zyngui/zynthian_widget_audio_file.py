@@ -82,7 +82,7 @@ class zynthian_widget_audio_file(zynthian_widget_base.zynthian_widget_base):
         self.bg_crop_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_panel_bg, 30)
         #self.bmarker_color = zynthian_gui_config.color_hl
         self.bmarker_color = zynthian_gui_config.color_tx
-        self.font_info = tkinter.font.Font(font=("DejaVu Sans Mono", int(1.0 * zynthian_gui_config.font_size)))
+        self.font_info = tkinter.font.Font(font=zynthian_gui_config.font_mono)
 
         self.widget_canvas = tkinter.Canvas(self,
                                             bd=0,

@@ -745,7 +745,10 @@ class zynthian_gui_mixer_strip():
         c_zero = (200, 200, 200)
         c_mid = (200, 200, 0)
         c_high = (240, 0, 0)
-        font = ImageFont.truetype("DejaVuSans.ttf", int(width * 0.6))
+        try:
+            font = ImageFont.truetype("Exo2-Regular.ttf", int(width * 0.6))
+        except OSError:
+            font = ImageFont.truetype("DejaVuSans.ttf", int(width * 0.6))
         for db in (-40, -30, -20, -16, -13, -10, -7, -4, -1):
             y = min(height - 1, height - int(db_to_norm(db) * height))
             c = c_zero if db == -10 else c_high if db >=-3 else c_mid if db >= -10 else c_low

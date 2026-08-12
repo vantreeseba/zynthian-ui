@@ -232,9 +232,10 @@ class zynthian_gui_controller(tkinter.Canvas):
     def on_size_arc(self, event):
         ww = self.winfo_width()
         hh = self.winfo_height()
+        pad = zynthian_gui_config.pad_sm
         radius = min(ww, hh) // 2
-        if radius > 4:
-            radius -= 4
+        if radius > pad:
+            radius -= pad
         arc_width = radius // 4
         self.value_width = 2 * (radius - arc_width - 1)  # Use all the arc interior area
         self.value_height = self.value_width
@@ -243,18 +244,18 @@ class zynthian_gui_controller(tkinter.Canvas):
         # x0, y0 center of arc
         if self.vertical:
             x0 = ww // 2
-            y0 = hh - radius + arc_width - 4
-            self.title_width = ww - 4
+            y0 = hh - radius + arc_width - pad
+            self.title_width = ww - pad
             self.title_height = y0 - radius
-            self.coords(self.label_title, 4, 2)
+            self.coords(self.label_title, pad, pad // 2)
             self.itemconfigure(self.label_title, width=self.title_width, anchor='nw', justify=tkinter.LEFT)
         else:
-            x0 = ww - radius - 2
+            x0 = ww - radius - pad // 2
             y0 = hh // 2
             if self.selector_counter:
                 y0 -= radius // 3 + 2
             self.title_width = self.title_height = int(ww - radius * 2)
-            self.coords(self.label_title, 4, 4)
+            self.coords(self.label_title, pad, pad)
             self.itemconfigure(self.label_title, width=self.title_width, anchor='nw', justify=tkinter.LEFT)
 
         self.coords(self.value_text, x0, y0)
@@ -278,21 +279,22 @@ class zynthian_gui_controller(tkinter.Canvas):
     def on_size_rectangle(self, event):
         ww = self.winfo_width()
         hh = self.winfo_height()
+        pad = zynthian_gui_config.pad_sm
         hrect = int(0.35 * hh)
-        x1 = 4
+        x1 = pad
         y1 = hh // 2 - hrect // 4
-        x2 = ww - 4
+        x2 = ww - pad
         y2 = y1 + hrect
 
         self.value_width = self.title_width = x2
         self.value_height = self.title_height = hh // 3
-        self.coords(self.label_title, 2, 2)
+        self.coords(self.label_title, pad // 2, pad // 2)
         self.itemconfigure(self.label_title, width=self.title_width, anchor='nw', justify=tkinter.LEFT)
 
         vty = y1 + hrect // 2
         vtx = ww // 2
         self.coords(self.value_text, vtx, vty)
-        self.itemconfigure(self.value_text, font=self.value_font.copy(), width=ww - 8)
+        self.itemconfigure(self.value_text, font=self.value_font.copy(), width=ww - 2 * pad)
         if not self.selector_counter:
             self.coords(self.graph, (x1, y1, x2, y2))
             self.coords(self.graph_pickup, (x1, y1, x2, y2))
@@ -304,24 +306,25 @@ class zynthian_gui_controller(tkinter.Canvas):
     def on_size_triangle(self, event):
         ww = self.winfo_width()
         hh = self.winfo_height()
+        pad = zynthian_gui_config.pad_sm
         htri = int(0.4 * hh)
-        x1 = 4
+        x1 = pad
         y1 = hh // 2 + 3 * htri // 4
-        x2 = ww - 4
+        x2 = ww - pad
         y2 = y1 - int(htri)
 
         self.title_width = x2
         self.title_height = hh // 3
-        self.coords(self.label_title, 2, 2)
+        self.coords(self.label_title, pad // 2, pad // 2)
         self.itemconfigure(self.label_title, width=self.title_width, anchor='nw', justify=tkinter.LEFT)
 
-        self.value_width = ww - 4
+        self.value_width = ww - pad
         self.value_height = hh // 3
 
         vty = 2 * hh // 3
         vtx = ww // 2
         self.coords(self.value_text, vtx, vty)
-        self.itemconfigure(self.value_text, font=self.value_font.copy(), width=ww - 8)
+        self.itemconfigure(self.value_text, font=self.value_font.copy(), width=ww - 2 * pad)
 
         if not self.selector_counter:
             self.coords(self.graph, (x1, y1, x2, y1, x2, y2))

@@ -129,7 +129,7 @@ class zynthian_gui_base(tkinter.Frame):
             self.tb_frame = tkinter.Frame(self,
                                         width=self.topbar_width,
                                         height=self.topbar_height,
-                                        bg=zynthian_gui_config.color_bg)
+                                        bg=zynthian_gui_config.color_header_bg)
             self.tb_frame.grid_propagate(False)
             self.tb_frame.grid(row=0, sticky="ew")
             col = 0
@@ -163,7 +163,7 @@ class zynthian_gui_base(tkinter.Frame):
                                                 textvariable=self.select_path,
                                                 bg=zynthian_gui_config.color_header_bg,
                                                 fg=zynthian_gui_config.color_header_tx)
-            self.label_select_path.place(x=0, rely=0.5, anchor='w')
+            self.label_select_path.place(x=zynthian_gui_config.pad_sm, rely=0.5, anchor='w')
             # Setup Topbar's Callback
             self.label_select_path.bind('<Button-1>', self.cb_topbar_press)
             self.label_select_path.bind('<ButtonRelease-1>', self.cb_topbar_release)
@@ -175,7 +175,7 @@ class zynthian_gui_base(tkinter.Frame):
                                                 bd=0,
                                                 highlightthickness=0,
                                                 relief='flat',
-                                                bg=zynthian_gui_config.color_bg)
+                                                bg=zynthian_gui_config.color_header_bg)
             self.status_canvas.grid(row=0, column=col, sticky="ens", padx=(self.status_lpad, 0))
             # Set Status Callaback
             self.status_canvas.bind('<Button-1>', self.cb_status_press)
@@ -821,7 +821,7 @@ class zynthian_gui_base(tkinter.Frame):
         self.select_path_width = self.select_path_font.measure(self.select_path.get())
         self.select_path_offset = 0
         self.select_path_dir = 2
-        self.label_select_path.place(x=0, rely=0.5, anchor='w')
+        self.label_select_path.place(x=zynthian_gui_config.pad_sm, rely=0.5, anchor='w')
 
     def cb_scroll_select_path(self):
         if self.shown:
@@ -835,7 +835,7 @@ class zynthian_gui_base(tkinter.Frame):
             if self.select_path_width > self.title_canvas_width:
                 # Scroll label
                 self.select_path_offset += self.select_path_dir
-                self.label_select_path.place(x=-self.select_path_offset, rely=0.5, anchor='w')
+                self.label_select_path.place(x=zynthian_gui_config.pad_sm - self.select_path_offset, rely=0.5, anchor='w')
 
                 # Change direction ...
                 if self.select_path_offset > (self.select_path_width - self.title_canvas_width):
@@ -848,7 +848,7 @@ class zynthian_gui_base(tkinter.Frame):
             elif self.select_path_offset != 0:
                 self.select_path_offset = 0
                 self.select_path_dir = 2
-                self.label_select_path.place(x=0, rely=0.5, anchor='w')
+                self.label_select_path.place(x=zynthian_gui_config.pad_sm, rely=0.5, anchor='w')
         return False
 
 # ------------------------------------------------------------------------------

@@ -152,7 +152,7 @@ class zynthian_widget_audioplayer(zynthian_widget_base.zynthian_widget_base):
             anchor=tkinter.SE,
             justify=tkinter.RIGHT,
             width=self.width,
-            font=("DejaVu Sans Mono", int(1.3 * zynthian_gui_config.font_size)),
+            font=(zynthian_gui_config.font_family_mono, int(1.3 * zynthian_gui_config.font_size)),
             fill=zynthian_gui_config.color_panel_tx,
             text="",
             state=tkinter.HIDDEN,
@@ -188,7 +188,7 @@ class zynthian_widget_audioplayer(zynthian_widget_base.zynthian_widget_base):
                 coords[2] = self.width
                 self.widget_canvas.coords(f"waveform_bg_{chan}", coords)
 
-        font = tkinter.font.Font(family="DejaVu Sans Mono", size=int(1.3 * zynthian_gui_config.font_size))
+        font = tkinter.font.Font(family=zynthian_gui_config.font_family_mono, size=int(1.3 * zynthian_gui_config.font_size))
         self.waveform_height = self.height - font.metrics("linespace")
         self.refresh_waveform = True
 
@@ -358,7 +358,7 @@ class zynthian_widget_audioplayer(zynthian_widget_base.zynthian_widget_base):
                 0,
                 anchor=tkinter.NE,
                 justify=tkinter.RIGHT,
-                font=("DejaVu Sans Mono", int(
+                font=(zynthian_gui_config.font_family_mono, int(
                     0.8 * zynthian_gui_config.font_size)),
                 fill=zynthian_gui_config.color_panel_tx,
                 text=f"{i+1}",
