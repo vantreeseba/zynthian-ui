@@ -520,27 +520,27 @@ def get_external_storage_dirs(exdpath):
 # ------------------------------------------------------------------------------
 
 
-color_bg = os.environ.get('ZYNTHIAN_UI_COLOR_BG', "#000000")
-color_tx = os.environ.get('ZYNTHIAN_UI_COLOR_TX', "#ffffff")
-color_tx_off = os.environ.get('ZYNTHIAN_UI_COLOR_TX_OFF', "#e0e0e0")
-color_on = os.environ.get('ZYNTHIAN_UI_COLOR_ON', "#ff0000")
-color_off = os.environ.get('ZYNTHIAN_UI_COLOR_OFF', "#5a626d")
-color_hl = os.environ.get('ZYNTHIAN_UI_COLOR_HL', "#00c000")
-color_ml = os.environ.get('ZYNTHIAN_UI_COLOR_ML', "#f0f000")
-color_low_on = os.environ.get('ZYNTHIAN_UI_COLOR_LOW_ON', "#b00000")
-color_panel_bg = os.environ.get('ZYNTHIAN_UI_COLOR_PANEL_BG', "#3a424d")
-color_panel_hl = os.environ.get('ZYNTHIAN_UI_COLOR_PANEL_HL', "#2a323d")
-color_info = os.environ.get('ZYNTHIAN_UI_COLOR_INFO', "#8080ff")
-color_midi = os.environ.get('ZYNTHIAN_UI_COLOR_MIDI', "#9090ff")
-color_alt = os.environ.get('ZYNTHIAN_UI_COLOR_ALT', "#ff00ff")
-color_alt2 = os.environ.get('ZYNTHIAN_UI_COLOR_ALT2', "#ff9000")
-color_error = os.environ.get('ZYNTHIAN_UI_COLOR_ERROR', "#ff0000")
-color_warn = os.environ.get('ZYNTHIAN_UI_COLOR_WARN', "#ff9000")
+color_bg = os.environ.get('ZYNTHIAN_UI_COLOR_BG', "#121212")
+color_tx = os.environ.get('ZYNTHIAN_UI_COLOR_TX', "#f2f2f2")
+color_tx_off = os.environ.get('ZYNTHIAN_UI_COLOR_TX_OFF', "#b0b0b0")
+color_on = os.environ.get('ZYNTHIAN_UI_COLOR_ON', "#e53935")
+color_off = os.environ.get('ZYNTHIAN_UI_COLOR_OFF', "#3a3f47")
+color_hl = os.environ.get('ZYNTHIAN_UI_COLOR_HL', "#4caf50")
+color_ml = os.environ.get('ZYNTHIAN_UI_COLOR_ML', "#ffd54f")
+color_low_on = os.environ.get('ZYNTHIAN_UI_COLOR_LOW_ON', "#b71c1c")
+color_panel_bg = os.environ.get('ZYNTHIAN_UI_COLOR_PANEL_BG', "#1e1e1e")
+color_panel_hl = os.environ.get('ZYNTHIAN_UI_COLOR_PANEL_HL', "#2c2c2c")
+color_info = os.environ.get('ZYNTHIAN_UI_COLOR_INFO', "#64b5f6")
+color_midi = os.environ.get('ZYNTHIAN_UI_COLOR_MIDI', "#7986cb")
+color_alt = os.environ.get('ZYNTHIAN_UI_COLOR_ALT', "#ba68c8")
+color_alt2 = os.environ.get('ZYNTHIAN_UI_COLOR_ALT2', "#ff9800")
+color_error = os.environ.get('ZYNTHIAN_UI_COLOR_ERROR', "#ef5350")
+color_warn = os.environ.get('ZYNTHIAN_UI_COLOR_WARN', "#ff9800")
 
 # Color Scheme
 color_panel_bd = color_bg
 color_panel_tx = color_tx
-color_header_bg = color_bg
+color_header_bg = color_panel_bg  # Topbar sits on a raised surface, not the window bg
 color_header_tx = color_tx
 color_ctrl_bg_off = color_off
 color_ctrl_bg_on = color_on
@@ -553,6 +553,20 @@ color_status_play_midi = color_alt
 color_status_play_seq = color_alt2
 color_status_error = color_error
 color_status_warn = color_warn
+
+# Chain type colors (routing graph views)
+color_chain_midi = os.environ.get('ZYNTHIAN_UI_COLOR_CHAIN_MIDI', "#805050")
+color_chain_synth = os.environ.get('ZYNTHIAN_UI_COLOR_CHAIN_SYNTH', "#32a893")
+color_chain_audio = os.environ.get('ZYNTHIAN_UI_COLOR_CHAIN_AUDIO', "#505080")
+color_chain_special = os.environ.get('ZYNTHIAN_UI_COLOR_CHAIN_SPECIAL', "#708050")
+
+# Level meter colors
+color_meter_low = "#4caf50"
+color_meter_low_hold = "#81c784"
+color_meter_high = "#ffd54f"
+color_meter_high_hold = "#ffe082"
+color_meter_over = "#e53935"
+color_meter_over_hold = "#ef5350"
 
 # ------------------------------------------------------------------------------
 # Font Family
