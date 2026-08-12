@@ -1462,7 +1462,9 @@ class zynthian_gui:
             logging.error(f"Bad record quantize value: {params} (expected 0, 2, 4, 8 or 16)")
 
     def cuia_toggle_pad_record(self, params=None):
-        # Punch in/out clip/MIDI recording on the selected launcher pad
+        # Punch in/out clip/MIDI recording on a launcher pad
+        # No params: the selected pad. "track,pad" (1-based): select that pad first.
+        # "NEXT": jump to the track's next free pad first if the selected one is filled.
         self.screens["mixer"].cuia_toggle_pad_record(params)
 
     def cuia_clear_pad(self, params=None):

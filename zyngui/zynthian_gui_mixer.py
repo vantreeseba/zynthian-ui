@@ -2652,10 +2652,13 @@ class zynthian_gui_mixer(zynthian_gui_base):
         return False
 
     def cuia_toggle_pad_record(self, params=None):
-        """Punch in/out recording on the selected launcher pad
+        """Punch in/out recording on a launcher pad
 
         A recording in flight (any pad) => stop MIDI capture / punch out clips at the next bar
-        Otherwise => start recording into the selected pad (audio clip or MIDI pattern)
+        Otherwise => start recording into the target pad (audio clip or MIDI pattern):
+            no params => the selected pad
+            track,pad => 1-based strip position and pad row, selecting both first
+            NEXT => the selected pad, or the track's next free pad if it holds content
         """
 
         sm = self.state_manager
@@ -2675,7 +2678,13 @@ class zynthian_gui_mixer(zynthian_gui_base):
             break  # Single shared clippy engine => recordings already covers all chains
         if handled:
             return True
-        # Nothing in flight => record into the selected pad
+        # Nothing in flight => resolve the target pad, then record into it
+        if params and len(params) >= 2:
+            if not self.select_pad_by_index(params[0], params[1]):
+                return True
+        elif params and str(params[0]).upper() == "NEXT":
+            if not self.select_next_free_pad():
+                return True
         phrase = self.zynseq.phrase
         if self.highlighted_strip is None or phrase >= self.zynseq.phrases:
             return True
@@ -2704,6 +2713,65 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 self.set_title(f"⏺ Recording MIDI: {chain.get_name()} · clip {phrase + 1}",
                                zynthian_gui_config.color_status_record, None, 3)
         return True
+
+    def pad_filled(self, chain, phrase):
+        """True if a chain's launcher pad holds content (a clip file or a non-empty pattern)"""
+
+        proc = chain.get_clippy_processor() if chain else None
+        if proc:
+            try:
+                return bool(proc.controllers_dict[f"file {phrase + 1}"].get_value())
+            except Exception:
+                return False
+        if chain and chain.chain_id and type(chain.midi_chan) is int and chain.midi_chan < 16:
+            return not self.zynseq.libseq.isEmpty(self.zynseq.scene, phrase, chain.midi_chan)
+        return False
+
+    def select_pad_by_index(self, track, pad):
+        """Select a launcher pad by position, making its chain active
+
+        track: Strip position (1-based, display order, excluding main mixbus)
+        pad: Pad row (1-based)
+        Returns: True if the target exists and was selected
+        """
+
+        try:
+            track = int(track)
+            pad = int(pad)
+        except (TypeError, ValueError):
+            return False
+        if track < 1 or pad < 1 or pad > self.zynseq.phrases:
+            self.set_title(f"No pad at track {track} pad {pad}", None, None, 2)
+            return False
+        chain = self.chain_manager.get_chain_by_index(track - 1)
+        if chain is None or not chain.chain_id:
+            # Track beyond the last chain (main mixbus is always last)
+            self.set_title(f"No pad at track {track} pad {pad}", None, None, 2)
+            return False
+        self.select_launcher(pad - 1)
+        self.update_active_chain(chain.chain_id, True)
+        return True
+
+    def select_next_free_pad(self):
+        """Ensure the selected pad is free, jumping to the track's next free pad if not
+
+        Searches forward from the selected pad, wrapping around the track.
+        Returns: True if a free pad is selected
+        """
+
+        phrase = self.zynseq.phrase
+        if self.highlighted_strip is None or phrase >= self.zynseq.phrases:
+            return False
+        chain = self.highlighted_strip.chain
+        for i in range(self.zynseq.phrases):
+            p = (phrase + i) % self.zynseq.phrases
+            if self.pad_filled(chain, p):
+                continue
+            if p != phrase:
+                self.select_launcher(p)
+            return True
+        self.set_title("No free pad in track", None, None, 2)
+        return False
 
     def cuia_clear_pad(self, params=None):
         """Clear the selected launcher pad (pedal-friendly undo/reset)
