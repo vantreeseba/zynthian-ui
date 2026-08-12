@@ -51,7 +51,8 @@ typedef struct {
     float tempo;            // Tempo to play (used to calculate timestretch ratio). 0 to no timestretch.
     uint8_t tempo_lock;     // Ignore global tempo changes
     char path[256];         // Loaded file path and filename
-    float *data[2];         // Processed sample data for each channel (L,R)
+    float *data[2];         // Processed sample data for each channel (L,R) - may be offset into alloc[]
+    float *alloc[2];        // Base pointers of the allocations backing data[] (used for free)
 } Clip;
 
 typedef struct {
@@ -99,12 +100,19 @@ typedef struct {
     uint32_t frames;        // Quantity of frames captured so far
     uint16_t beats;         // Quantity of beat ticks counted whilst recording
     float tempo;            // Tempo (BPM) when armed
+    uint32_t latency;       // Capture latency (frames) to compensate, sampled at punch-in
+    uint32_t loop_frames;   // Committed loop length in frames (set at punch-out)
+    uint32_t target_frames; // Total frames to capture (loop + latency tail) before REC_DONE
     float* data[2];         // Capture buffers, handed over to pending_clip at commit
+    float* tail[2];         // Aliases of the committed clip's alloc[] whilst capturing the latency tail (not owned)
     Clip* pending_clip;     // Preallocated clip shell committed at punch-out (RT-safe pointer swap)
     Clip* old_clip;         // Clip displaced at commit, freed later by disarmRecord()
 } Recorder;
 
 static Recorder g_recorder = {REC_IDLE}; // Single global recorder => only one clip records at a time
+
+// User latency offset (frames) added to the JACK-reported capture latency when recording clips
+static volatile int32_t g_record_latency_offset = 0;
 
 // Live input monitor routing: 0 => mix into each player's output (feeds the mixbus),
 // 1 => mix into the dedicated monitor_a/b ports (direct hardware monitoring)
@@ -204,6 +212,20 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                                 if (g_recorder.state == REC_ARMED && channel == g_recorder.channel && clip_id == g_recorder.clip_id) {
                                     g_recorder.frames = 0;
                                     g_recorder.beats = 0;
+                                    g_recorder.loop_frames = 0;
+                                    // Captured audio arrives late by the (JACK-reported) capture latency plus
+                                    // any user offset => compensate by shifting the committed loop region
+                                    int32_t latency = g_record_latency_offset;
+                                    if (player->jack_in_a) {
+                                        jack_latency_range_t range;
+                                        jack_port_get_latency_range(player->jack_in_a, JackCaptureLatency, &range);
+                                        latency += (int32_t)range.max;
+                                    }
+                                    if (latency < 0)
+                                        latency = 0;
+                                    else if ((uint32_t)latency > samplerate)
+                                        latency = samplerate; // Sanity cap: 1s
+                                    g_recorder.latency = (uint32_t)latency;
                                     g_recorder.state = REC_RECORDING;
                                     rec_from = event.time;
                                     // Recording replaces any playing clip => fade it out this cycle
@@ -316,16 +338,27 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                 g_recorder.frames += n;
             }
             if (rec_commit) {
+                // Latency compensation: the wanted loop content is captured at
+                // indices [latency, loop + latency) => offset the clip's data
+                // pointers and keep capturing the tail after punch-out
+                uint32_t latency = g_recorder.latency;
+                if (latency > g_recorder.frames)
+                    latency = g_recorder.frames;
+                if (g_recorder.frames + latency > g_recorder.max_frames)
+                    latency = g_recorder.max_frames - g_recorder.frames;
                 // Commit recording as the clip and start looping it (pointer swaps only)
                 Clip* clip = g_recorder.pending_clip;
-                clip->frames = g_recorder.frames;
+                g_recorder.loop_frames = g_recorder.frames;
+                clip->frames = g_recorder.loop_frames;
                 clip->nbeats = g_recorder.beats ? g_recorder.beats : 1;
                 clip->channels = g_recorder.channels;
                 clip->tempo = g_recorder.tempo;
                 clip->start = 0;
                 clip->end = clip->frames;
-                clip->data[0] = g_recorder.data[0];
-                clip->data[1] = (g_recorder.channels == 2) ? g_recorder.data[1] : g_recorder.data[0];
+                clip->alloc[0] = g_recorder.data[0];
+                clip->alloc[1] = (g_recorder.channels == 2) ? g_recorder.data[1] : NULL;
+                clip->data[0] = g_recorder.data[0] + latency;
+                clip->data[1] = (g_recorder.channels == 2) ? (g_recorder.data[1] + latency) : clip->data[0];
                 clip->state = STATE_READY;
                 g_recorder.old_clip = rp->clips[g_recorder.clip_id];
                 if (rp->current_clip == g_recorder.old_clip) {
@@ -338,11 +371,52 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                 rp->starting_clip = clip;
                 rp->starting_clip_id = g_recorder.clip_id;
                 rp->start_frame = rec_to;
+                g_recorder.pending_clip = NULL;
+                if (latency) {
+                    // Keep capturing until the loop's tail (delayed by the
+                    // latency) has fully arrived. The buffer is now owned by
+                    // the clip; tail[] alias it and are never freed.
+                    // The tail writer stays a full loop-length ahead of the
+                    // playhead (which starts at the loop start) => no race.
+                    g_recorder.target_frames = g_recorder.loop_frames + latency;
+                    g_recorder.tail[0] = g_recorder.data[0];
+                    g_recorder.tail[1] = g_recorder.data[1];
+                    g_recorder.state = REC_FINISHING;
+                } else {
+                    g_recorder.state = REC_DONE;
+                }
                 g_recorder.data[0] = NULL;
                 g_recorder.data[1] = NULL;
-                g_recorder.pending_clip = NULL;
-                g_recorder.state = REC_DONE;
             }
+        }
+    }
+
+    // Capture the post-punch-out latency tail into the committed clip's buffer
+    if (g_recorder.state == REC_FINISHING) {
+        Player* rp = players[g_recorder.channel];
+        if (rp && rp->jack_in_a && rp->jack_in_b) {
+            jack_nframes_t tail_from = rec_commit ? rec_to : 0; // Commit cycle => tail starts at the punch-out frame
+            jack_nframes_t need = g_recorder.target_frames - g_recorder.frames;
+            jack_nframes_t n = (frames > tail_from) ? (frames - tail_from) : 0;
+            if (n > need)
+                n = need;
+            if (n) {
+                float* in = jack_port_get_buffer(rp->jack_in_a, frames);
+                memcpy(g_recorder.tail[0] + g_recorder.frames, in + tail_from, n * sizeof(float));
+                if (g_recorder.channels == 2) {
+                    in = jack_port_get_buffer(rp->jack_in_b, frames);
+                    memcpy(g_recorder.tail[1] + g_recorder.frames, in + tail_from, n * sizeof(float));
+                }
+                g_recorder.frames += n;
+            }
+        } else {
+            // Capture ports vanished => give up on the (calloc'd, silent) remainder of the tail
+            g_recorder.frames = g_recorder.target_frames;
+        }
+        if (g_recorder.frames >= g_recorder.target_frames) {
+            g_recorder.tail[0] = NULL;
+            g_recorder.tail[1] = NULL;
+            g_recorder.state = REC_DONE;
         }
     }
 
@@ -641,13 +715,21 @@ uint8_t removePlayer(uint8_t channel) {
         g_recorder.state = REC_ABORTED;
         releaseMutex();
     }
+    // Stop any latency tail capture before its clip buffer is freed below
+    if (g_recorder.state == REC_FINISHING && g_recorder.channel == channel) {
+        getMutex();
+        g_recorder.tail[0] = NULL;
+        g_recorder.tail[1] = NULL;
+        g_recorder.state = REC_DONE;
+        releaseMutex();
+    }
     getMutex();
     players[channel] = NULL;
     releaseMutex();
     for (uint32_t id = 0; id < MAX_CLIPS; ++id) {
         if (player->clips[id]) {
             for (int i=0; i < player->clips[id]->channels; i++)
-                free(player->clips[id]->data[i]);
+                free(player->clips[id]->alloc[i]);
             free(player->clips[id]);
         }
     }
@@ -1042,17 +1124,20 @@ uint8_t loadClip(uint8_t channel, uint8_t note, const char* path, uint16_t nbeat
     else
         clip->channels = 2;
     for (int i = 0; i < channels; i++) {
-        if (i < clip->channels)
+        if (i < clip->channels) {
             // Assign channel data to the clip
             clip->data[i] = data_deinterleaved[i];
-        else {
+            clip->alloc[i] = data_deinterleaved[i];
+        } else {
             // Free uneeded channel data => TODO Limit this above in the process!!
             free(data_deinterleaved[i]);
             data_deinterleaved[i] = NULL;
         }
     }
-    if (clip->channels == 1)
+    if (clip->channels == 1) {
         clip->data[1] = clip->data[0];
+        clip->alloc[1] = NULL;
+    }
     clip->frames = frames;
     clip->nbeats = nbeats;
     clip->start = start;
@@ -1093,6 +1178,14 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
         g_recorder.state = REC_ABORTED;
         releaseMutex();
     }
+    // Stop any latency tail capture before its clip buffer is freed below
+    if (g_recorder.state == REC_FINISHING && g_recorder.channel == channel && g_recorder.clip_id == id) {
+        getMutex();
+        g_recorder.tail[0] = NULL;
+        g_recorder.tail[1] = NULL;
+        g_recorder.state = REC_DONE;
+        releaseMutex();
+    }
     Clip* clip = player->clips[id];
     if(clip == NULL)
         return ERROR_RANGE;
@@ -1104,7 +1197,7 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
     }
     player->clips[id] = NULL;
     for (int i=0; i < clip->channels; i++)
-        free(clip->data[i]);
+        free(clip->alloc[i]);
     free(clip);
     return ERROR_SUCCESS;
 }
@@ -1127,8 +1220,9 @@ uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, 
     memset(clip, 0, sizeof(Clip));
     clip->gain = 1.0f;
     clip->state = STATE_IDLE;
-    g_recorder.data[0] = malloc(max_frames * sizeof(float));
-    g_recorder.data[1] = (channels == 2) ? malloc(max_frames * sizeof(float)) : NULL;
+    // calloc => any uncaptured latency tail is silence
+    g_recorder.data[0] = calloc(max_frames, sizeof(float));
+    g_recorder.data[1] = (channels == 2) ? calloc(max_frames, sizeof(float)) : NULL;
     if (!g_recorder.data[0] || (channels == 2 && !g_recorder.data[1])) {
         free(g_recorder.data[0]);
         free(g_recorder.data[1]);
@@ -1144,6 +1238,11 @@ uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, 
     g_recorder.frames = 0;
     g_recorder.beats = 0;
     g_recorder.tempo = tempo;
+    g_recorder.latency = 0;
+    g_recorder.loop_frames = 0;
+    g_recorder.target_frames = 0;
+    g_recorder.tail[0] = NULL;
+    g_recorder.tail[1] = NULL;
     g_recorder.pending_clip = clip;
     g_recorder.old_clip = NULL;
     getMutex();
@@ -1155,6 +1254,9 @@ uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, 
 uint8_t disarmRecord() {
     getMutex();
     g_recorder.state = REC_IDLE;
+    // tail[] alias the committed clip's buffer (owned by the clip) => drop, don't free
+    g_recorder.tail[0] = NULL;
+    g_recorder.tail[1] = NULL;
     releaseMutex();
     // Free anything not handed over to a committed clip
     free(g_recorder.data[0]);
@@ -1167,7 +1269,7 @@ uint8_t disarmRecord() {
     }
     if (g_recorder.old_clip) {
         for (int i = 0; i < g_recorder.old_clip->channels; i++)
-            free(g_recorder.old_clip->data[i]);
+            free(g_recorder.old_clip->alloc[i]);
         free(g_recorder.old_clip);
         g_recorder.old_clip = NULL;
     }
@@ -1187,11 +1289,22 @@ uint8_t getRecordNote() {
 }
 
 uint32_t getRecordedFrames() {
+    // After commit, frames keeps counting the latency tail => report the loop length
+    if (g_recorder.state == REC_FINISHING || g_recorder.state == REC_DONE)
+        return g_recorder.loop_frames;
     return g_recorder.frames;
 }
 
 uint16_t getRecordedBeats() {
     return g_recorder.beats;
+}
+
+void setRecordLatencyOffset(int32_t frames) {
+    g_record_latency_offset = frames;
+}
+
+int32_t getRecordLatencyOffset() {
+    return g_record_latency_offset;
 }
 
 void setInputMonitor(uint8_t channel, uint8_t enable) {

@@ -178,6 +178,8 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         else:
             self.list_data.append((self.toggle_clip_record_ram, 0, "☐ Clip Recording in RAM",
                                    ["Clip takes are recorded to the capture directory on disk.", "audio_recording.png"]))
+        self.list_data.append((self.set_clip_record_latency, 0, f"Clip Record Latency ({zynthian_gui_config.clip_record_latency} ms)",
+                               ["Extra latency offset applied when aligning recorded clips, added to the capture latency reported by JACK.\n\nIncrease if recorded loops play late relative to the beat, decrease (negative) if they play early.", "audio_recording.png"]))
         self.list_data.append((self.show_tts, 0, "ZynVoice", ["Text to speech accessibility options", "audio_options.png"]))
         if self.state_manager.allow_rbpi_headphones():
             if zynthian_gui_config.rbpi_headphones:
@@ -431,6 +433,19 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         })
         zynautoconnect.request_audio_connect(True)
         self.state_manager.update_clip_monitors()
+        self.update_list()
+
+    def set_clip_record_latency(self, t='S'):
+        logging.info("Clip record latency")
+        self.enable_param_editor(self, "Clip Record Latency (ms)",
+                {'value_min': -100, 'value_max': 100, 'value': zynthian_gui_config.clip_record_latency},
+                self.set_clip_record_latency_cb)
+
+    def set_clip_record_latency_cb(self, value):
+        zynthian_gui_config.clip_record_latency = value
+        zynconf.save_config({
+            "ZYNTHIAN_CLIP_RECORD_LATENCY": str(zynthian_gui_config.clip_record_latency)
+        })
         self.update_list()
 
     def show_tts(self, t='S'):

@@ -25,6 +25,7 @@
 
 import os
 import re
+import time
 import ctypes
 import logging
 from threading import Timer, Thread
@@ -53,6 +54,7 @@ REC_RECORDING = 2
 REC_DONE = 3
 REC_ABORTED = 4
 REC_OVERFLOW = 5
+REC_FINISHING = 6
 
 
 zctrl_symbols = ("file", "crop_start", "crop_end", "zoom", "gain", "warp", "beats", "mode", "beat_slice")
@@ -121,6 +123,9 @@ class zynthian_engine_clippy(zynthian_engine):
         self.libclippy.setMonitorGain.argtypes = [ctypes.c_float]
         self.libclippy.setMonitorGain.restype = None
         self.libclippy.getMonitorGain.restype = ctypes.c_float
+        self.libclippy.setRecordLatencyOffset.argtypes = [ctypes.c_int32]
+        self.libclippy.setRecordLatencyOffset.restype = None
+        self.libclippy.getRecordLatencyOffset.restype = ctypes.c_int32
         self.jackname = self.libclippy.getJackname().decode("utf-8")
         self.zynseq.clippy = self
         self.refresh_monitor_routing()
@@ -632,6 +637,9 @@ class zynthian_engine_clippy(zynthian_engine):
         if zynthian_gui_config.clip_record_ram:
             # tmpfs => the take never touches disk and vanishes at power-off
             path = os.path.join(zynthian_gui_config.clip_record_ram_dir, os.path.basename(path))
+        # User latency offset (ms => frames), added to the JACK-reported capture latency
+        self.libclippy.setRecordLatencyOffset(
+            int(zynthian_gui_config.clip_record_latency * self.samplerate / 1000))
         res = self.libclippy.armRecord(processor.midi_chan - 16, phrase + 1, channels, tempo, 0)
         if res != 0:
             logging.error(f"Failed to arm clip recorder => error {res}")
@@ -673,7 +681,8 @@ class zynthian_engine_clippy(zynthian_engine):
             return
         note = phrase + 1
         clip_channel = processor.midi_chan - 16
-        if self.libclippy.getRecordState() != REC_DONE:
+        # REC_FINISHING => committed and looping, still capturing the latency tail
+        if self.libclippy.getRecordState() not in (REC_DONE, REC_FINISHING):
             logging.warning("Clip recording did not complete => aborting")
             self.libseq.setPlayState(self.zynseq.scene, phrase, processor.midi_chan, zynseq.SEQ_STOPPED)
             self.cleanup_recording(processor, phrase)
@@ -709,6 +718,12 @@ class zynthian_engine_clippy(zynthian_engine):
 
     def _save_recording(self, processor, phrase, clip_channel, note, path):
         try:
+            # Wait for the latency tail capture (REC_FINISHING) to complete
+            # before saving => the file contains the fully compensated loop
+            timeout = time.monotonic() + 2.0
+            while (self.libclippy.getRecordState() == REC_FINISHING
+                   and time.monotonic() < timeout):
+                time.sleep(0.01)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             if self.libclippy.saveClip(clip_channel, note, bytes(path, "utf-8")):
                 logging.error(f"Failed to save recorded clip to '{path}'")

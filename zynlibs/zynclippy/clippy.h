@@ -40,7 +40,8 @@ enum REC_STATE {
     REC_RECORDING,  // Capturing audio
     REC_DONE,       // Recording committed as clip (awaiting save/disarm)
     REC_ABORTED,    // Recording aborted (awaiting disarm)
-    REC_OVERFLOW    // Capture buffer exhausted, recording abandoned (awaiting disarm)
+    REC_OVERFLOW,   // Capture buffer exhausted, recording abandoned (awaiting disarm)
+    REC_FINISHING   // Committed and looping; still capturing the latency tail (=> REC_DONE)
 };
 
 enum MIDI_COMMANDS {
@@ -258,6 +259,20 @@ uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, 
     @note   Must be called after REC_DONE (post save), REC_ABORTED or REC_OVERFLOW.
 */
 uint8_t disarmRecord();
+
+/** @brief  Set the user latency offset applied to recorded clips
+    @param  frames Offset in frames added to the JACK-reported capture latency
+                   (may be negative; the combined total is clamped to >= 0)
+    @note   Captured audio arrives late by the round-trip latency; the recorder
+            compensates by shifting the committed loop region by the combined
+            latency, continuing capture (REC_FINISHING) until the tail is full.
+*/
+void setRecordLatencyOffset(int32_t frames);
+
+/** @brief  Get the user latency offset applied to recorded clips
+    @retval int32_t Offset in frames
+*/
+int32_t getRecordLatencyOffset();
 
 /** @brief  Get recorder state
     @retval uint8_t REC_STATE value

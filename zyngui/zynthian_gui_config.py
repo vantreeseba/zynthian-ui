@@ -629,6 +629,9 @@ monitor_output = os.environ.get('ZYNTHIAN_MONITOR_OUTPUT', "Main")
 # takes are lost at power-off
 clip_record_ram = get_env_int('ZYNTHIAN_CLIP_RECORD_RAM', 0)
 clip_record_ram_dir = "/dev/shm/zynthian-capture"
+# Extra clip record latency offset in ms, added to the JACK-reported capture latency
+# when aligning recorded clips (may be negative)
+clip_record_latency = get_env_int('ZYNTHIAN_CLIP_RECORD_LATENCY', 0)
 
 # ------------------------------------------------------------------------------
 # Text To Speech Options
