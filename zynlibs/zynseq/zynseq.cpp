@@ -2612,6 +2612,9 @@ void setPlayState(uint8_t scene, uint8_t phrase, uint8_t sequence, uint8_t state
         //if (g_seqMan.getPlayingSequencesCount() == 0) {
 		//	setBpb(getPhraseBPB(scene, phrase));
     	//}
+        // Arming from stopped transport => insert the metronome count-in before punch in
+        if (state == STARTING_RECORD)
+            g_seqMan.startRecordCountIn(g_nTransportState != PLAYING);
         transportStart(TRANSPORT_CLIENT_ZYNSEQ);
     }
     else if (!g_nPlayingSequences && state == STOPPING)
@@ -2698,6 +2701,10 @@ void setPunchQuantize(uint16_t beats) {
 void setRecordBars(uint16_t bars) {
     g_nMidiRecordBars = bars;
     g_seqMan.setRecordBars(bars);
+}
+
+void setRecordCountIn(uint16_t bars) {
+    g_seqMan.setRecordCountIn(bars);
 }
 
 void setMaxRecordBars(uint16_t bars) {

@@ -199,6 +199,16 @@ class SequenceManager {
     */
     void setRecordBars(uint16_t bars);
 
+    /** @brief  Set the metronome count-in for clip recording
+        @param  bars Count-in duration in bars (0 to disable)
+    */
+    void setRecordCountIn(uint16_t bars);
+
+    /** @brief  Begin or clear the count-in for the next clip record punch-in
+        @param  enable True to apply the configured count-in (arming whilst transport stopped)
+    */
+    void startRecordCountIn(bool enable);
+
     /** @brief  Get sequence currently in a clippy record state
         @retval Sequence* Pointer to sequence or nullptr if none recording
     */
@@ -414,5 +424,7 @@ class SequenceManager {
     uint16_t m_nMaxRecordBars = 32;             // Maximum bars of open-ended clip recording before forced punch-out (0 = no cap)
     uint16_t m_nPunchQuantize = 0;              // Clip record punch-in/out grid in beats (0 = bar sync)
     uint16_t m_nRecordBars = 0;                 // Fixed clip record length in bars (0 = open-ended)
+    uint16_t m_nRecordCountIn = 0;              // Metronome count-in in bars when arming from stopped transport (0 = off)
+    uint32_t m_nCountInSyncs = 0;               // Bar sync pulses remaining before a pending count-in punch in
     std::map<uint8_t, uint16_t> m_mTriggers;   // Map of phrase,sequence indexed by MIDI note triggers
 };

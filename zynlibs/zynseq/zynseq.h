@@ -1006,6 +1006,13 @@ void setPunchQuantize(uint16_t beats);
 */
 void setRecordBars(uint16_t bars);
 
+/** @brief  Set the metronome count-in for clip recording
+    @param  bars Count-in duration in bars (0 to disable - default)
+    @note   Applied when a clip record is armed whilst the transport is stopped:
+            punch in is delayed by this many bars of metronome
+*/
+void setRecordCountIn(uint16_t bars);
+
 /** @brief  Set maximum quantity of bars an open-ended clip recording may capture
     @param  bars Quantity of bars before forced punch out (0 to disable safety cap)
 */

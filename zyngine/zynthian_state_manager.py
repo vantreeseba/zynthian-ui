@@ -157,7 +157,9 @@ class zynthian_state_manager:
         self.record_quantize_enabled = True  # Toggled off keeps record_quantize for restoring
         self.punch_quantize = "global"  # Clip record punch grid: "global" (follow record quantize), "bar", "2beat" or "beat"
         self.record_bars = 0  # Fixed record length in bars for clip/pad recording (0 = open-ended)
+        self.record_count_in = 1  # Metronome count-in bars when arming a clip record from stopped transport (0 = off)
         self.apply_record_quantize()
+        self.zynseq.libseq.setRecordCountIn(self.record_count_in)
         self.midi_record_pad = None  # (phrase, midi_chan) of launcher pad capturing MIDI input, None when idle
         self.record_metronome_depth = 0  # Count of in-flight recordings forcing the metronome on
         self.saved_metronome_mode = None  # Metronome mode to restore when recordings finish
@@ -1023,6 +1025,7 @@ class zynthian_state_manager:
             },
             'punch_quantize': self.punch_quantize,
             'record_bars': self.record_bars,
+            'record_count_in': self.record_count_in,
             'gui': {
                 'pinned_chains': self.chain_manager.get_pinned_count()
             }
@@ -1077,7 +1080,7 @@ class zynthian_state_manager:
                         except:
                             pass
 
-            for key in ["last_snapshot_fpath", "midi_profile_state", "zynseq", "record_quantize", "punch_quantize", "record_bars"]:
+            for key in ["last_snapshot_fpath", "midi_profile_state", "zynseq", "record_quantize", "punch_quantize", "record_bars", "record_count_in"]:
                 try:
                     del state[key]
                 except:
@@ -1180,7 +1183,7 @@ class zynthian_state_manager:
 
                     if merge:
                         # Remove elements that are not to be merged
-                        for key in ["last_snapshot_fpath", "last_zs3_id", "midi_profile_state", "zynseq", "record_quantize", "punch_quantize", "record_bars"]:
+                        for key in ["last_snapshot_fpath", "last_zs3_id", "midi_profile_state", "zynseq", "record_quantize", "punch_quantize", "record_bars", "record_count_in"]:
                             try:
                                 del state[key]
                             except:
@@ -1282,6 +1285,9 @@ class zynthian_state_manager:
 
                 if "record_bars" in state:
                     self.set_record_bars(state["record_bars"])
+
+                if "record_count_in" in state:
+                    self.set_record_count_in(state["record_count_in"])
 
 
             # Save last snapshot info and get snapshot's program number
@@ -2513,6 +2519,15 @@ class zynthian_state_manager:
 
         self.record_bars = bars
         self.zynseq.libseq.setRecordBars(bars)
+
+    def set_record_count_in(self, bars):
+        """Set the metronome count-in for clip recording armed from stopped transport
+
+        bars: Count-in duration in bars before punch in (0 to disable)
+        """
+
+        self.record_count_in = bars
+        self.zynseq.libseq.setRecordCountIn(bars)
 
     def start_record_metronome(self):
         """Force the metronome audible while a clip/pattern recording is in flight"""

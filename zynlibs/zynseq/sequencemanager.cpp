@@ -286,9 +286,14 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
                         pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_CHAN_PRESSURE | nChannel), beatPos, 0}});
                     }
                     break;
-                case STARTING_RECORD:
+                case STARTING_RECORD: {
                     // Punch in at the punch quantize point (record message emplaced before coincident beat tick so clippy counts exact beats)
-                    if (bPunch) {
+                    bool bPunchIn = bPunch;
+                    if (m_nCountInSyncs) {
+                        // Metronome count-in: hold the punch until the bar sync ending the count-in
+                        bPunchIn = bSync && --m_nCountInSyncs == 0;
+                    }
+                    if (bPunchIn) {
                         nPlayState = RECORDING;
                         pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), nNote, CLIPPY_VEL_REC_START}});
                         pSequence->setPlayState(RECORDING);
@@ -300,6 +305,7 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
                         pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_CHAN_PRESSURE | nChannel), beatPos, 0}});
                     }
                     break;
+                }
                 case RECORDING:
                 case STOPPING_RECORD: {
                     uint32_t nPos = pSequence->getPlayPosition() + 1;
@@ -572,6 +578,15 @@ void SequenceManager::setPunchQuantize(uint16_t beats) {
 
 void SequenceManager::setRecordBars(uint16_t bars) {
     m_nRecordBars = bars;
+}
+
+void SequenceManager::setRecordCountIn(uint16_t bars) {
+    m_nRecordCountIn = bars;
+}
+
+void SequenceManager::startRecordCountIn(bool enable) {
+    // Punch in at the (bars + 1)th bar sync: the first sync starts the count-in bar
+    m_nCountInSyncs = (enable && m_nRecordCountIn) ? (m_nRecordCountIn + 1) : 0;
 }
 
 void SequenceManager::setMaxRecordBars(uint16_t bars) {
