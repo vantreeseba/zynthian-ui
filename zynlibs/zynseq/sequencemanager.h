@@ -194,6 +194,11 @@ class SequenceManager {
     */
     void setPunchQuantize(uint16_t beats);
 
+    /** @brief  Set fixed clip record length
+        @param  bars Take length in bars, auto punch out when reached (0 for open-ended - default)
+    */
+    void setRecordBars(uint16_t bars);
+
     /** @brief  Get sequence currently in a clippy record state
         @retval Sequence* Pointer to sequence or nullptr if none recording
     */
@@ -408,5 +413,6 @@ class SequenceManager {
     Sequence* m_pRecordingSequence = nullptr;   // Pointer to sequence in a clippy record state (only one at a time)
     uint16_t m_nMaxRecordBars = 32;             // Maximum bars of open-ended clip recording before forced punch-out (0 = no cap)
     uint16_t m_nPunchQuantize = 0;              // Clip record punch-in/out grid in beats (0 = bar sync)
+    uint16_t m_nRecordBars = 0;                 // Fixed clip record length in bars (0 = open-ended)
     std::map<uint8_t, uint16_t> m_mTriggers;   // Map of phrase,sequence indexed by MIDI note triggers
 };

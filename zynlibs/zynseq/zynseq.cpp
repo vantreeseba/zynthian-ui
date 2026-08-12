@@ -88,6 +88,8 @@ uint32_t g_nTransportClients        = 0;            // Bitwise flags indicating 
 uint8_t g_nTransportState           = STOPPED;      // State of local (non-jack) transport
 bool g_bTransportRolling            = false;        // True if (arranger) transport rolling forward bars
 bool g_bMidiRecord                  = false;        // True to add notes to current pattern from MIDI input
+uint16_t g_nMidiRecordBars          = 0;            // Fixed MIDI record length in bars (0 = open-ended)
+uint16_t g_nMidiRecordBarsDone      = 0;            // Bar sync pulses seen since MIDI record was enabled
 uint32_t g_nInputQuantize           = 0;            // Live MIDI record note-start snap grid in clocks (0 = off)
 uint8_t g_nSustainValue             = 0;            // Last sustain pedal value during note input (recording)
 uint32_t g_nSustainStart            = 0;            // Step when sustain pedal was last pressed
@@ -543,6 +545,9 @@ int onJackProcess(jack_nframes_t nFrames, void* pArgs) {
                     nBeatsPerBar = g_nBeatsPerBar;
                     g_seqMan.setTimeSig(nBeatsPerBar);
                 }
+                // Fixed-length MIDI record: stop capture after the configured quantity of bars
+                if (g_bMidiRecord && g_nMidiRecordBars && ++g_nMidiRecordBarsDone > g_nMidiRecordBars)
+                    g_bMidiRecord = false;
                 // Stop transport
                 if (g_nPlayingSequences != nPlayingSequences) {
                     g_nPlayingSequences = nPlayingSequences;
@@ -1805,7 +1810,10 @@ bool isMuted(uint8_t scene, uint8_t phrase, uint8_t sequence, uint32_t track) {
     return false;
 }
 
-void enableMidiRecord(bool enable) { g_bMidiRecord = enable; }
+void enableMidiRecord(bool enable) {
+    g_nMidiRecordBarsDone = 0;
+    g_bMidiRecord = enable;
+}
 
 bool isMidiRecord() { return g_bMidiRecord; }
 
@@ -2685,6 +2693,11 @@ void toggleRecordState(uint8_t scene, uint8_t phrase, uint8_t sequence) {
 
 void setPunchQuantize(uint16_t beats) {
     g_seqMan.setPunchQuantize(beats);
+}
+
+void setRecordBars(uint16_t bars) {
+    g_nMidiRecordBars = bars;
+    g_seqMan.setRecordBars(bars);
 }
 
 void setMaxRecordBars(uint16_t bars) {

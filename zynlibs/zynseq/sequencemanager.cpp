@@ -306,8 +306,10 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
                     if (bPunch) {
                         uint32_t nLength = pSequence->getLength();
                         uint32_t nMaxTicks = m_nMaxRecordBars * m_nTimeSig * PPQN_INTERNAL;
-                        // Punch out when user requested, preset length reached (0 = open-ended) or safety cap reached
-                        if (nPlayState == STOPPING_RECORD || (nLength && nPos >= nLength) || (nMaxTicks && nPos >= nMaxTicks)) {
+                        uint32_t nRecTicks = m_nRecordBars * m_nTimeSig * PPQN_INTERNAL;
+                        // Punch out when user requested, fixed record length reached, preset length
+                        // reached (only whilst no fixed length set) or safety cap reached
+                        if (nPlayState == STOPPING_RECORD || (nRecTicks && nPos >= nRecTicks) || (!nRecTicks && nLength && nPos >= nLength) || (nMaxTicks && nPos >= nMaxTicks)) {
                             pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), nNote, CLIPPY_VEL_REC_STOP}});
                             // Set sequence length to the exact recorded duration and loop the committed clip
                             pSequence->updateLength(nPos);
@@ -566,6 +568,10 @@ void SequenceManager::stop() {
 
 void SequenceManager::setPunchQuantize(uint16_t beats) {
     m_nPunchQuantize = beats;
+}
+
+void SequenceManager::setRecordBars(uint16_t bars) {
+    m_nRecordBars = bars;
 }
 
 void SequenceManager::setMaxRecordBars(uint16_t bars) {

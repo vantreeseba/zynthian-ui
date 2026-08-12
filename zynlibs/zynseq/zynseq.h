@@ -999,6 +999,13 @@ void toggleRecordState(uint8_t scene, uint8_t phrase, uint8_t sequence);
 */
 void setPunchQuantize(uint16_t beats);
 
+/** @brief  Set fixed record length for clip and launcher pad MIDI recording
+    @param  bars Take length in bars (0 for open-ended - default)
+    @note   Audio clip recording punches out after this duration. Launcher pad MIDI
+            capture stops after this many bar sync pulses (poll isMidiRecord).
+*/
+void setRecordBars(uint16_t bars);
+
 /** @brief  Set maximum quantity of bars an open-ended clip recording may capture
     @param  bars Quantity of bars before forced punch out (0 to disable safety cap)
 */

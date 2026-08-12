@@ -2023,6 +2023,9 @@ class zynthian_gui_mixer(zynthian_gui_base):
         options[f"Record quantize ({rq_label})"] = True
         pq_labels = {"global": "GLOBAL", "bar": "1 BAR", "2beat": "2 BEATS", "beat": "1 BEAT"}
         options[f"Punch quantize ({pq_labels.get(self.state_manager.punch_quantize, 'GLOBAL')})"] = True
+        rb = self.state_manager.record_bars
+        rb_label = f"{rb} BAR{'S' if rb > 1 else ''}" if rb else "ANY"
+        options[f"Record length ({rb_label})"] = True
         if repeat == 0:
             options["Duration (DISABLED)"] = repeat
         else:
@@ -2140,6 +2143,13 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 'ticks': [0, 1, 2, 3],
                 'labels': ['GLOBAL', '1 BAR', '2 BEATS', '1 BEAT'],
                 'value': value,
+            }, assert_cb=self.cb_assert_param_editor)
+        elif option.startswith("Record length"):
+            option_screen.enable_param_editor(option_screen, "record_bars", {
+                'name': 'Record length',
+                'ticks': [0, 1, 2, 4, 8],
+                'labels': ['ANY', '1 BAR', '2 BARS', '4 BARS', '8 BARS'],
+                'value': self.state_manager.record_bars,
             }, assert_cb=self.cb_assert_param_editor)
         elif option.startswith("Rename"):
             self.zyngui.show_keyboard(self.rename_phrase, params, 8)
@@ -2401,6 +2411,8 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 self.state_manager.set_record_quantize(zctrl.value)
             case "punch_quantize":
                 self.state_manager.set_punch_quantize(("global", "bar", "2beat", "beat")[zctrl.value])
+            case "record_bars":
+                self.state_manager.set_record_bars(zctrl.value)
             case "tempo":
                 self.zynseq.set_sequence_param(self.zynseq.scene, phrase, zynseq.PHRASE_CHANNEL, "tempo", zctrl.value)
                 if "CL" in self.chain_manager.zyngines:
