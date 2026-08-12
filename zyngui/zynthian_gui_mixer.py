@@ -2879,6 +2879,34 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 self.set_title("Pad cleared", None, None, 2)
         return True
 
+    def cuia_toggle_phrase(self, params=None):
+        """Launch/stop a whole row of pads (phrase) at the next bar sync
+
+        no params => the selected phrase row
+        N => 1-based phrase row, selecting it first
+        NEXT / PREV => select and launch the adjacent phrase row (pedal-friendly song walk)
+        """
+
+        phrase = self.zynseq.phrase
+        if params:
+            param = str(params[0]).upper()
+            if param == "NEXT":
+                phrase += 1
+            elif param == "PREV":
+                phrase -= 1
+            else:
+                try:
+                    phrase = int(param) - 1
+                except ValueError:
+                    logging.error(f"Bad phrase row: {params} (expected row number, NEXT or PREV)")
+                    return True
+        if phrase < 0 or phrase >= self.zynseq.phrases:
+            return True
+        if phrase != self.zynseq.phrase:
+            self.select_launcher(phrase)
+        self.zynseq.libseq.togglePlayState(self.zynseq.scene, phrase, zynseq.PHRASE_CHANNEL)
+        return True
+
     def prompt_record_source(self, chain, proc, phrase):
         """Ask for a record source, then arm the requested clip recording"""
 
