@@ -39,7 +39,7 @@ from zyngui import zynthian_widget_base
 class zynthian_widget_sooperlooper(zynthian_widget_base.zynthian_widget_base):
 
     SLIDER_BG = zynthian_gui_config.color_panel_bg
-    SLIDER_FG = '#26b'
+    SLIDER_FG = zynthian_gui_config.color_info
     SLIDER_TEXT = zynthian_gui_config.color_tx_off
     BUTTON_ASSERTED = zynthian_gui_config.color_low_on
 
@@ -84,7 +84,7 @@ class zynthian_widget_sooperlooper(zynthian_widget_base.zynthian_widget_base):
             )
             pos_line = pos_canvas.create_line(
                 0, 0, 0, self.row_height,
-                fill='#ff0',
+                fill=zynthian_gui_config.color_ml,
                 width=2
             )
             pos_border = pos_canvas.create_rectangle(2, 2, 2, 2, width=2,
@@ -128,7 +128,7 @@ class zynthian_widget_sooperlooper(zynthian_widget_base.zynthian_widget_base):
                                                  bd=0,
                                                  highlightthickness=0,
                                                  bg=self.SLIDER_BG)
-        self.input_level_fg = self.input_level_canvas.create_rectangle(0, 0, 0, self.row_height, fill='#0a0')
+        self.input_level_fg = self.input_level_canvas.create_rectangle(0, 0, 0, self.row_height, fill=zynthian_gui_config.color_hl)
         self.input_level_label = self.input_level_canvas.create_text(
             self.txt_x, txt_y,
             fill=self.SLIDER_TEXT,
@@ -136,12 +136,12 @@ class zynthian_widget_sooperlooper(zynthian_widget_base.zynthian_widget_base):
             anchor='w',
             font=(zynthian_gui_config.font_family, self.font_size_sl)
         )
-        self.threshold_line = self.input_level_canvas.create_line(0, 0, 0, self.row_height, fill='#ff0', width=2)
+        self.threshold_line = self.input_level_canvas.create_line(0, 0, 0, self.row_height, fill=zynthian_gui_config.color_ml, width=2)
         self.in_gain_marker = self.input_level_canvas.create_polygon(
             -self.tri_size, 0,
             self.tri_size, 0,
             0, self.tri_size,
-            fill='#d00'
+            fill=zynthian_gui_config.color_on
         )
 
         self.wet_canvas = tkinter.Canvas(self,
@@ -186,7 +186,7 @@ class zynthian_widget_sooperlooper(zynthian_widget_base.zynthian_widget_base):
             font=(zynthian_gui_config.font_family, self.font_size_sl)
         )
 
-        self.button_frame = tkinter.Frame(self, bg='#000')
+        self.button_frame = tkinter.Frame(self, bg=zynthian_gui_config.color_bg)
         for col in range(4):
             self.button_frame.columnconfigure(col, weight=1, uniform='btn_col')
 
@@ -390,7 +390,7 @@ class zynthian_widget_sooperlooper(zynthian_widget_base.zynthian_widget_base):
             if waiting or state in [1, 3]:
                 # Pending states
                 # TODO: Split to pending rec, pending play, etc.
-                bg = '#c90'
+                bg = zynthian_gui_config.color_ml
 
             elif state in (SL_STATE_RECORDING, SL_STATE_OVERDUBBING, SL_STATE_MULTIPLYING, SL_STATE_INSERTING, SL_STATE_REPLACING, SL_STATE_DELAYING, SL_STATE_SUBSTITUTING):
                 # Record states
@@ -398,10 +398,10 @@ class zynthian_widget_sooperlooper(zynthian_widget_base.zynthian_widget_base):
 
             elif state in (SL_STATE_OFF, SL_STATE_MUTED, SL_STATE_PAUSED, SL_STATE_OFF_MUTED):
                 # Disabled / off states
-                bg = '#444'
+                bg = zynthian_gui_config.color_off
                 # Play states
             else:
-                bg = '#090'
+                bg = zynthian_gui_config.color_hl
             self.pos_canvas[loop]['canvas'].coords(
                 self.pos_canvas[loop]['border'], 2, 2, self.pos_canvas[loop]['canvas'].winfo_width() - 2, self.row_height - 2)
             if loop == self.selected_loop:

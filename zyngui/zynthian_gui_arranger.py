@@ -137,7 +137,7 @@ class zynthian_gui_arranger(zynthian_gui_base.zynthian_gui_base):
                                              bg=CELL_BACKGROUND,
                                              bd=0,
                                              highlightthickness=0)
-        self.pattern_canvas.create_text(self.seq_track_title_width / 2, self.timebase_track_height / 2, tags="patternIndicator", fill="white",
+        self.pattern_canvas.create_text(self.seq_track_title_width / 2, self.timebase_track_height / 2, tags="patternIndicator", fill=zynthian_gui_config.color_tx,
                                         text=f"{self.pattern}", font=tkfont.Font(family=zynthian_gui_config.font_topbar[0], size=int(0.6 * self.timebase_track_height)))
         self.pattern_canvas.grid(column=0, row=1)
         self.pattern_canvas.bind('<ButtonPress-1>', self.on_pattern_click)
@@ -966,9 +966,9 @@ class zynthian_gui_arranger(zynthian_gui_base.zynthian_gui_base):
 					tempoX = (time - self.col_offset) * self.column_width
 					data = self.zynseq.libseq.getTimebaseEventData(self.zynseq.scene, event)
 					if tempoX:
-						self.timebase_track_canvas.create_text(tempoX, tempo_y, fill='red', text=data, anchor='n', tags='bpm')
+						self.timebase_track_canvas.create_text(tempoX, tempo_y, fill=zynthian_gui_config.color_on, text=data, anchor='n', tags='bpm')
 					else:
-						self.timebase_track_canvas.create_text(tempoX, tempo_y, fill='red', text=data, anchor='nw', tags='bpm')
+						self.timebase_track_canvas.create_text(tempoX, tempo_y, fill=zynthian_gui_config.color_on, text=data, anchor='nw', tags='bpm')
 		'''
         self.grid_canvas.tag_lower('barlines')
         self.select_cell()
@@ -982,13 +982,13 @@ class zynthian_gui_arranger(zynthian_gui_base.zynthian_gui_base):
         offset = 0 - int(self.col_offset % self.horizontal_zoom)
         for bar in range(offset, self.horizontal_zoom, self.zynseq.timesig):
             self.grid_canvas.create_line(
-                bar * self.column_width, 0, bar * self.column_width, self.grid_height, fill='#808080', tags='barlines')
+                bar * self.column_width, 0, bar * self.column_width, self.grid_height, fill=zynthian_gui_config.color_off, tags='barlines')
             if bar:
                 self.timebase_track_canvas.create_text(
-                    bar * self.column_width, 0, fill='white', text=f"{bar+self.col_offset}", anchor='n', tags='barlines')
+                    bar * self.column_width, 0, fill=zynthian_gui_config.color_tx, text=f"{bar+self.col_offset}", anchor='n', tags='barlines')
             else:
                 self.timebase_track_canvas.create_text(
-                    bar * self.column_width, 0, fill='white', text=f"{bar+self.col_offset}", anchor='nw', tags='barlines')
+                    bar * self.column_width, 0, fill=zynthian_gui_config.color_tx, text=f"{bar+self.col_offset}", anchor='nw', tags='barlines')
 
     # Function to move selection to specified position
     #  sequence: Index of sequence (Default is reselect current sequence)

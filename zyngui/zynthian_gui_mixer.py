@@ -172,7 +172,7 @@ class zynthian_gui_launcher_pad():
     def highlight(self):
         """ Show selection cursor highlight"""
 
-        self.canvas.itemconfig(self.pad, outline="yellow")
+        self.canvas.itemconfig(self.pad, outline=zynthian_gui_config.color_ml)
 
     def get_pattern_length(self, beats, bpb):
         if not bpb:
@@ -653,7 +653,7 @@ class zynthian_gui_mixer_strip():
                     int(x + self.width / 5 * (col + 1)),
                     self.gui_mixer.legend_y + self.legend_height,
                     width=0,
-                    fill="yellow",
+                    fill=zynthian_gui_config.color_ml,
                     state=tkinter.HIDDEN
                 )
             )

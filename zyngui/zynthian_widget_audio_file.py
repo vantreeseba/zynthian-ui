@@ -224,7 +224,7 @@ class zynthian_widget_audio_file(zynthian_widget_base.zynthian_widget_base):
                     v_offset = chan * y0
                     self.widget_canvas.create_rectangle(0, v_offset, self.width, v_offset + y0, fill=self.bg_color, tags=("waveform", f"waveform_bg_{chan}"), state=tkinter.HIDDEN)
                     # fill = zynthian_gui_config.LAUNCHER_COLOUR[chan // 2 % 16]["rgb"]
-                    self.widget_canvas.create_line(0, v_offset + y0 // 2, self.width, v_offset + y0 // 2, fill="grey", tags=("waveform", f"zero_{chan}"), state=tkinter.HIDDEN)
+                    self.widget_canvas.create_line(0, v_offset + y0 // 2, self.width, v_offset + y0 // 2, fill=zynthian_gui_config.color_off, tags=("waveform", f"zero_{chan}"), state=tkinter.HIDDEN)
                     self.widget_canvas.create_line(0, 0, 0, 0, fill=self.waveform_color, tags=("waveform", f"waveform{chan}"), state=tkinter.HIDDEN)
                 self.offset = 0
                 self.auto_offset = 0

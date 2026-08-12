@@ -63,7 +63,7 @@ class zynthian_gui_midi_cc_range(zynthian_gui_base):
                                            height=self.plot_height,
                                            bd=0,
                                            highlightthickness=0,
-                                           bg="#000000")
+                                           bg=zynthian_gui_config.color_bg)
         if zynthian_gui_config.layout['columns'] == 3:
             self.plot_canvas.grid(row=0, column=0, rowspan=2, columnspan=2)
         else:

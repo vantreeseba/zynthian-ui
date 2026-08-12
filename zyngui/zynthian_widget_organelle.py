@@ -32,10 +32,10 @@ from zyngui.zynthian_gui_controller import zynthian_gui_controller
 
 COLOR_PANEL = zynthian_gui_config.color_panel_bg
 COLOR_TEXT = zynthian_gui_config.color_panel_tx
-COLOR_OUTLINE = "#404040"
-COLOR_BUTTON = "#B07000"
-COLOR_BUTTON_LIGHT = "#00A000"
-COLOR_KNOB = "#B07000"
+COLOR_OUTLINE = zynthian_gui_config.color_off
+COLOR_BUTTON = zynthian_gui_config.color_variant(zynthian_gui_config.color_alt2, -60)
+COLOR_BUTTON_LIGHT = zynthian_gui_config.color_hl
+COLOR_KNOB = zynthian_gui_config.color_variant(zynthian_gui_config.color_alt2, -60)
 
 ORGANELLE_OLED_WIDTH = 128
 ORGANELLE_OLED_HEIGHT = 64
@@ -870,7 +870,7 @@ class zynthian_widget_organelle(zynthian_widget_base):
         w, h = int(w * self.oled_scale), int(h * self.oled_scale)
 
         def invert_area():
-            self.canvas.create_rectangle(x, y, x + w, y + h, fill='white')
+            self.canvas.create_rectangle(x, y, x + w, y + h, fill=COLOR_TEXT)
 
         self.add_to_batch(invert_area)
 

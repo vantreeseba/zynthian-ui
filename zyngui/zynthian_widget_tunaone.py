@@ -129,7 +129,7 @@ class zynthian_widget_tunaone(zynthian_widget_base.zynthian_widget_base):
                 cb = 0
             color = "#%02x%02x%02x" % (cr, cg, cb)
         except:
-            color = "#00FF00"
+            color = zynthian_gui_config.color_hl
         return color
 
     def refresh_gui(self):

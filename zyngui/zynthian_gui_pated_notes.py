@@ -963,10 +963,10 @@ class zynthian_gui_pated_notes(zynthian_gui_pated_base):
         # bright background - dark text
         #if (zynthian_gui_config.get_color_lux(fill_color) > 0.5):
         if (evdata.val2_start >= 58):
-            deco_color = "#101010"
+            deco_color = zynthian_gui_config.color_bg
         # dark background - light text
         else:
-            deco_color = "#E0E0E0"
+            deco_color = zynthian_gui_config.color_tx
 
         if evdata.stut_speed > 0:
             if evdata.stut_freq == 0 or evdata.stut_chance == 0:
@@ -1168,7 +1168,7 @@ class zynthian_gui_pated_notes(zynthian_gui_pated_base):
             # Note not present in current keymap (can happen with external pads /
             # custom note layouts). Ignore instead of touching uninitialized rows.
             return
-        self.pianoroll_set_row(row, "#40FF40")
+        self.pianoroll_set_row(row, zynthian_gui_config.color_hl)
 
         # Re-center vertically if note is off the view area
         if not self.keymap_offset <= row < self.keymap_offset + self.view_rows:

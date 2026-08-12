@@ -92,7 +92,7 @@ class zynthian_gui_midi_key_range(zynthian_gui_base):
                                            height=self.piano_canvas_height,
                                            bd=0,
                                            highlightthickness=0,
-                                           bg="#000099")
+                                           bg=zynthian_gui_config.color_variant(zynthian_gui_config.color_midi, -120))
         self.piano_canvas.grid(row=3, columnspan=3, sticky="EW")
 
         # Setup Piano's Callback
@@ -147,9 +147,9 @@ class zynthian_gui_midi_key_range(zynthian_gui_base):
         while x1 < self.width:
             # plot white-key
             if self.note_low > midi_note or self.note_high < midi_note:
-                bgcolor = "#D0D0D0"
+                bgcolor = zynthian_gui_config.color_tx_off
             else:
-                bgcolor = "#FFFFFF"
+                bgcolor = zynthian_gui_config.color_tx
             key = self.piano_canvas.create_rectangle((x1, 0, x2, self.piano_canvas_height), fill=bgcolor, width=0)
             self.piano_canvas.tag_lower(key)
             midi_note += 1
@@ -165,9 +165,9 @@ class zynthian_gui_midi_key_range(zynthian_gui_base):
                 x2b = x1b + int(2 * key_width / 3)
                 if x2b < self.width:
                     if self.note_low > midi_note or self.note_high < midi_note:
-                        bgcolor = "#707070"
+                        bgcolor = zynthian_gui_config.color_off
                     else:
-                        bgcolor = "#000000"
+                        bgcolor = zynthian_gui_config.color_bg
                     key = self.piano_canvas.create_rectangle((x1b, 0, x2b, black_height), fill=bgcolor, width=0)
                     midi_note += 1
                     self.piano_keys.append(key)
@@ -181,18 +181,18 @@ class zynthian_gui_midi_key_range(zynthian_gui_base):
         midi_note = self.midi_key0
         while j < len(self.piano_keys):
             if self.note_low > midi_note or self.note_high < midi_note:
-                bgcolor = "#D0D0D0"
+                bgcolor = zynthian_gui_config.color_tx_off
             else:
-                bgcolor = "#FFFFFF"
+                bgcolor = zynthian_gui_config.color_tx
             self.piano_canvas.itemconfig(self.piano_keys[j], fill=bgcolor)
             j += 1
             midi_note += 1
 
             if self.black_keys_pattern[i % 7] and j < len(self.piano_keys):
                 if self.note_low > midi_note or self.note_high < midi_note:
-                    bgcolor = "#707070"
+                    bgcolor = zynthian_gui_config.color_off
                 else:
-                    bgcolor = "#000000"
+                    bgcolor = zynthian_gui_config.color_bg
                 self.piano_canvas.itemconfig(self.piano_keys[j], fill=bgcolor)
                 j += 1
                 midi_note += 1

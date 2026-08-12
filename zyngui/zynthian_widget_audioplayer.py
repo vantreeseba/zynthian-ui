@@ -124,7 +124,7 @@ class zynthian_widget_audioplayer(zynthian_widget_base.zynthian_widget_base):
             0,
             0,
             self.height,
-            fill="black",
+            fill=zynthian_gui_config.color_bg,
             stipple="gray50",
             tags="overlay"
         )
@@ -133,7 +133,7 @@ class zynthian_widget_audioplayer(zynthian_widget_base.zynthian_widget_base):
             0,
             self.width,
             self.height,
-            fill="black",
+            fill=zynthian_gui_config.color_bg,
             stipple="gray50",
             tags="overlay"
         )
@@ -433,7 +433,7 @@ class zynthian_widget_audioplayer(zynthian_widget_base.zynthian_widget_base):
                 fill = bg_colors[pair % 2]
                 # fill = zynthian_gui_config.LAUNCHER_COLOUR[chan // 2 % 16]["rgb"]
                 self.widget_canvas.create_rectangle(0, v_offset, self.width, v_offset + y0, width=0, fill=fill, tags=("waveform", f"waveform_bg_{chan}"), state=tkinter.HIDDEN)
-                self.widget_canvas.create_line(0, v_offset + y0 // 2, self.width, v_offset + y0 // 2, fill="grey", tags="waveform", state=tkinter.HIDDEN)
+                self.widget_canvas.create_line(0, v_offset + y0 // 2, self.width, v_offset + y0 // 2, fill=zynthian_gui_config.color_off, tags="waveform", state=tkinter.HIDDEN)
                 self.widget_canvas.create_line(0, 0, 0, 0, fill=self.waveform_color, tags=("waveform", f"waveform{chan}"), state=tkinter.HIDDEN)
             self.update_cue_markers()
             frames = self.frames / 2
@@ -647,7 +647,7 @@ class zynthian_widget_audioplayer(zynthian_widget_base.zynthian_widget_base):
                 x = int(f * (pos - self.offset))
                 self.widget_canvas.coords(self.play_line, x, 0, x, h)
 
-                self.widget_canvas.itemconfig(f"cues", fill="white")
+                self.widget_canvas.itemconfig(f"cues", fill=zynthian_gui_config.color_tx)
                 for i, cue in enumerate(self.cue_points):
                     x = int(f * (self.samplerate * cue[0] - self.offset))
                     self.widget_canvas.coords(f"cueline{i + 1}", x, 0, x, h)

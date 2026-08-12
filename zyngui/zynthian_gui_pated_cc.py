@@ -259,7 +259,7 @@ class zynthian_gui_pated_cc(zynthian_gui_pated_base):
                 for row in range(0, 129):
                     if row % 8 == 0:
                         ypos = self.grid_height - (self.row0 + row) * self.row_height
-                        self.piano_roll.create_text(self.piano_roll_width - 2, ypos - 0.5 * self.row_height, text=str(row), font=grid_font, anchor="e", fill="white", tags="valtick")
+                        self.piano_roll.create_text(self.piano_roll_width - 2, ypos - 0.5 * self.row_height, text=str(row), font=grid_font, anchor="e", fill=zynthian_gui_config.color_tx, tags="valtick")
                         self.grid_canvas.create_line(0, ypos, self.total_width, ypos, fill=GRID_LINE_WEAK, tags=("gridhline"))
 
             self.grid_canvas.delete("ccevent")
@@ -281,13 +281,13 @@ class zynthian_gui_pated_cc(zynthian_gui_pated_base):
         offset = self.zynseq.libseq.getControlOffset(step, self.cc_num)
         val2 = self.zynseq.libseq.getControlValueEnd(step, self.cc_num)
         coord = self.get_cell(step, row, duration, offset, row - val2)
-        self.grid_canvas.create_line(coord, fill="white", width=2, tags=("ccevent", f"step{step}"))
+        self.grid_canvas.create_line(coord, fill=zynthian_gui_config.color_tx, width=2, tags=("ccevent", f"step{step}"))
         if self.interpolateCC:
             coord[2] = coord[0] + self.marker_width
             coord[3] = coord[1] + self.marker_width
             coord[0] -= self.marker_width
             coord[1] -= self.marker_width
-            self.grid_canvas.create_rectangle(coord, fill="white", width=0, tags=("ccevent", f"step{step}"))
+            self.grid_canvas.create_rectangle(coord, fill=zynthian_gui_config.color_tx, width=0, tags=("ccevent", f"step{step}"))
 
     # Function to update selectedCell
     # step: Step (column) of selected cell (Optional - default to reselect current column)

@@ -71,7 +71,7 @@ class zynthian_gui_touchscreen_calibration(zynthian_gui_fullscreen_modal):
         self.canvas = tkinter.Canvas(self,
                                      height=self.height,
                                      width=self.width,
-                                     bg="black",
+                                     bg=zynthian_gui_config.color_bg,
                                      bd=0,
                                      highlightthickness=0)
 
@@ -90,25 +90,25 @@ class zynthian_gui_touchscreen_calibration(zynthian_gui_fullscreen_modal):
             0.8, self.display_points[self.index].y - self.crosshair_size * 0.8,
             self.display_points[self.index].x + self.crosshair_size *
             0.8, self.display_points[self.index].y + self.crosshair_size * 0.8,
-            width=3, outline="white", tags=("crosshairs", "crosshairs_circles"))
+            width=3, outline=zynthian_gui_config.color_tx, tags=("crosshairs", "crosshairs_circles"))
         self.crosshair_inner_circle = self.canvas.create_oval(
             self.display_points[self.index].x - self.crosshair_size *
             0.2, self.display_points[self.index].y - self.crosshair_size * 0.2,
             self.display_points[self.index].x + self.crosshair_size *
             0.2, self.display_points[self.index].y + self.crosshair_size * 0.2,
-            width=3, outline="white", tags=("crosshairs", "crosshairs_circles"))
+            width=3, outline=zynthian_gui_config.color_tx, tags=("crosshairs", "crosshairs_circles"))
         self.crosshair_vertical = self.canvas.create_line(
             self.display_points[self.index].x, self.display_points[self.index].y -
             self.crosshair_size,
             self.display_points[self.index].x, self.display_points[self.index].y -
             self.crosshair_size,
-            width=3, fill="white", tags=("crosshairs", "crosshairs_lines"))
+            width=3, fill=zynthian_gui_config.color_tx, tags=("crosshairs", "crosshairs_lines"))
         self.crosshair_horizontal = self.canvas.create_line(
             self.display_points[self.index].x -
             self.crosshair_size, self.display_points[self.index].y,
             self.display_points[self.index].x +
             self.crosshair_size, self.display_points[self.index].y,
-            width=3, fill="white", tags=("crosshairs", "crosshairs_lines"))
+            width=3, fill=zynthian_gui_config.color_tx, tags=("crosshairs", "crosshairs_lines"))
         self.canvas.pack()
 
         # Countdown timer
@@ -116,7 +116,7 @@ class zynthian_gui_touchscreen_calibration(zynthian_gui_fullscreen_modal):
                                                       self.height / 2 - self.crosshair_size - zynthian_gui_config.font_size - 2,
                                                       font=(
                                                           zynthian_gui_config.font_family, zynthian_gui_config.font_size, "normal"),
-                                                      fill="red")
+                                                      fill=zynthian_gui_config.color_on)
         self.timer = Timer(interval=1, function=self.onTimer)
         self.timeout = 15  # Period in seconds after last touch until sceen closes with no change
         self.pressed = False  # True if screen pressed
@@ -126,13 +126,13 @@ class zynthian_gui_touchscreen_calibration(zynthian_gui_fullscreen_modal):
                                                         self.height / 2 + self.crosshair_size + 2 + zynthian_gui_config.font_size * 2,
                                                         font=(
                                                             zynthian_gui_config.font_family, zynthian_gui_config.font_size, "normal"),
-                                                        fill="white",
+                                                        fill=zynthian_gui_config.color_tx,
                                                         text="Touch crosshairs using a stylus")
         self.device_text = self.canvas.create_text(self.width / 2,
                                                    self.height - zynthian_gui_config.font_size * 2,
                                                    font=(
                                                        zynthian_gui_config.font_family, zynthian_gui_config.font_size, "normal"),
-                                                   fill="white")
+                                                   fill=zynthian_gui_config.color_tx)
 
         self.device_id = None  # libinput name of selected device
 
@@ -170,17 +170,17 @@ class zynthian_gui_touchscreen_calibration(zynthian_gui_fullscreen_modal):
                         if event.code == ecodes.BTN_TOUCH:
                             if event.value:
                                 self.canvas.itemconfig(
-                                    "crosshairs_lines", fill="red")
+                                    "crosshairs_lines", fill=zynthian_gui_config.color_on)
                                 self.canvas.itemconfig(
-                                    "crosshairs_circles", outline="red")
+                                    "crosshairs_circles", outline=zynthian_gui_config.color_on)
                                 self.pressed = True
                                 self.countdown = self.timeout
                                 self.setDevice(device.name, device.path)
                             else:
                                 self.canvas.itemconfig(
-                                    "crosshairs_lines", fill="white")
+                                    "crosshairs_lines", fill=zynthian_gui_config.color_tx)
                                 self.canvas.itemconfig(
-                                    "crosshairs_circles", outline="white")
+                                    "crosshairs_circles", outline=zynthian_gui_config.color_tx)
                                 self.pressed = False
                                 self.countdown = self.timeout
                                 if self.device_id:
@@ -235,15 +235,15 @@ class zynthian_gui_touchscreen_calibration(zynthian_gui_fullscreen_modal):
     # event: Event including x,y coordinates (optional)
     def onPress(self, event=None):
         if self.device_id and not self.pressed:
-            self.canvas.itemconfig("crosshairs_lines", fill="red")
-            self.canvas.itemconfig("crosshairs_circles", outline="red")
+            self.canvas.itemconfig("crosshairs_lines", fill=zynthian_gui_config.color_on)
+            self.canvas.itemconfig("crosshairs_circles", outline=zynthian_gui_config.color_on)
             self.pressed = True
 
     # Handle touch release event
     # event: Event including x,y coordinates
     def onRelease(self, event):
-        self.canvas.itemconfig("crosshairs_lines", fill="white")
-        self.canvas.itemconfig("crosshairs_circles", outline="white")
+        self.canvas.itemconfig("crosshairs_lines", fill=zynthian_gui_config.color_tx)
+        self.canvas.itemconfig("crosshairs_circles", outline=zynthian_gui_config.color_tx)
         if not self.pressed:
             return
         self.pressed = False

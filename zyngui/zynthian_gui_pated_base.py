@@ -44,9 +44,9 @@ from zyngui import zynthian_gui_config
 SELECT_BORDER = zynthian_gui_config.color_on
 PLAYHEAD_CURSOR = zynthian_gui_config.color_on
 CANVAS_BACKGROUND = zynthian_gui_config.color_panel_bd
-GRID_LINE_WEAK = "#505050"
-GRID_LINE_STRONG = "#A0A0A0"
-GRID_LINE_XTRONG = "#FFFFFF"
+GRID_LINE_WEAK = zynthian_gui_config.color_off
+GRID_LINE_STRONG = zynthian_gui_config.color_tx_off
+GRID_LINE_XTRONG = zynthian_gui_config.color_tx
 PLAYHEAD_BACKGROUND = zynthian_gui_config.color_variant(zynthian_gui_config.color_panel_bd, 40)
 PLAYHEAD_LINE = zynthian_gui_config.color_tx_off
 PLAYHEAD_HEIGHT = 12
@@ -373,7 +373,7 @@ class zynthian_gui_pated_base(zynthian_gui_base):
                                               bg=PLAYHEAD_BACKGROUND,
                                               bd=0,
                                               highlightthickness=0)
-        self.velocity_canvas.create_rectangle(0, 0, 0, PLAYHEAD_HEIGHT, fill='yellow', width=0,
+        self.velocity_canvas.create_rectangle(0, 0, 0, PLAYHEAD_HEIGHT, fill=zynthian_gui_config.color_ml, width=0,
                                               tags="velocityIndicator")
         self.velocity_canvas.grid(column=0, row=1)
 

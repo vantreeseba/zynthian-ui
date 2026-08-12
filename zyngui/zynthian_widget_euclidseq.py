@@ -37,7 +37,7 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
     Widget class for Euclidean Sequencer display.
     """
     def __init__(self, parent):
-        tk.Frame.__init__(self, parent, bg="#000000")
+        tk.Frame.__init__(self, parent, bg=zynthian_gui_config.color_bg)
         zynthian_widget_base.zynthian_widget_base.__init__(self, parent)
 
         # --- Early & Stable Attribute Initialization ---
@@ -93,17 +93,17 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
 
 
         # --- UI Widget Creation ---
-        self.app_container = tk.Frame(self, bg="black")
+        self.app_container = tk.Frame(self, bg=zynthian_gui_config.color_bg)
         self.app_container.pack(expand=True, fill='both')
 
-        self.sequencer_frame = tk.Frame(self.app_container, bg="black")
+        self.sequencer_frame = tk.Frame(self.app_container, bg=zynthian_gui_config.color_bg)
         self.sequencer_frame.pack(side=tk.LEFT, expand=True, fill='both', padx=5) 
 
         self.canvas = tk.Canvas(self.sequencer_frame, width=self.canvas_width, height=self.canvas_height, 
-                               bg='black', highlightthickness=0)
+                               bg=zynthian_gui_config.color_bg, highlightthickness=0)
         self.canvas.pack(padx=5, pady=5)
 
-        self.controls_frame = tk.Frame(self.app_container, bg="#181818", width=self.control_panel_width)
+        self.controls_frame = tk.Frame(self.app_container, bg=zynthian_gui_config.color_panel_bg, width=self.control_panel_width)
         self.controls_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(0,5), pady=5)
         self.controls_frame.pack_propagate(False) 
 
@@ -184,9 +184,9 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
         # Create Mode button first
         mode_frame = tk.Frame(parent, bg=parent["bg"])
         mode_frame.pack(fill=tk.X, pady=14)
-        tk.Label(mode_frame, text="Mode:", font=label_font, fg="#cccccc", bg=parent["bg"], width=7, anchor="w").pack(side=tk.LEFT, padx=(0,10))
+        tk.Label(mode_frame, text="Mode:", font=label_font, fg=zynthian_gui_config.color_tx_off, bg=parent["bg"], width=7, anchor="w").pack(side=tk.LEFT, padx=(0,10))
         mode_button = tk.Button(mode_frame, text="--", font=button_font, width=12, relief=tk.GROOVE,
-                               bg="#333333", fg="#00ff00", activebackground="#444444", activeforeground="#00ff00")
+                               bg=zynthian_gui_config.color_panel_hl, fg=zynthian_gui_config.color_hl, activebackground=zynthian_gui_config.color_off, activeforeground=zynthian_gui_config.color_hl)
         mode_button.pack(side=tk.LEFT, padx=(0,10))
         mode_button.bind("<ButtonPress-1>", lambda e: self._on_value_button_press(e, "mode"))
         mode_button.bind("<B1-Motion>", lambda e: self._on_value_button_drag(e, "mode"))
@@ -195,7 +195,7 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
 
         # Then create Channel label
         self.selected_channel_disp_label = tk.Label(parent, text=f"Channel: {self.select_ch + 1}", 
-                                             font=channel_label_font, fg="white", bg=parent["bg"])
+                                             font=channel_label_font, fg=zynthian_gui_config.color_tx, bg=parent["bg"])
         self.selected_channel_disp_label.pack(pady=0)
 
         # Then create the remaining controls
@@ -211,10 +211,10 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
             row_frame = tk.Frame(parent, bg=parent["bg"])
             row_frame.pack(fill=tk.X, pady=14)
 
-            tk.Label(row_frame, text=f"{config['label']}:", font=label_font, fg="#cccccc", bg=parent["bg"], width=7, anchor="w").pack(side=tk.LEFT, padx=(0,10))
+            tk.Label(row_frame, text=f"{config['label']}:", font=label_font, fg=zynthian_gui_config.color_tx_off, bg=parent["bg"], width=7, anchor="w").pack(side=tk.LEFT, padx=(0,10))
         
             value_button = tk.Button(row_frame, text="--", font=button_font, width=8, relief=tk.GROOVE,
-                                     bg="#333333", fg="#00ff00", activebackground="#444444", activeforeground="#00ff00")
+                                     bg=zynthian_gui_config.color_panel_hl, fg=zynthian_gui_config.color_hl, activebackground=zynthian_gui_config.color_off, activeforeground=zynthian_gui_config.color_hl)
             value_button.pack(side=tk.LEFT, padx=(0,10))
         
             value_button.bind("<ButtonPress-1>", lambda e, k=param_key: self._on_value_button_press(e, k))
@@ -226,7 +226,7 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
         self._update_control_panel_display()
 
         mute_button = tk.Button(parent, text="Mute", font=button_font, width=12, relief=tk.GROOVE,
-                                bg="#552222", fg="white", activebackground="#663333")
+                                bg=zynthian_gui_config.color_variant(zynthian_gui_config.color_low_on, -60), fg=zynthian_gui_config.color_tx, activebackground=zynthian_gui_config.color_low_on)
         mute_button.pack(side=tk.BOTTOM, fill=tk.X, padx=0, pady=0)       
         mute_button.bind("<Button-1>", lambda e: self.toggle_mute())
         self.control_widgets["mute"] = mute_button
@@ -253,9 +253,9 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
         mute_button = self.control_widgets.get("mute")
         if mute_button:
             if self.mute[ch]:
-                mute_button.config(text="Unmute", bg="#225522")
+                mute_button.config(text="Unmute", bg=zynthian_gui_config.color_variant(zynthian_gui_config.color_hl, -60))
             else:
-                mute_button.config(text="Mute", bg="#552222")
+                mute_button.config(text="Mute", bg=zynthian_gui_config.color_variant(zynthian_gui_config.color_low_on, -60))
 
     def on_canvas_press(self, event):
         x, y = event.x, event.y
@@ -309,7 +309,7 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
         self.drag_start_y = event.y
         self.drag_last_y_for_threshold = event.y
         self.did_drag = False
-        event.widget.config(relief=tk.SUNKEN, bg="#555555")
+        event.widget.config(relief=tk.SUNKEN, bg=zynthian_gui_config.color_off)
 
     def _on_value_button_drag(self, event, param_key):
         if self.dragging_param != param_key: return
@@ -326,7 +326,7 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
             if not self.did_drag:
                 self._adjust_param_value(param_key, 1) # Treat click as a single increment
             
-            event.widget.config(relief=tk.GROOVE, bg="#333333")
+            event.widget.config(relief=tk.GROOVE, bg=zynthian_gui_config.color_panel_hl)
             self.dragging_param = None
     
     def _adjust_param_value(self, param_key, direction):
@@ -507,12 +507,12 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
             if self.display_mode == "euclidean":
                 for j in range(self.max_steps):
                     x,y = self._get_scaled_euclidean_canvas_xy(self.x16[j],self.y16[j],base_x,base_y)
-                    self.canvas.create_oval(x-1,y-1,x+1,y+1,fill="white",outline="white")
+                    self.canvas.create_oval(x-1,y-1,x+1,y+1,fill=zynthian_gui_config.color_tx,outline=zynthian_gui_config.color_tx)
             elif limit > 0:
                 r=25*self.scale; cx,cy=base_x+r,base_y+r
                 for j in range(limit):
                     a=(2*math.pi/limit)*j - math.pi/2; x,y=cx+math.cos(a)*r, cy+math.sin(a)*r
-                    self.canvas.create_oval(x-1,y-1,x+1,y+1,fill="white",outline="white")
+                    self.canvas.create_oval(x-1,y-1,x+1,y+1,fill=zynthian_gui_config.color_tx,outline=zynthian_gui_config.color_tx)
 
     def draw_hit_connections(self):
         for k in range(self.channels):
@@ -538,10 +538,10 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
                         a = angle_s*step - math.pi/2 - rotation
                         coords.append((cx+math.cos(a)*target_r, cy+math.sin(a)*target_r))
             
-            if len(coords) > 1: self.canvas.create_polygon(coords,fill="",outline="white",width=1)
-            elif len(coords)==1: self.canvas.create_line(base_x+target_r,base_y+target_r,coords[0][0],coords[0][1],fill="white",width=1)
+            if len(coords) > 1: self.canvas.create_polygon(coords,fill="",outline=zynthian_gui_config.color_tx,width=1)
+            elif len(coords)==1: self.canvas.create_line(base_x+target_r,base_y+target_r,coords[0][0],coords[0][1],fill=zynthian_gui_config.color_tx,width=1)
             
-            color = "yellow" if k==self.select_ch else "deepskyblue"
+            color = zynthian_gui_config.color_ml if k==self.select_ch else zynthian_gui_config.color_info
             for x,y in coords: self.canvas.create_oval(x-3,y-3,x+3,y+3,fill=color,outline=color)
 
     def draw_play_positions(self):
@@ -558,8 +558,8 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
                 a=(2*math.pi/limit)*step-math.pi/2; x,y=cx+math.cos(a)*r,cy+math.sin(a)*r
                 filled = step in (self.get_polygon_vertex_steps(k) if self.display_mode=="polygon" else self.get_interval_hit_steps(k))
             
-            if filled: self.canvas.create_oval(x-8,y-8,x+8,y+8,fill="white",outline="white")
-            else: self.canvas.create_oval(x-6,y-6,x+6,y+6,outline="white",width=2)
+            if filled: self.canvas.create_oval(x-8,y-8,x+8,y+8,fill=zynthian_gui_config.color_tx,outline=zynthian_gui_config.color_tx)
+            else: self.canvas.create_oval(x-6,y-6,x+6,y+6,outline=zynthian_gui_config.color_tx,width=2)
 
     def draw_labels(self):
         note_font = ("TkFixedFont",int(10*self.scale/1.5),"bold")
@@ -572,12 +572,12 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
             
             if k == self.select_ch:
                 size=10*self.scale*0.8
-                self.canvas.create_rectangle(cx-size,cy-size,cx+size,cy+size,fill="#555500",outline="yellow",width=2)
+                self.canvas.create_rectangle(cx-size,cy-size,cx+size,cy+size,fill=zynthian_gui_config.color_panel_hl,outline=zynthian_gui_config.color_ml,width=2)
             
-            self.canvas.create_text(cx,cy,text=f"{self.note_numbers[k]}",fill="#00FF00",font=note_font)
+            self.canvas.create_text(cx,cy,text=f"{self.note_numbers[k]}",fill=zynthian_gui_config.color_hl,font=note_font)
 
             label_y_pos = cy + radius - 115
-            self.canvas.create_text(cx, label_y_pos, text=f"Ch: {k+1}", fill="red", font=(zynthian_gui_config.font_family, 16, "bold"))
+            self.canvas.create_text(cx, label_y_pos, text=f"Ch: {k+1}", fill=zynthian_gui_config.color_on, font=(zynthian_gui_config.font_family, 16, "bold"))
 
     def calculate_circle_hit_areas(self):
         r=25*self.scale; self.circle_hit_areas=[(self.graph_x[k]*self.scale+r, self.graph_y[k]*self.scale+r,r) for k in range(self.channels)]

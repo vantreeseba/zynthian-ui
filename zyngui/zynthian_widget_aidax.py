@@ -59,35 +59,35 @@ class zynthian_widget_aidax(zynthian_widget_base.zynthian_widget_base):
 
         self.input_level_bg_low = self.widget_canvas.create_rectangle(
             0, 0, 0, 0,
-            fill="green")
+            fill=zynthian_gui_config.color_meter_low)
         self.input_level_bg_mid = self.widget_canvas.create_rectangle(
             0, 0, 0, 0,
-            fill="yellow")
+            fill=zynthian_gui_config.color_meter_high)
         self.input_level_bg_high = self.widget_canvas.create_rectangle(
             0, 0, 0, 0,
-            fill="red")
+            fill=zynthian_gui_config.color_meter_over)
         self.input_level = self.widget_canvas.create_rectangle(
             0, 0, 0, 0,
-            fill="grey")
+            fill=zynthian_gui_config.color_off)
         self.input_label = self.widget_canvas.create_text(
             0, 0,
-            fill="white",
+            fill=zynthian_gui_config.color_tx,
             text='Input',
             anchor="w"
         )
 
         self.output_level_bg_low = self.widget_canvas.create_rectangle(
             0, 0, 0, 0,
-            fill="green")
+            fill=zynthian_gui_config.color_meter_low)
         self.output_level_bg_mid = self.widget_canvas.create_rectangle(
             0, 0, 0, 0,
-            fill="yellow")
+            fill=zynthian_gui_config.color_meter_high)
         self.output_level_bg_high = self.widget_canvas.create_rectangle(
             0, 0, 0, 0,
-            fill="red")
+            fill=zynthian_gui_config.color_meter_over)
         self.output_level = self.widget_canvas.create_rectangle(
             0, 0, 0, 0,
-            fill="grey")
+            fill=zynthian_gui_config.color_off)
         self.output_label = self.widget_canvas.create_text(
             0, 0,
             fill=zynthian_gui_config.color_tx,
