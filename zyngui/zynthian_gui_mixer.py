@@ -1274,7 +1274,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
             state=tkinter.NORMAL)
 
         self.status_timesig = self.status_canvas.create_text(
-            int(self.status_l - self.status_fs * 8.5), 2,
+            int(self.status_l - self.status_fs * 10), 2,
             anchor=tkinter.NE,
             fill=zynthian_gui_config.color_header_tx,
             font=(zynthian_gui_config.font_family, int(0.25 * self.status_h)),
