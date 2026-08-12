@@ -205,6 +205,13 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         else:
             self.list_data.append((self.toggle_dpm, 0, "\u2610 Mixer Peak Meters",
                                    ["Peak programme meters are disabled.\nThis saves a little CPU power.", "meters.png"]))
+
+        if zynthian_gui_config.show_encoder_legend:
+            self.list_data.append((self.toggle_encoder_legend, 0, "\u2612 Encoder Legend",
+                                   ["Show a strip labelling what each knob does on supported screens.", "settings.png"]))
+        else:
+            self.list_data.append((self.toggle_encoder_legend, 0, "\u2610 Encoder Legend",
+                                   ["Knob legend strip is hidden.", "settings.png"]))
         self.list_data.append((self.test_audio, 0, "Test Audio",
                                ["Play an audio track to test audio output.\n\nPress BACK to cancel playback.", "audio_output.png"]))
 
@@ -552,6 +559,10 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
 
     def toggle_dpm(self):
         zynthian_gui_config.enable_dpm = not zynthian_gui_config.enable_dpm
+        self.update_list()
+
+    def toggle_encoder_legend(self):
+        zynthian_gui_config.show_encoder_legend = not zynthian_gui_config.show_encoder_legend
         self.update_list()
 
     def visible_chains(self):

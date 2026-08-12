@@ -107,6 +107,21 @@ class zynthian_gui_base(tkinter.Frame):
         self.param_editor_zctrl = None
         self.param_editor_assert_cb = None
 
+        # Encoder legend: bottom strip labelling what each encoder currently
+        # does. Built for full screens only; it appears when the screen
+        # provides labels (get_zynpot_labels) and the feature is enabled
+        # (config.show_encoder_legend / Admin > Encoder Legend).
+        self.encoder_legend_canvas = None
+        self.encoder_legend_shown = False
+        self.encoder_legend_state = None
+        if self.topbar_allowed:
+            self.encoder_legend_height = int(2.8 * zynthian_gui_config.font_size_small)
+            self.encoder_legend_canvas = tkinter.Canvas(self,
+                width=zynthian_gui_config.screen_width,
+                height=self.encoder_legend_height,
+                bg=zynthian_gui_config.color_bg,
+                bd=0, highlightthickness=0)
+
         if self.topbar_allowed:
             self.main_mute = 0
 
@@ -202,12 +217,16 @@ class zynthian_gui_base(tkinter.Frame):
     # Function to update display, e.g. after geometry changes
     # Override if required
     def update_layout(self):
+        if self.encoder_legend_shown:
+            legend_height = self.encoder_legend_height
+        else:
+            legend_height = 0
         if self.parent:
             self.width = self.winfo_width()
             self.height = self.winfo_height() - self.topbar_height
         else:
             self.width = zynthian_gui_config.screen_width
-            self.height = zynthian_gui_config.screen_height - self.topbar_height
+            self.height = zynthian_gui_config.screen_height - self.topbar_height - legend_height
         #logging.debug(f"[{self.__class__.__module__}] => WIDTH={self.width}, HEIGHT={self.height}")
         # TODO Resize topbar elements
 
@@ -374,8 +393,70 @@ class zynthian_gui_base(tkinter.Frame):
     # Refresh & Update methods
     # -------------------------------------------------------------------------
 
+    # Encoder legend labels for the current screen state. Override to opt in:
+    # return a 4-element list indexed by zynpot, each entry (name, value_text)
+    # or None for an unused encoder. Return None to hide the legend. NOTE:
+    # opting in requires the screen to re-layout when self.height changes
+    # (the legend claims a strip of screen height when it appears).
+    def get_zynpot_labels(self):
+        return None
+
+    def update_encoder_legend(self):
+        if self.encoder_legend_canvas is None:
+            return
+        if zynthian_gui_config.show_encoder_legend:
+            labels = self.get_zynpot_labels()
+        else:
+            labels = None
+        if labels is None:
+            if self.encoder_legend_shown:
+                self.encoder_legend_shown = False
+                self.encoder_legend_state = None
+                self.encoder_legend_canvas.grid_remove()
+                self.update_layout()
+            return
+        if not self.encoder_legend_shown:
+            self.encoder_legend_shown = True
+            self.encoder_legend_canvas.grid(row=self.main_row + 1, sticky="ew")
+            self.update_layout()
+        state = tuple(labels)
+        if state == self.encoder_legend_state:
+            return
+        self.encoder_legend_state = state
+        c = self.encoder_legend_canvas
+        c.delete("all")
+        h = self.encoder_legend_height
+        cell_w = zynthian_gui_config.screen_width / 4
+        for n in range(4):
+            item = labels[n] if n < len(labels) else None
+            x0 = int(n * cell_w) + 2
+            x1 = int((n + 1) * cell_w) - 2
+            if item:
+                bg = zynthian_gui_config.color_panel_bg
+            else:
+                bg = zynthian_gui_config.color_scale(zynthian_gui_config.color_panel_bg, 0.6)
+            zynthian_gui_config.create_round_rect(
+                c, x0, 1, x1, h - 2,
+                radius=zynthian_gui_config.corner_radius, fill=bg, width=0)
+            if not item:
+                continue
+            name, value = item
+            cx = (x0 + x1) // 2
+            if value is None:
+                c.create_text(cx, h // 2, text=name,
+                              fill=zynthian_gui_config.color_tx_off,
+                              font=(zynthian_gui_config.font_family, zynthian_gui_config.font_size_xs))
+            else:
+                c.create_text(cx, h // 4 + 1, text=name,
+                              fill=zynthian_gui_config.color_tx_off,
+                              font=(zynthian_gui_config.font_family, zynthian_gui_config.font_size_xs))
+                c.create_text(cx, (3 * h) // 4 - 1, text=value,
+                              fill=zynthian_gui_config.color_tx,
+                              font=(zynthian_gui_config.font_family, zynthian_gui_config.font_size_xs))
+
     def refresh_status(self):
         if self.shown and self.topbar_allowed:
+            self.update_encoder_legend()
             mute = self.state_manager.zynmixer_bus.get_mute(0)
             if mute != self.main_mute:
                 self.main_mute = mute

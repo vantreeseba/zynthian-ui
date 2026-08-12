@@ -588,10 +588,12 @@ def hex_rgb(hex_color):
     """ '#RRGGBB' -> (r, g, b) int tuple """
     return tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=512)
 def color_blend(hex_color1, hex_color2, t):
     """ Linear blend between two colors, t in [0, 1]. Quantize t at the call
-    site (e.g. round(t, 2)) so the memo table stays small. """
+    site (e.g. round(t, 2)) so the memo table stays small. Bounded (unlike the
+    other memos) because a caller passing unquantized t must not grow it
+    without limit. """
     rgb1 = hex_rgb(hex_color1)
     rgb2 = hex_rgb(hex_color2)
     return "#" + "".join("%02x" % int(a + (b - a) * t) for a, b in zip(rgb1, rgb2))
@@ -724,6 +726,11 @@ mixer_toggle = os.environ.get('ZYNTHIAN_UI_MIXER_TOGGLE', "record")
 # counter, pattern editor playhead, MIDI activity. Higher rates cost CPU.
 ui_fps = max(1, min(60, get_env_int('ZYNTHIAN_UI_FPS', 30)))
 ui_status_fps = max(1, min(60, get_env_int('ZYNTHIAN_UI_STATUS_FPS', 10)))
+
+# Encoder legend: bottom strip labelling what each encoder does on screens
+# that provide labels (see zynthian_gui_base.get_zynpot_labels). Can also be
+# toggled at runtime from Admin > Encoder Legend.
+show_encoder_legend = get_env_int('ZYNTHIAN_UI_ENCODER_LEGEND', 1)
 
 # ------------------------------------------------------------------------------
 # Audio Options
