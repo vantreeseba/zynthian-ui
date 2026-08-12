@@ -2587,7 +2587,7 @@ class zynthian_gui:
             logging.error(e)
 
         if not self.exit_flag:
-            zynthian_gui_config.top.after(32, self.plot_zctrls_task)
+            zynthian_gui_config.top.after(1000 // zynthian_gui_config.ui_fps, self.plot_zctrls_task)
 
     # ------------------------------------------------------------------
     # Touch event management
@@ -2698,7 +2698,7 @@ class zynthian_gui:
                     self.wsleds.update()
                 if self.wsleds_v5touch:
                     self.wsleds_v5touch.update()
-                sleep(0.2)
+                sleep(1.0 / zynthian_gui_config.ui_status_fps)
 
     def refresh_status(self):
         # Refresh on-screen status

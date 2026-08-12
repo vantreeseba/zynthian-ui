@@ -103,7 +103,9 @@ class zynthian_engine_clippy(zynthian_engine):
     # ---------------------------------------------------------------------------
 
     def start(self):
-        self.libclippy = ctypes.cdll.LoadLibrary("/zynthian/zynthian-ui/zynlibs/zynclippy/build/libzynclippy.so")
+        self.libclippy = ctypes.cdll.LoadLibrary(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+            "zynlibs/zynclippy/build/libzynclippy.so"))
         self.libclippy.init()
         self.libclippy.getGain.restype = ctypes.c_float
         self.libclippy.getJackname.restype = ctypes.c_char_p

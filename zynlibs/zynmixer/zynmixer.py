@@ -23,6 +23,7 @@
 #
 # ********************************************************************
 
+import os
 import math
 import ctypes
 import logging
@@ -53,12 +54,13 @@ class ZynMixer():
     # Function to initialize library
     def __init__(self, is_mixbus=False):
         self.mixbus = is_mixbus
+        build_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "build")
         if is_mixbus:
             self.lib_zynmixer = ctypes.cdll.LoadLibrary(
-                f"/zynthian/zynthian-ui/zynlibs/zynmixer/build/libzynmixer_mixbus.so")
+                os.path.join(build_dir, "libzynmixer_mixbus.so"))
         else:
             self.lib_zynmixer = ctypes.cdll.LoadLibrary(
-                f"/zynthian/zynthian-ui/zynlibs/zynmixer/build/libzynmixer.so")
+                os.path.join(build_dir, "libzynmixer.so"))
 
         self.lib_zynmixer.addStrip.restype = ctypes.c_int8
         self.lib_zynmixer.removeStrip.argtypes = [ctypes.c_uint8]
