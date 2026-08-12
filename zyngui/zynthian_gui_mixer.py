@@ -2029,6 +2029,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         ci = self.state_manager.record_count_in
         ci_label = f"{ci} BAR{'S' if ci > 1 else ''}" if ci else "OFF"
         options[f"Count-in ({ci_label})"] = True
+        options[f"Tempo from first loop ({'ON' if self.state_manager.tempo_from_loop else 'OFF'})"] = True
         if repeat == 0:
             options["Duration (DISABLED)"] = repeat
         else:
@@ -2161,6 +2162,11 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 'labels': ['OFF', '1 BAR', '2 BARS'],
                 'value': self.state_manager.record_count_in,
             }, assert_cb=self.cb_assert_param_editor)
+        elif option.startswith("Tempo from first loop"):
+            self.state_manager.set_tempo_from_loop(not self.state_manager.tempo_from_loop)
+            index = option_screen.index
+            self.phrase_menu()
+            option_screen.select(index)
         elif option.startswith("Rename"):
             self.zyngui.show_keyboard(self.rename_phrase, params, 8)
         elif option.startswith("Append phrase"):

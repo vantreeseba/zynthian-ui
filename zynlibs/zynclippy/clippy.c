@@ -620,6 +620,17 @@ void setClipTempoLock(uint8_t channel, uint8_t id, uint8_t tempo_lock) {
     if (clip) clip->tempo_lock = tempo_lock;
 }
 
+void setClipBeats(uint8_t channel, uint8_t id, uint16_t nbeats, float tempo) {
+    if (channel > 16 || id >= MAX_CLIPS) return;
+    Player* player = players[channel];
+    if (!player) return;
+    Clip* clip = player->clips[id];
+    if (clip && nbeats) {
+        clip->nbeats = nbeats;
+        clip->tempo = tempo;
+    }
+}
+
 static int onBufferSize(jack_nframes_t frames, __attribute__((unused)) void* arg) {
     buffersize = frames;
     //reset();

@@ -79,6 +79,15 @@ void idlePlayers();
 */
 void changeClipTempoLock(uint8_t channel, uint8_t id, uint8_t tempo_lock);
 
+/** @brief Set clip's beat count and native tempo without reloading or warping
+    @param  channel MIDI channel of player (0-15)
+    @param  id Id of clip (note - 1)
+    @param  nbeats Number of beats in clip
+    @param  tempo Tempo (BPM) at which the clip plays unstretched
+    @note   Use after recording when the session tempo is derived from the take
+*/
+void setClipBeats(uint8_t channel, uint8_t id, uint16_t nbeats, float tempo);
+
 /** @brief  Get the next available clip
     @param  channel MIDI channel
     @retval uint8_t Clip ID (MIDI note) or 0 on error

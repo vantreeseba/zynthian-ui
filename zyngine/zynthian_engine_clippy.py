@@ -25,6 +25,7 @@
 
 import os
 import re
+import math
 import time
 import ctypes
 import logging
@@ -126,6 +127,8 @@ class zynthian_engine_clippy(zynthian_engine):
         self.libclippy.setRecordLatencyOffset.argtypes = [ctypes.c_int32]
         self.libclippy.setRecordLatencyOffset.restype = None
         self.libclippy.getRecordLatencyOffset.restype = ctypes.c_int32
+        self.libclippy.setClipBeats.argtypes = [ctypes.c_uint8, ctypes.c_uint8, ctypes.c_uint16, ctypes.c_float]
+        self.libclippy.setClipBeats.restype = None
         self.jackname = self.libclippy.getJackname().decode("utf-8")
         self.zynseq.clippy = self
         self.refresh_monitor_routing()
@@ -609,6 +612,16 @@ class zynthian_engine_clippy(zynthian_engine):
         if state in (zynseq.SEQ_RECORDING, zynseq.SEQ_STOPPING_RECORD):
             # Request punch-out at next bar / cancel a pending punch-out
             self.libseq.toggleRecordState(self.zynseq.scene, phrase, chan)
+            rec = self.recordings.get((processor, phrase))
+            if state == zynseq.SEQ_RECORDING and rec and rec.get("free"):
+                # Free take punches out on the next clock pulse => finalize
+                # synchronously so the derived tempo lands within a few ms
+                timeout = time.monotonic() + 0.25
+                while (self.libclippy.getRecordState() == REC_RECORDING
+                       and time.monotonic() < timeout):
+                    time.sleep(0.002)
+                if self.libclippy.getRecordState() in (REC_DONE, REC_FINISHING):
+                    self.finalize_recording(processor, phrase)
             return True
         return self.arm_clip_record(processor, phrase)
 
@@ -644,10 +657,14 @@ class zynthian_engine_clippy(zynthian_engine):
         if res != 0:
             logging.error(f"Failed to arm clip recorder => error {res}")
             return False
+        # Tempo-from-first-loop: arming from stopped transport records a free take
+        # (immediate punch in/out, no count-in or metronome) defining the tempo
+        free_take = self.state_manager.tempo_from_loop and self.libseq.getTransportState() != 1  # 1 = transport PLAYING
         self.recordings[(processor, phrase)] = {
-            "state": "armed", "path": path, "tempo": tempo, "bpb": bpb, "channels": channels}
+            "state": "armed", "path": path, "tempo": tempo, "bpb": bpb, "channels": channels, "free": free_take}
         self.libseq.setPlayState(self.zynseq.scene, phrase, processor.midi_chan, zynseq.SEQ_STARTING_RECORD)
-        self.state_manager.start_record_metronome()
+        if not free_take:
+            self.state_manager.start_record_metronome()
         self.update_monitor(processor)
         self.set_record_zctrl(processor, 1)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
@@ -690,6 +707,30 @@ class zynthian_engine_clippy(zynthian_engine):
         frames = self.libclippy.getRecordedFrames()
         beats = self.libclippy.getRecordedBeats()
         path = rec["path"]
+        if rec.get("free") and frames:
+            # Free take defines the session: derive the exact tempo from the loop
+            # duration, choosing the power-of-2 bar count landing nearest 80-160 BPM
+            bpb = rec["bpb"]
+            duration = frames / self.samplerate
+            best = None
+            bars = 1
+            while bars * bpb <= MAX_BEATS:
+                tempo = bars * bpb * 60 / duration
+                score = abs(math.log2(tempo / 113.14))
+                if best is None or score < best[0]:
+                    best = (score, bars, tempo)
+                bars *= 2
+            _, bars, tempo = best
+            beats = bars * bpb
+            rec["tempo"] = tempo
+            self.libseq.setSequenceLength(self.zynseq.scene, phrase, processor.midi_chan, beats * self.zynseq.PPQN)
+            self.state_manager.set_tempo(tempo)
+            # Fix the clip's beat count and tempo so beat-sync position correction
+            # and any future tempo warps treat the take as already at session tempo
+            self.libclippy.setClipBeats(clip_channel, note - 1, beats, tempo)
+            base = path.rsplit("_", 1)[0]
+            path = f"{base}_{round(tempo)}bpm.wav"
+            rec["path"] = path
         try:
             proc_dict = processor.controllers_dict
             self.update_controllers(processor, note, frames)
@@ -730,8 +771,10 @@ class zynthian_engine_clippy(zynthian_engine):
         except Exception as e:
             logging.error(f"Failed to save recorded clip => {e}")
         self.libclippy.disarmRecord()
-        self.recordings.pop((processor, phrase), None)
-        self.state_manager.stop_record_metronome()
+        rec = self.recordings.pop((processor, phrase), None)
+        if not (rec and rec.get("free")):
+            # Free takes never started the record metronome => keep depth balanced
+            self.state_manager.stop_record_metronome()
         self.set_record_zctrl(processor, 0)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                               chan=processor.midi_chan, phrase=phrase, state=0)
@@ -745,7 +788,8 @@ class zynthian_engine_clippy(zynthian_engine):
         if rec is None:
             return
         self.libclippy.disarmRecord()
-        self.state_manager.stop_record_metronome()
+        if not rec.get("free"):
+            self.state_manager.stop_record_metronome()
         self.update_monitor(processor)
         self.set_record_zctrl(processor, 0)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,

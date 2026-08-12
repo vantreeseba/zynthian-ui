@@ -1013,6 +1013,19 @@ void setRecordBars(uint16_t bars);
 */
 void setRecordCountIn(uint16_t bars);
 
+/** @brief  Enable tempo-from-first-loop recording mode
+    @param  enable True to free-record takes armed from stopped transport (default: false)
+    @note   A free take punches in and out immediately (no quantize, count-in or
+            metronome). At punch out the bar grid restarts at the loop start so the
+            take defines the session grid; derive and set the tempo from its duration.
+*/
+void setTempoFromLoop(bool enable);
+
+/** @brief  Get the current transport state
+    @retval uint8_t Transport state [STOPPED | PLAYING | STARTING | STOPPING]
+*/
+uint8_t getTransportState();
+
 /** @brief  Set maximum quantity of bars an open-ended clip recording may capture
     @param  bars Quantity of bars before forced punch out (0 to disable safety cap)
 */

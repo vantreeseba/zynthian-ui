@@ -289,7 +289,10 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
                 case STARTING_RECORD: {
                     // Punch in at the punch quantize point (record message emplaced before coincident beat tick so clippy counts exact beats)
                     bool bPunchIn = bPunch;
-                    if (m_nCountInSyncs) {
+                    if (m_bFreeRecordTake) {
+                        // Free-length take (tempo from first loop): punch in immediately
+                        bPunchIn = true;
+                    } else if (m_nCountInSyncs) {
                         // Metronome count-in: hold the punch until the bar sync ending the count-in
                         bPunchIn = bSync && --m_nCountInSyncs == 0;
                     }
@@ -309,21 +312,33 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
                 case RECORDING:
                 case STOPPING_RECORD: {
                     uint32_t nPos = pSequence->getPlayPosition() + 1;
-                    if (bPunch) {
+                    uint32_t nMaxTicks = m_nMaxRecordBars * m_nTimeSig * PPQN_INTERNAL;
+                    bool bPunchOut = false;
+                    if (m_bFreeRecordTake) {
+                        // Free-length take: punch out immediately when requested (safety cap still applies)
+                        bPunchOut = nPlayState == STOPPING_RECORD || (nMaxTicks && nPos >= nMaxTicks);
+                    } else if (bPunch) {
                         uint32_t nLength = pSequence->getLength();
-                        uint32_t nMaxTicks = m_nMaxRecordBars * m_nTimeSig * PPQN_INTERNAL;
                         uint32_t nRecTicks = m_nRecordBars * m_nTimeSig * PPQN_INTERNAL;
                         // Punch out when user requested, fixed record length reached, preset length
                         // reached (only whilst no fixed length set) or safety cap reached
-                        if (nPlayState == STOPPING_RECORD || (nRecTicks && nPos >= nRecTicks) || (!nRecTicks && nLength && nPos >= nLength) || (nMaxTicks && nPos >= nMaxTicks)) {
-                            pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), nNote, CLIPPY_VEL_REC_STOP}});
-                            // Set sequence length to the exact recorded duration and loop the committed clip
-                            pSequence->updateLength(nPos);
-                            pSequence->setPlayState(PLAYING);
-                            pSequence->setPlayed(0);
-                            nPlayState = PLAYING;
-                            nPos = 0;
-                            m_pRecordingSequence = nullptr;
+                        bPunchOut = nPlayState == STOPPING_RECORD || (nRecTicks && nPos >= nRecTicks) || (!nRecTicks && nLength && nPos >= nLength) || (nMaxTicks && nPos >= nMaxTicks);
+                    }
+                    if (bPunchOut) {
+                        pSchedule->map.emplace(nTime, SEQ_EVENT{nTime, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), nNote, CLIPPY_VEL_REC_STOP}});
+                        // Set sequence length to the exact recorded duration and loop the committed clip
+                        pSequence->updateLength(nPos);
+                        pSequence->setPlayState(PLAYING);
+                        pSequence->setPlayed(0);
+                        nPlayState = PLAYING;
+                        nPos = 0;
+                        m_pRecordingSequence = nullptr;
+                        if (m_bFreeRecordTake) {
+                            // The free take defines the session grid: restart the bar at the loop start
+                            m_bFreeRecordTake = false;
+                            m_bBarResync = true;
+                            barPos = 0;
+                            beatPos = 0;
                         }
                     }
                     pSequence->setPlayPosition(nPos);
@@ -584,9 +599,20 @@ void SequenceManager::setRecordCountIn(uint16_t bars) {
     m_nRecordCountIn = bars;
 }
 
-void SequenceManager::startRecordCountIn(bool enable) {
+void SequenceManager::setTempoFromLoop(bool enable) {
+    m_bTempoFromLoop = enable;
+}
+
+void SequenceManager::onRecordArm(bool bStopped) {
+    m_bFreeRecordTake = bStopped && m_bTempoFromLoop;
     // Punch in at the (bars + 1)th bar sync: the first sync starts the count-in bar
-    m_nCountInSyncs = (enable && m_nRecordCountIn) ? (m_nRecordCountIn + 1) : 0;
+    m_nCountInSyncs = (bStopped && !m_bFreeRecordTake && m_nRecordCountIn) ? (m_nRecordCountIn + 1) : 0;
+}
+
+bool SequenceManager::consumeBarResync() {
+    bool bResync = m_bBarResync;
+    m_bBarResync = false;
+    return bResync;
 }
 
 void SequenceManager::setMaxRecordBars(uint16_t bars) {

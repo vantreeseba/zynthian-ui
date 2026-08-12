@@ -204,10 +204,24 @@ class SequenceManager {
     */
     void setRecordCountIn(uint16_t bars);
 
-    /** @brief  Begin or clear the count-in for the next clip record punch-in
-        @param  enable True to apply the configured count-in (arming whilst transport stopped)
+    /** @brief  Enable tempo-from-first-loop mode
+        @param  enable True to free-record a clip armed whilst the transport is stopped:
+                punch in/out are immediate (no quantize or count-in) and the bar grid
+                restarts at the loop start on punch out. The client must derive and set
+                the tempo and sequence length from the recorded duration.
     */
-    void startRecordCountIn(bool enable);
+    void setTempoFromLoop(bool enable);
+
+    /** @brief  Notify that a clip record has been armed
+        @param  bStopped True if the transport was stopped when arming
+        @note   Applies the configured count-in, or a free-length take in tempo-from-loop mode
+    */
+    void onRecordArm(bool bStopped);
+
+    /** @brief  Check and clear the bar grid resync request raised by a free-length punch out
+        @retval bool True if the current tick must restart the bar (call once per clock)
+    */
+    bool consumeBarResync();
 
     /** @brief  Get sequence currently in a clippy record state
         @retval Sequence* Pointer to sequence or nullptr if none recording
@@ -426,5 +440,8 @@ class SequenceManager {
     uint16_t m_nRecordBars = 0;                 // Fixed clip record length in bars (0 = open-ended)
     uint16_t m_nRecordCountIn = 0;              // Metronome count-in in bars when arming from stopped transport (0 = off)
     uint32_t m_nCountInSyncs = 0;               // Bar sync pulses remaining before a pending count-in punch in
+    bool m_bTempoFromLoop = false;              // True to free-record a take armed from stopped transport (tempo derived from loop)
+    bool m_bFreeRecordTake = false;             // True whilst the current record take is free-length (immediate punch in/out)
+    bool m_bBarResync = false;                  // True to restart the bar grid at the current tick (free take punched out)
     std::map<uint8_t, uint16_t> m_mTriggers;   // Map of phrase,sequence indexed by MIDI note triggers
 };

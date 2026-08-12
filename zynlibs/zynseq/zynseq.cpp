@@ -527,6 +527,12 @@ int onJackProcess(jack_nframes_t nFrames, void* pArgs) {
             //!@todo Optimise to reduce rate calling clock especially if we increase the clock rate from 24 to 96 or above. Maybe return the time until next check
             uint8_t nPlayingSequences = g_seqMan.clock(nTickTime, &g_mSchedule, bSync, bBeat);
 
+            // Free-length take punched out => its loop start defines the bar grid from here
+            if (g_seqMan.consumeBarResync()) {
+                g_nBeat = 1;
+                nNextBeatTime = nTickTime + PPQN_INTERNAL;
+            }
+
             // Check for sequenced timebase changes (from patterns)
             if (g_seqMan.isTempoChanged()) {
                 float tempo = g_seqMan.getTempo();
@@ -2612,9 +2618,9 @@ void setPlayState(uint8_t scene, uint8_t phrase, uint8_t sequence, uint8_t state
         //if (g_seqMan.getPlayingSequencesCount() == 0) {
 		//	setBpb(getPhraseBPB(scene, phrase));
     	//}
-        // Arming from stopped transport => insert the metronome count-in before punch in
+        // Arming from stopped transport => free-length take or metronome count-in
         if (state == STARTING_RECORD)
-            g_seqMan.startRecordCountIn(g_nTransportState != PLAYING);
+            g_seqMan.onRecordArm(g_nTransportState != PLAYING);
         transportStart(TRANSPORT_CLIENT_ZYNSEQ);
     }
     else if (!g_nPlayingSequences && state == STOPPING)
@@ -2705,6 +2711,10 @@ void setRecordBars(uint16_t bars) {
 
 void setRecordCountIn(uint16_t bars) {
     g_seqMan.setRecordCountIn(bars);
+}
+
+void setTempoFromLoop(bool enable) {
+    g_seqMan.setTempoFromLoop(enable);
 }
 
 void setMaxRecordBars(uint16_t bars) {
