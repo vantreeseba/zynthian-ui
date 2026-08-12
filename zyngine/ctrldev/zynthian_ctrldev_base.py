@@ -29,6 +29,7 @@ import signal
 import logging
 import traceback
 from time import sleep
+from threading import Timer
 import multiprocessing as mp
 
 mp.set_start_method('fork')
@@ -389,6 +390,8 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
         self.cols = 8  # Quatity of columns of physical launcher buttons
         self.rows = 8  # Quatity of rows of physical launcher buttons
         self.phrase_launcher_col = self.cols  # Index of column used as phrase launcher
+        self.record_pads = {}  # Map of pads in a record state: (phrase, chan) => play state
+        self.countdown_timer = None  # Timer used to restore pads flashed by the punch countdown
 
     def init(self):
         super().init()
@@ -397,6 +400,9 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_STATE, self.refresh)
         # Register phrase change
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_SELECT_PHRASE, self.on_active_phrase)
+        # Register for record punch countdown feedback
+        zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.track_record_pad)
+        zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_BEAT, self.on_beat)
 
     def end(self):
         # Unregister from zynseq updates
@@ -404,6 +410,12 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
         zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_STATE, self.refresh)
         # Unregister phrase change
         zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_SELECT_PHRASE, self.on_active_phrase)
+        # Unregister from record punch countdown feedback
+        zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.track_record_pad)
+        zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_BEAT, self.on_beat)
+        if self.countdown_timer:
+            self.countdown_timer.cancel()
+            self.countdown_timer = None
         # Light off
         self.light_off()
         super().end()
@@ -489,6 +501,56 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
                 if record_state:
                     return
         self.zynseq.libseq.togglePlayState(self.zynseq.scene, phrase, midi_chan)
+
+    def track_record_pad(self, phrase, chan):
+        """Track pads in a record state to drive the punch countdown flash
+
+        phrase - phrase index (row)
+        chan - zynseq's midi chan
+        """
+
+        if chan is None or chan >= 32:
+            return
+        try:
+            state = self.zynseq.state["scenes"][self.zynseq.scene]["phrases"][phrase]["sequences"][chan]["state"]
+        except:
+            state = None
+        key = (phrase, chan)
+        if state in (zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_RECORDING, zynseq.SEQ_STOPPING_RECORD):
+            self.record_pads[key] = state
+        else:
+            self.record_pads.pop(key, None)
+
+    def on_beat(self, beat):
+        """Flash recording/armed pads on each beat while a punch in/out countdown is pending
+
+        beat - beat of bar (1-based)
+        """
+
+        if self.idev_out is None or not self.record_pads:
+            return
+        if not self.zynseq.libseq.getPunchBeatsRemaining():
+            return
+        for phrase, chan in list(self.record_pads):
+            row = phrase - self.scroll_v
+            if row < 0 or row >= self.rows:
+                continue
+            for idx in self.chain_manager.get_pos_by_midi_chan(chan):
+                col = idx - self.scroll_h
+                if 0 <= col < self.cols:
+                    self.pad_off(col, row)
+        if self.countdown_timer:
+            self.countdown_timer.cancel()
+        self.countdown_timer = Timer(0.1, self.restore_record_pads)
+        self.countdown_timer.start()
+
+    def restore_record_pads(self):
+        """Restore pads blanked by the punch countdown flash"""
+
+        if not self.enabled or self.idev_out is None:
+            return
+        for phrase, chan in list(self.record_pads):
+            self.update_seq_state(phrase=phrase, chan=chan)
 
     def update_pad(self, row, col, pad_info):
         """Update the pad at row,col

@@ -672,7 +672,10 @@ class zynseq(zynthian_engine):
         # State is represented as 4 bytes encoded as single 32-bit word: [sequence, group, mode, play state]
         # mode bits: [0..1] stop mode. [2] start mode. [7] enabled.
 
-        self.beat = self.libseq.getBeat()
+        beat = self.libseq.getBeat()
+        if beat != self.beat:
+            self.beat = beat
+            zynsigman.send(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_BEAT, beat=beat)
         tempo = self.libseq.getTempo()
         if tempo != self.zctrl_tempo.value:
             self.zctrl_tempo.set_value(tempo)
