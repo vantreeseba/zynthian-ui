@@ -39,6 +39,8 @@
 #define FX_FADE_IN 1
 #define FX_FADE_OUT 2
 
+#define REC_FADE_FRAMES 128 // Seam de-click fade length for recorded clips (~2.7ms @ 48kHz)
+
 typedef struct {
     uint8_t state;          // Clip state
     uint32_t frames;        // Quantity of frames in loaded clip
@@ -133,6 +135,25 @@ static void inline releaseMutex() {
 
 float* out_buff_a[16];
 float* out_buff_b[16];
+
+// Bake a short linear fade into a recorded clip's head (fade-in) or tail (fade-out).
+// A recorded loop almost never starts/ends on a zero crossing => the end->start
+// seam clicks on every repeat. Applied once, so the saved WAV loops cleanly too.
+static void applyRecordedFade(Clip* clip, uint8_t tail) {
+    uint32_t fade = REC_FADE_FRAMES;
+    if (fade > clip->frames / 2)
+        fade = clip->frames / 2;
+    for (int ch = 0; ch < clip->channels; ++ch) {
+        float* data = clip->data[ch];
+        if (tail) {
+            for (uint32_t i = 0; i < fade; ++i)
+                data[clip->frames - 1 - i] *= (float)i / fade;
+        } else {
+            for (uint32_t i = 0; i < fade; ++i)
+                data[i] *= (float)i / fade;
+        }
+    }
+}
 
 jack_nframes_t process_clip(uint8_t channel, Clip* clip, jack_nframes_t frames, int32_t pos, uint8_t fx) {
     jack_nframes_t offset = 0;
@@ -359,6 +380,9 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                 clip->alloc[1] = (g_recorder.channels == 2) ? g_recorder.data[1] : NULL;
                 clip->data[0] = g_recorder.data[0] + latency;
                 clip->data[1] = (g_recorder.channels == 2) ? (g_recorder.data[1] + latency) : clip->data[0];
+                // De-click the loop seam: fade in the head now; the tail fade is
+                // applied once its (latency-delayed) content is complete
+                applyRecordedFade(clip, 0);
                 clip->state = STATE_READY;
                 g_recorder.old_clip = rp->clips[g_recorder.clip_id];
                 if (rp->current_clip == g_recorder.old_clip) {
@@ -383,6 +407,7 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                     g_recorder.tail[1] = g_recorder.data[1];
                     g_recorder.state = REC_FINISHING;
                 } else {
+                    applyRecordedFade(clip, 1);
                     g_recorder.state = REC_DONE;
                 }
                 g_recorder.data[0] = NULL;
@@ -414,6 +439,13 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
             g_recorder.frames = g_recorder.target_frames;
         }
         if (g_recorder.frames >= g_recorder.target_frames) {
+            // Tail content complete => de-click the loop seam end
+            // (the playhead is only ~latency frames in => nowhere near the tail)
+            if (rp) {
+                Clip* clip = rp->clips[g_recorder.clip_id];
+                if (clip)
+                    applyRecordedFade(clip, 1);
+            }
             g_recorder.tail[0] = NULL;
             g_recorder.tail[1] = NULL;
             g_recorder.state = REC_DONE;
