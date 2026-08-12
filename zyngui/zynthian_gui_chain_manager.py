@@ -445,9 +445,9 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
 
     def bypass_cb(self, zctrl):
         if zctrl.processor.is_bypassed():
-            col = "#b0b0b0"
+            col = zynthian_gui_config.color_tx_off
         else:
-            col = "#ffffff"
+            col = zynthian_gui_config.color_tx
         for proc, node in self.bypass2node.items():
             if proc == zctrl.processor:
                 self.canvas.itemconfigure(node["text_id"], fill=col)
@@ -460,12 +460,12 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
             node: The node object to be drawn.
         """
         # Colors
-        c_midi = "#805050"
-        c_synth = "#32a893"
-        c_audio = "#505080"
-        c_special = "#708050"
-        bg_col = "#505050"
-        fg_col = "#ffffff"
+        c_midi = zynthian_gui_config.color_chain_midi
+        c_synth = zynthian_gui_config.color_chain_synth
+        c_audio = zynthian_gui_config.color_chain_audio
+        c_special = zynthian_gui_config.color_chain_special
+        bg_col = zynthian_gui_config.color_off
+        fg_col = zynthian_gui_config.color_tx
 
         # Draw node background
         title = node.get("title")
@@ -493,7 +493,7 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
                 case "Special":
                     bg_col = c_special
             if disabled:
-                fg_col = "#b0b0b0"
+                fg_col = zynthian_gui_config.color_tx_off
         node["id"] = self.canvas.create_rectangle(
             x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
             fill=bg_col, outline=bg_col, tags="node"
@@ -517,7 +517,7 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
         xa, ya, xb, yb = self.canvas.bbox(end_id)
         x1 = xa + (xb - xa) // 2
         y1 = ya + (yb - ya) // 2
-        self.canvas.create_line(x0, y0, x1, y1, fill="#AAAAAA", width=2, tags="lines")
+        self.canvas.create_line(x0, y0, x1, y1, fill=zynthian_gui_config.color_tx_off, width=2, tags="lines")
 
     def _draw_graph(self, sel_proc=None):
         if self.width == 1:
@@ -546,16 +546,16 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
                         if is_dst:
                             y0 = y - self.V_SPACING // 2
                             if is_src:
-                                self.canvas.create_line(x0, y, x0, y - self.V_SPACING, fill="#AAAAAA", width=2, tags="lines")
+                                self.canvas.create_line(x0, y, x0, y - self.V_SPACING, fill=zynthian_gui_config.color_tx_off, width=2, tags="lines")
                             else:
-                                self.canvas.create_line(x0, y, x0, y0, fill="#AAAAAA", width=2, tags="lines")
+                                self.canvas.create_line(x0, y, x0, y0, fill=zynthian_gui_config.color_tx_off, width=2, tags="lines")
                             if col > 0:
-                                self.canvas.create_line(x0, y0, x0 - self.BLOCK_WIDTH - self.H_SPACING, y0, width=2, fill="#AAAAAA", tags="lines")
+                                self.canvas.create_line(x0, y0, x0 - self.BLOCK_WIDTH - self.H_SPACING, y0, width=2, fill=zynthian_gui_config.color_tx_off, tags="lines")
                         if row_idx < len(chain) - 1 and col >= len(chain[row_idx + 1]):
                             y0 = y + self.BLOCK_HEIGHT
                             y1 = y0 + self.V_SPACING // 2
-                            self.canvas.create_line(x0, y0, x0, y1, fill="#AAAAAA", width=2, tags="lines")
-                            self.canvas.create_line(x0, y1, x0 - self.BLOCK_WIDTH - self.H_SPACING, y1, width=2, fill="#AAAAAA", tags="lines")
+                            self.canvas.create_line(x0, y0, x0, y1, fill=zynthian_gui_config.color_tx_off, width=2, tags="lines")
+                            self.canvas.create_line(x0, y1, x0 - self.BLOCK_WIDTH - self.H_SPACING, y1, width=2, fill=zynthian_gui_config.color_tx_off, tags="lines")
 
                     x += self.BLOCK_WIDTH + self.H_SPACING
                     if col >= cols_in_chain:
@@ -566,7 +566,7 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
                 # Highlight chain being moved
                 self.canvas.create_rectangle(
                     chain_offset - 1, 0, chain_offset + 1 + self.BLOCK_WIDTH, divider_height,
-                    outline="yellow",
+                    outline=zynthian_gui_config.color_ml,
                     width=3,
                     fill="",
                     tags="chain_move"
@@ -575,7 +575,7 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
             x = chain_offset - self.H_SPACING / 2
             if chain_idx == div:
                 x_div = x
-            self.canvas.create_line(x, 0, x, divider_height, fill="#666666", width=1, tags="lines")
+            self.canvas.create_line(x, 0, x, divider_height, fill=zynthian_gui_config.color_off, width=1, tags="lines")
             chain_offset += (self.BLOCK_WIDTH + self.H_SPACING) * cols_in_chain
 
         # Background for pinned chains
@@ -587,7 +587,7 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
             x, 0, chain_offset, divider_height,
             outline="",
             width=0,
-            fill="#333333"
+            fill=zynthian_gui_config.color_panel_hl
         )
 
         self.canvas.lower("lines")

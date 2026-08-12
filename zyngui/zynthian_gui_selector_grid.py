@@ -144,7 +144,7 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
         y = self.SPACING
         for idx, node in enumerate(self.config):
             if node:
-                fill = "#666666" if node["action"] else "#444444"
+                fill = zynthian_gui_config.color_panel_hl if node["action"] else zynthian_gui_config.color_panel_bg
                 self.canvas.create_rectangle(x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
                     fill=fill,
                     outline=fill,
@@ -153,7 +153,7 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
                     img = self.get_icon(node["icon"])
                     if img:
                         self.canvas.create_image(x, y + self.BLOCK_HEIGHT // 2, image=img, anchor="w")
-                fill = "#ffffff" if node["action"] else "#aaaaaa"
+                fill = zynthian_gui_config.color_tx if node["action"] else zynthian_gui_config.color_tx_off
                 self.canvas.create_text(
                     x + 2 * self.BLOCK_WIDTH // 3, y + self.BLOCK_HEIGHT // 2,
                     text=node["title"],
@@ -182,7 +182,7 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
         """
         self.canvas.itemconfig("node", outline="")
         node_tag = f"node_{self.selected_node}"
-        self.canvas.itemconfig(node_tag, outline="yellow", width=2)
+        self.canvas.itemconfig(node_tag, outline=zynthian_gui_config.color_ml, width=2)
         if self.shown and self.zyngui.tts:
             self.zyngui.tts.announce(self.config[self.selected_node]["title"])
 

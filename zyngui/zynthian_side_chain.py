@@ -151,9 +151,9 @@ class zynthian_side_chain(tkinter.Canvas):
 
     def bypass_cb(self, zctrl):
         if zctrl.processor.is_bypassed():
-            col = "#b0b0b0"
+            col = zynthian_gui_config.color_tx_off
         else:
-            col = "#ffffff"
+            col = zynthian_gui_config.color_tx
         for proc, node in self.bypass2node.items():
             if proc == zctrl.processor:
                 self.itemconfigure(node["text_id"], fill=col)
@@ -306,12 +306,12 @@ class zynthian_side_chain(tkinter.Canvas):
             node: The node object to be drawn.
         """
         # Colors
-        c_midi = "#805050"
-        c_synth = "#32a893"
-        c_audio = "#505080"
-        c_special = "#708050"
-        bg_col = "#505050"
-        fg_col = "#ffffff"
+        c_midi = zynthian_gui_config.color_chain_midi
+        c_synth = zynthian_gui_config.color_chain_synth
+        c_audio = zynthian_gui_config.color_chain_audio
+        c_special = zynthian_gui_config.color_chain_special
+        bg_col = zynthian_gui_config.color_off
+        fg_col = zynthian_gui_config.color_tx
 
         # Draw node background
         title = node.get("title")
@@ -339,7 +339,7 @@ class zynthian_side_chain(tkinter.Canvas):
                 case "Special":
                     bg_col = c_special
             if disabled:
-                fg_col = "#b0b0b0"
+                fg_col = zynthian_gui_config.color_tx_off
         node["id"] = self.create_rectangle(
             x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
             fill=bg_col, outline=bg_col, tags="node"
@@ -376,9 +376,9 @@ class zynthian_side_chain(tkinter.Canvas):
             y += self.BLOCK_HEIGHT
             if node_next and type(proc) != str and type(proc_next) != str and proc.type == proc_next.type and node["slot"] == node_next["slot"]:
                 x0 = x + self.BLOCK_WIDTH // 8
-                self.create_line(x0, y, x0, y + self.V_SPACING, fill="#AAAAAA", width=4, tags="lines")
+                self.create_line(x0, y, x0, y + self.V_SPACING, fill=zynthian_gui_config.color_tx_off, width=4, tags="lines")
                 x0 = x + 7 * self.BLOCK_WIDTH // 8
-                self.create_line(x0, y, x0, y + self.V_SPACING, fill="#AAAAAA", width=4, tags="lines")
+                self.create_line(x0, y, x0, y + self.V_SPACING, fill=zynthian_gui_config.color_tx_off, width=4, tags="lines")
             else:
                 is_src = node.get("is_src", False)
                 if node_next:
@@ -388,9 +388,9 @@ class zynthian_side_chain(tkinter.Canvas):
                 if is_src:
                     x0 = x + self.BLOCK_WIDTH // 2
                     if is_dst:
-                        self.create_line(x0, y, x0, y + self.V_SPACING, fill="#AAAAAA", width=4, tags="lines")
+                        self.create_line(x0, y, x0, y + self.V_SPACING, fill=zynthian_gui_config.color_tx_off, width=4, tags="lines")
                     else:
-                        self.create_line(x0, y, x0, y + self.V_SPACING // 2, fill="#AAAAAA", width=4, tags="lines")
+                        self.create_line(x0, y, x0, y + self.V_SPACING // 2, fill=zynthian_gui_config.color_tx_off, width=4, tags="lines")
 
             # TODO Manage parallel processors!!
 

@@ -75,7 +75,7 @@ class zynthian_gui_keyboard(zynthian_gui_fullscreen_modal):
         self.text_canvas.grid(column=0, row=0, sticky="nsew")
 
         # Display keyboard grid
-        self.key_canvas = tkinter.Canvas(self, bg="grey")
+        self.key_canvas = tkinter.Canvas(self, bg=zynthian_gui_config.color_bg)
         self.key_canvas.grid_propagate(False)
         self.key_canvas.grid(column=0, row=1, sticky="nesw")
         self.set_mode(OSK_QWERTY)
@@ -118,7 +118,7 @@ class zynthian_gui_keyboard(zynthian_gui_fullscreen_modal):
             self.btn_delete = self.add_button('Del', 7, row, 1)
             self.btn_enter = self.add_button('Enter', 8, row, 2)
         self.highlight_box = self.key_canvas.create_rectangle(
-            0, 0, self.key_width, self.key_height, outline="red", width=2)
+            0, 0, self.key_width, self.key_height, outline=zynthian_gui_config.color_hl, width=2)
         self.refresh_keys()
 
     # Function to draw keyboard
@@ -169,11 +169,11 @@ class zynthian_gui_keyboard(zynthian_gui_fullscreen_modal):
                                              self.key_width * (col + colspan) - 1,
                                              self.key_height * (row + 1) - 1,
                                              tags=(tag),
-                                             fill="black")
+                                             fill=zynthian_gui_config.color_panel_hl)
         l = self.key_canvas.create_text(1 + self.key_width * (col + colspan / 2),
                                         1 + self.key_height * (row + 0.5),
                                         text=label,
-                                        fill="white",
+                                        fill=zynthian_gui_config.color_tx,
                                         font=self.font_button,
                                         tags=(tag))
         self.key_canvas.tag_bind(tag, "<Button-1>", self.on_key_press)
@@ -241,9 +241,9 @@ class zynthian_gui_keyboard(zynthian_gui_fullscreen_modal):
         elif key == self.btn_alt:
             self.alt = not self.alt
             if self.alt:
-                self.key_canvas.itemconfig(self.buttons[self.btn_alt][0], fill="red")
+                self.key_canvas.itemconfig(self.buttons[self.btn_alt][0], fill=zynthian_gui_config.color_on)
             else:
-                self.key_canvas.itemconfig(self.buttons[self.btn_alt][0], fill="black")
+                self.key_canvas.itemconfig(self.buttons[self.btn_alt][0], fill=zynthian_gui_config.color_panel_hl)
             self.refresh_keys()
 
         if key == self.btn_shift:
@@ -258,11 +258,11 @@ class zynthian_gui_keyboard(zynthian_gui_fullscreen_modal):
 
         if shift != self.shift:
             if self.shift == 1:
-                self.key_canvas.itemconfig(self.buttons[self.btn_shift][0], fill="grey")
+                self.key_canvas.itemconfig(self.buttons[self.btn_shift][0], fill=zynthian_gui_config.color_ml)
             elif self.shift == 2:
-                self.key_canvas.itemconfig(self.buttons[self.btn_shift][0], fill="red")
+                self.key_canvas.itemconfig(self.buttons[self.btn_shift][0], fill=zynthian_gui_config.color_on)
             else:
-                self.key_canvas.itemconfig(self.buttons[self.btn_shift][0], fill="black")
+                self.key_canvas.itemconfig(self.buttons[self.btn_shift][0], fill=zynthian_gui_config.color_panel_hl)
             self.refresh_keys()
 
         self.text_canvas.itemconfig(self.text_label, text=self.text)

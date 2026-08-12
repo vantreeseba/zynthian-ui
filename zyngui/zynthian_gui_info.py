@@ -58,10 +58,10 @@ class zynthian_gui_info(zynthian_gui_fullscreen_modal):
         # self.textarea.pack(fill="both", expand=True)
         self.textarea.grid(stick="news")
 
-        self.textarea.tag_config("ERROR", foreground="#C00000")
-        self.textarea.tag_config("WARNING", foreground="#FF9000")
-        self.textarea.tag_config("SUCCESS", foreground="#009000")
-        self.textarea.tag_config("EMPHASIS", foreground="#0000C0")
+        self.textarea.tag_config("ERROR", foreground=zynthian_gui_config.color_error)
+        self.textarea.tag_config("WARNING", foreground=zynthian_gui_config.color_warn)
+        self.textarea.tag_config("SUCCESS", foreground=zynthian_gui_config.color_hl)
+        self.textarea.tag_config("EMPHASIS", foreground=zynthian_gui_config.color_info)
 
     def clean(self):
         self.textarea.delete(1.0, tkinter.END)
