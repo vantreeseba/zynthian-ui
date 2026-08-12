@@ -43,7 +43,7 @@ class zynthian_gui_loading(zynthian_gui_fullscreen_modal):
         # Canvas for loading image animation
         self.canvas = tkinter.Canvas(
             self,
-            bg=zynthian_gui_config.color_bg,
+            bg="#000000",  # Pure black to match the logo artwork's background
             bd=0,
             highlightthickness=0)
         self.title_text = self.canvas.create_text(
