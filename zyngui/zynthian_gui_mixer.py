@@ -671,7 +671,7 @@ class zynthian_gui_mixer_strip():
             # Fader
             # Fader level fill: square top edge marks the level, rounded bottom corners
             self.fader_overlay = zynthian_gui_config.create_round_rect(self.canvas, x, self.fader_y, x + self.fader_width, self.legend_y, radius=zynthian_gui_config.corner_radius, corners=(False, False, True, True), fill=self.gui_mixer.fader_color, width=0, tags=("fader", "fader_overlay", f"fader_{id}"))
-            self.fader_horizontal = self.canvas.create_rectangle(x, self.fader_y, x + self.width, self.fader_y + self.balance_height, fill=self.gui_mixer.fader_color, width=0, tags=("fader_horizontal",), state=tkinter.HIDDEN)
+            self.fader_horizontal = self.canvas.create_rectangle(x + 1, self.fader_y, x + self.width - 1, self.fader_y + self.balance_height, fill=self.gui_mixer.fader_color, width=0, tags=("fader_horizontal",), state=tkinter.HIDDEN)
 
             # DPM
             if self.chain.chain_id:
@@ -900,8 +900,8 @@ class zynthian_gui_mixer_strip():
                     self.x + self.fader_width, self.legend_y,
                     zynthian_gui_config.corner_radius, corners=(False, False, True, True)))
             self.canvas.coords(self.fader_horizontal,
-                self.x, self.fader_y,
-                self.x + self.width * level, self.fader_y + self.balance_height)
+                self.x + 1, self.fader_y,
+                self.x + 1 + (self.width - 2) * level, self.fader_y + self.balance_height)
 
     def draw_fader_text(self):
         label_parts = self.chain.get_description(2).split("\n") + [""]
@@ -1347,6 +1347,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
             self.visible_chains = zynthian_gui_config.visible_mixer_strips
 
         self.strip_width = int(self.width / (self.visible_chains + 0.2))
+        self.strip_gap = 2  # Gutter between strips, matching the gap between the button chips
         self.loop_info_width = int(LOOP_INFO_WIDTH * self.strip_width)
         self.button_height = int(self.height * 0.07)
         self.legend_height = int(self.height * 0.08)
@@ -1449,7 +1450,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
             else:
                 width = self.strip_width
             # Create the strip objects
-            strip = zynthian_gui_mixer_strip(self, canvas, x0, width, self.height, chain, self.launcher_mode)
+            strip = zynthian_gui_mixer_strip(self, canvas, x0, width - self.strip_gap, self.height, chain, self.launcher_mode)
             x0 += self.strip_width
             self.chain_strips.append(strip)
             # Add to optimisation map
