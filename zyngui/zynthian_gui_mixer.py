@@ -650,8 +650,9 @@ class zynthian_gui_mixer_strip():
         #Create GUI elements
         id = self.chain.chain_id
 
-        # Block background to hide scrolling launchers, etc.
-        self.audio_bg = self.canvas.create_rectangle(x, self.toggle_y, x + self.width, parent.launcher_y, fill=self.gui_mixer.button_bgcol, width=0)
+        # Block background to hide scrolling launchers, etc. Window ground,
+        # not panel: the button chips above it carry the raised color.
+        self.audio_bg = self.canvas.create_rectangle(x, self.toggle_y, x + self.width, parent.launcher_y, fill=zynthian_gui_config.color_bg, width=0)
         # Fader background defines height of fader
         self.fader_bg = self.canvas.create_rectangle(x, self.fader_y, x + self.width, self.legend_y, fill=self.gui_mixer.fader_bg_color, width=0, tags=("fader", f"fader_{id}"))
         # Audio mixer elements
@@ -1222,14 +1223,14 @@ class zynthian_gui_mixer(zynthian_gui_base):
             self.main_frame,
             bd=0,
             highlightthickness=0,
-            bg=zynthian_gui_config.color_panel_bg
+            bg=zynthian_gui_config.color_bg
         )
         self.left_canvas.grid(row=0, column=0, sticky="news")
         self.right_canvas = tkinter.Canvas(
             self.main_frame,
             bd=0,
             highlightthickness=0,
-            bg=zynthian_gui_config.color_panel_bg
+            bg=zynthian_gui_config.color_bg
         )
         self.right_canvas.grid(row=0, column=1, sticky="nes", padx=(4,0))
 
@@ -1367,7 +1368,9 @@ class zynthian_gui_mixer(zynthian_gui_base):
         self.legend_bg_color_hl = zynthian_gui_config.color_select_bg
         self.main_legend_bg_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_low_on, -80)
         self.bus_legend_bg_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_midi, -120)
-        self.button_bgcol = zynthian_gui_config.color_panel_bg
+        # Buttons sit one layer above the window ground so they read as
+        # tappable chips; the strip backdrop stays on the window ground.
+        self.button_bgcol = zynthian_gui_config.color_panel_hl
         self.button_txcol = zynthian_gui_config.color_tx
         self.balance_bg_color = zynthian_gui_config.color_off
         self.balance_fg_color = zynthian_gui_config.color_hl

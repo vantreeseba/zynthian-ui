@@ -630,7 +630,7 @@ color_select_bg = color_scale(color_ml, 0.30)     # dark amber row fill behind b
 # Color Scheme
 color_panel_bd = color_bg
 color_panel_tx = color_tx
-color_header_bg = color_panel_bg  # Topbar sits on a raised surface, not the window bg
+color_header_bg = color_panel_hl  # Topbar is the topmost layer: one step above panels so it reads as a distinct bar
 color_header_tx = color_tx
 color_ctrl_bg_off = color_off
 color_ctrl_bg_on = color_on
