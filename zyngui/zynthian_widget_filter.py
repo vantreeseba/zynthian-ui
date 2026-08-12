@@ -35,7 +35,7 @@ class zynthian_widget_filter(zynthian_widget_base.zynthian_widget_base):
     def __init__(self, parent):
         super().__init__(parent)
         self.fg_color = zynthian_gui_config.color_tx
-        self.font_small = ("sans", 10)
+        self.font_small = (zynthian_gui_config.font_family, zynthian_gui_config.font_size_small)
 
         # Take only half height
         self.rows //= 2

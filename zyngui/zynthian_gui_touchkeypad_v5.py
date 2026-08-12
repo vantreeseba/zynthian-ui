@@ -187,7 +187,7 @@ class zynthian_gui_touchkeypad_v5(tkinter.Canvas):
             # Button has a simple text label: either standard text
             # or an icon included in the "forkawesome" font (unicode char >= \uf000)
             if label[0] >= '\uf000':
-                font_family = "forkawesome"
+                font_family = zynthian_gui_config.font_family_icons
                 font_size = int(1.5 * zynthian_gui_config.font_size)
             else:
                 font_family = zynthian_gui_config.font_family

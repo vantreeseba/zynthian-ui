@@ -255,7 +255,7 @@ class zynthian_gui_base(tkinter.Frame):
             int(self.status_l - self.status_fs * 1.3), 0,
             anchor=tkinter.NE,
             fill=zynthian_gui_config.color_status_error,
-            font=("forkawesome", self.status_fs),
+            font=(zynthian_gui_config.font_family_icons, self.status_fs),
             text="\uf32f",
             state=tkinter.HIDDEN)
 
@@ -263,7 +263,7 @@ class zynthian_gui_base(tkinter.Frame):
             self.status_l, 0,
             anchor=tkinter.NE,
             fill=zynthian_gui_config.color_bg,
-            font=("forkawesome", self.status_fs),
+            font=(zynthian_gui_config.font_family_icons, self.status_fs),
             text="")
 
         self.status_audio_rec = self.status_canvas.create_text(
@@ -271,7 +271,7 @@ class zynthian_gui_base(tkinter.Frame):
             self.status_h - 2,
             anchor=tkinter.SW,
             fill=zynthian_gui_config.color_status_record,
-            font=("forkawesome", self.status_fs),
+            font=(zynthian_gui_config.font_family_icons, self.status_fs),
             text="\uf111",
             state=tkinter.HIDDEN)
 
@@ -280,7 +280,7 @@ class zynthian_gui_base(tkinter.Frame):
             self.status_h - 2,
             anchor=tkinter.SW,
             fill=zynthian_gui_config.color_status_play,
-            font=("forkawesome", self.status_fs),
+            font=(zynthian_gui_config.font_family_icons, self.status_fs),
             text="\uf04b",
             state=tkinter.HIDDEN)
 
@@ -289,7 +289,7 @@ class zynthian_gui_base(tkinter.Frame):
             self.status_h - 2,
             anchor=tkinter.SW,
             fill=zynthian_gui_config.color_status_play_midi,
-            font=("forkawesome", self.status_fs),
+            font=(zynthian_gui_config.font_family_icons, self.status_fs),
             text="\uf111",
             state=tkinter.HIDDEN)
 
@@ -298,7 +298,7 @@ class zynthian_gui_base(tkinter.Frame):
             self.status_h - 2,
             anchor=tkinter.SW,
             fill=zynthian_gui_config.color_status_play_midi,
-            font=("forkawesome", self.status_fs),
+            font=(zynthian_gui_config.font_family_icons, self.status_fs),
             text="\uf04b",
             state=tkinter.HIDDEN
         )
@@ -308,7 +308,7 @@ class zynthian_gui_base(tkinter.Frame):
             self.status_h - 2,
             anchor=tkinter.SW,
             fill=zynthian_gui_config.color_status_play_seq,
-            font=("forkawesome", self.status_fs),
+            font=(zynthian_gui_config.font_family_icons, self.status_fs),
             text="\uf111",
             state=tkinter.HIDDEN
         )
@@ -318,7 +318,7 @@ class zynthian_gui_base(tkinter.Frame):
             self.status_h - 2,
             anchor=tkinter.SW,
             fill=zynthian_gui_config.color_status_play_seq,
-            font=("forkawesome", self.status_fs),
+            font=(zynthian_gui_config.font_family_icons, self.status_fs),
             text="\uf04b",
             state=tkinter.HIDDEN)
 
@@ -343,7 +343,7 @@ class zynthian_gui_base(tkinter.Frame):
             self.status_h - 2,
             anchor=tkinter.SW,
             fill=zynthian_gui_config.color_status_play_seq,
-            font=("forkawesome", self.status_fs),
+            font=(zynthian_gui_config.font_family_icons, self.status_fs),
             text="",
             state=tkinter.HIDDEN)
 
@@ -352,7 +352,7 @@ class zynthian_gui_base(tkinter.Frame):
             self.status_h - 2,
             anchor=tkinter.SE,
             fill=zynthian_gui_config.color_status_midi,
-            font=("forkawesome", self.status_fs),
+            font=(zynthian_gui_config.font_family_icons, self.status_fs),
             text="m",
             state=tkinter.HIDDEN)
 
@@ -416,16 +416,17 @@ class zynthian_gui_base(tkinter.Frame):
                 flags = "\uf769"
             else:
                 cpu_load = self.state_manager.status_cpu_load
-                if cpu_load < 50:
-                    cr = 0
-                    cg = 0xCC
-                elif cpu_load < 75:
-                    cr = int((cpu_load - 50) * 0XCC / 25)
-                    cg = 0xCC
+                # Heat ramp through the palette accents: play-green up to 50%,
+                # blending to amber at 75% and record-red at 100%. t is
+                # quantized to keep the color_blend memo table small.
+                if cpu_load < 75:
+                    t = round(max(0.0, (cpu_load - 50) / 25), 2)
+                    color = zynthian_gui_config.color_blend(
+                        zynthian_gui_config.color_hl, zynthian_gui_config.color_ml, t)
                 else:
-                    cr = 0xCC
-                    cg = int((100 - cpu_load) * 0xCC / 25)
-                color = "#%02x%02x%02x" % (cr, cg, 0)
+                    t = round(min(1.0, (cpu_load - 75) / 25), 2)
+                    color = zynthian_gui_config.color_blend(
+                        zynthian_gui_config.color_ml, zynthian_gui_config.color_on, t)
                 if self.state_manager.update_available:
                     flags = "\u21bb"
                 else:

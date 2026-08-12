@@ -26,6 +26,7 @@
 import os
 import sys
 import logging
+from functools import lru_cache
 
 # Zynthian specific modules
 import zynconf
@@ -520,6 +521,81 @@ def get_external_storage_dirs(exdpath):
 # ------------------------------------------------------------------------------
 
 
+# All color helpers are pure and memoized: call sites in refresh loops
+# (CPU heat ramp, strip highlights) must not re-derive colors every frame.
+@lru_cache(maxsize=None)
+def get_color_relux(hex_color):
+    if len(hex_color) != 7:
+        raise Exception("Passed %s into get_color_relux2(), needs to be in #RRGGBB format." % hex_color)
+    R, G, B = [int(hex_color[x:x + 2], 16) for x in [1, 3, 5]]
+    if R <= 10:
+        Rg = R / 3294.0
+    else:
+        Rg = (R / 269.0 + 0.0513) ** 2.4
+    if G <= 10:
+        Gg = G / 3294.0
+    else:
+        Gg = (G / 269.0 + 0.0513) ** 2.4
+    if B <= 10:
+        Bg = B / 3294.0
+    else:
+        Bg = (B / 269.0 + 0.0513) ** 2.4
+    return 0.2126 * Rg + 0.7152 * Gg + 0.0722 * Bg
+
+@lru_cache(maxsize=None)
+def get_color_lux(hex_color):
+    if len(hex_color) != 7:
+        raise Exception("Passed %s into get_color_relux(), needs to be in #RRGGBB format." % hex_color)
+    R, G, B = [int(hex_color[x:x + 2], 16) for x in [1, 3, 5]]
+    # Counting the perceptive luminance - human eye favors green color...
+    return (0.299 * R + 0.587 * G + 0.114 * B) / 255.0;
+
+@lru_cache(maxsize=None)
+def get_contrast_ratio(hex_color1, hex_color2):
+    L1 = get_color_relux(hex_color1)
+    L2 = get_color_relux(hex_color2)
+    if L1 > L2:
+        return (L1 + 0.05) / (L2 + 0.05)
+    else:
+        return (L2 + 0.05) / (L1 + 0.05)
+
+@lru_cache(maxsize=None)
+def color_variant(hex_color, brightness_offset=1):
+    """ takes a color like #87c95f and produces a lighter or darker variant """
+    if len(hex_color) != 7:
+        raise Exception("Passed %s into color_variant(), needs to be in #RRGGBB format." % hex_color)
+    rgb_int = [int(hex_color[x:x + 2], 16) for x in [1, 3, 5]]
+    new_rgb_int = [val + brightness_offset for val in rgb_int]
+    # make sure new values are between 0 and 255
+    new_rgb_int = [min(255, max(0, i)) for i in new_rgb_int]
+    # hex() produces "0x88", we want just "88"
+    return "#" + "".join([hex(i)[2:].zfill(2) for i in new_rgb_int])
+
+@lru_cache(maxsize=None)
+def color_scale(hex_color, brightness_scale=1.0):
+    """ takes a color like #87c95f and produces a lighter or darker variant """
+    if len(hex_color) != 7:
+        raise Exception("Passed %s into color_scale(), needs to be in #87c95f format." % hex_color)
+    rgb_int = [int(hex_color[x:x + 2], 16) for x in [1, 3, 5]]
+    new_rgb_int = [int(val * brightness_scale) for val in rgb_int]
+    # make sure new values are between 0 and 255
+    new_rgb_int = [min(255, i) for i in new_rgb_int]
+    # hex() produces "0x88", we want just "88"
+    return "#" + "".join([hex(i)[2:].zfill(2) for i in new_rgb_int])
+
+@lru_cache(maxsize=None)
+def hex_rgb(hex_color):
+    """ '#RRGGBB' -> (r, g, b) int tuple """
+    return tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+
+@lru_cache(maxsize=None)
+def color_blend(hex_color1, hex_color2, t):
+    """ Linear blend between two colors, t in [0, 1]. Quantize t at the call
+    site (e.g. round(t, 2)) so the memo table stays small. """
+    rgb1 = hex_rgb(hex_color1)
+    rgb2 = hex_rgb(hex_color2)
+    return "#" + "".join("%02x" % int(a + (b - a) * t) for a, b in zip(rgb1, rgb2))
+
 color_bg = os.environ.get('ZYNTHIAN_UI_COLOR_BG', "#121212")
 color_tx = os.environ.get('ZYNTHIAN_UI_COLOR_TX', "#f2f2f2")
 color_tx_off = os.environ.get('ZYNTHIAN_UI_COLOR_TX_OFF', "#b0b0b0")
@@ -536,6 +612,18 @@ color_alt = os.environ.get('ZYNTHIAN_UI_COLOR_ALT', "#ba68c8")
 color_alt2 = os.environ.get('ZYNTHIAN_UI_COLOR_ALT2', "#ff9800")
 color_error = os.environ.get('ZYNTHIAN_UI_COLOR_ERROR', "#ef5350")
 color_warn = os.environ.get('ZYNTHIAN_UI_COLOR_WARN', "#ff9800")
+
+# Surface elevation stack (Material dark style: lighter fill = raised surface).
+# Every opaque background in the UI should come from one of these four steps.
+color_surface_0 = color_bg                        # window / screen ground
+color_surface_1 = color_panel_bg                  # panels, cards, list bodies
+color_surface_2 = color_panel_hl                  # raised rows, separators
+color_surface_3 = color_variant(color_panel_hl, 18)  # active / pressed / selected rows
+
+# Selection accent: amber marks the selected/focused item everywhere.
+# Red (color_on) is reserved for record/danger, green (color_hl) for play.
+color_select = color_ml
+color_select_bg = color_scale(color_ml, 0.30)     # dark amber row fill behind bright text
 
 # Color Scheme
 color_panel_bd = color_bg
@@ -560,19 +648,24 @@ color_chain_synth = os.environ.get('ZYNTHIAN_UI_COLOR_CHAIN_SYNTH', "#32a893")
 color_chain_audio = os.environ.get('ZYNTHIAN_UI_COLOR_CHAIN_AUDIO', "#505080")
 color_chain_special = os.environ.get('ZYNTHIAN_UI_COLOR_CHAIN_SPECIAL', "#708050")
 
-# Level meter colors
-color_meter_low = "#4caf50"
-color_meter_low_hold = "#81c784"
-color_meter_high = "#ffd54f"
-color_meter_high_hold = "#ffe082"
-color_meter_over = "#e53935"
-color_meter_over_hold = "#ef5350"
+# Level meter colors: body colors follow the semantic accents (play-green,
+# highlight-amber, record-red); holds are lighter variants of each.
+color_meter_low = color_hl
+color_meter_low_hold = color_variant(color_hl, 50)
+color_meter_high = color_ml
+color_meter_high_hold = color_variant(color_ml, 45)
+color_meter_over = color_on
+color_meter_over_hold = color_error
+# Meter track (unlit area) must be darker than color_panel_bg so the
+# meter remains visible against the fader background when idle.
+color_meter_bg = "#0a0a0a"
 
 # ------------------------------------------------------------------------------
 # Font Family
 # ------------------------------------------------------------------------------
 
 font_family = os.environ.get('ZYNTHIAN_UI_FONT_FAMILY', "Exo 2")
+font_family_icons = "forkawesome"  # status glyphs and inline icons
 # font_family = "Audiowide" #=> the classic zynthian look
 # font_family = "Rajdhani" #=> good narrow alternative
 # font_family = "Helvetica" #=> the original ;-)
@@ -625,6 +718,12 @@ power_save_secs = 60 * get_env_int('ZYNTHIAN_UI_POWER_SAVE_MINUTES', 60)
 audio_power_threshold = get_env_int('ZYNTHIAN_UI_AUDIO_POWER_THRESHOLD', -40)
 preset_preload = get_env_int('ZYNTHIAN_UI_PRESET_PRELOAD', 1)
 mixer_toggle = os.environ.get('ZYNTHIAN_UI_MIXER_TOGGLE', "record")
+
+# UI refresh rates (Hz). ui_fps drives the fast widget/controller refresh
+# loop. ui_status_fps drives the slower status loop: DPM meters, beat
+# counter, pattern editor playhead, MIDI activity. Higher rates cost CPU.
+ui_fps = max(1, min(60, get_env_int('ZYNTHIAN_UI_FPS', 30)))
+ui_status_fps = max(1, min(60, get_env_int('ZYNTHIAN_UI_STATUS_FPS', 10)))
 
 # ------------------------------------------------------------------------------
 # Audio Options
@@ -682,16 +781,16 @@ experimental_features = os.environ.get('ZYNTHIAN_EXPERIMENTAL_FEATURES', "").spl
 # Sequence states
 # ------------------------------------------------------------------------------
 
-PAD_COLOUR_DISABLED = '#505050'
-PAD_COLOUR_STATE_DISABLED = '#A0A0A0'
-PAD_COLOUR_EMPTY = '#707070'
-PAD_COLOUR_STARTING = '#FFBB00'
-PAD_COLOUR_PLAYING = '#00FF00'
-PAD_COLOUR_STOPPING = '#FF0000'
-PAD_COLOUR_STOPPED = '#E0E0E0'
-PAD_COLOUR_PHRASE = '#707070'
-PAD_COLOUR_REC_ARMED = '#A00000'
-PAD_COLOUR_RECORDING = '#FF2020'
+PAD_COLOUR_DISABLED = color_panel_hl
+PAD_COLOUR_STATE_DISABLED = color_tx_off
+PAD_COLOUR_EMPTY = color_variant(color_off, 48)  # lightened inactive surface
+PAD_COLOUR_STARTING = color_ml
+PAD_COLOUR_PLAYING = color_hl
+PAD_COLOUR_STOPPING = color_on
+PAD_COLOUR_STOPPED = color_tx
+PAD_COLOUR_PHRASE = color_variant(color_off, 48)
+PAD_COLOUR_REC_ARMED = color_low_on
+PAD_COLOUR_RECORDING = color_error
 LAUNCHER_COLOUR = [
     # MIDI Channels 1..16 (offset 0..15)
     {"rgb": "#0000FF", "launchpad": 79,  "apc": 45, "apc_mk1": 3},  #1:blue
@@ -732,65 +831,54 @@ LAUNCHER_COLOUR = [
 ]
 #TODO: Choose clip launcher colours (currently just reversed 1-16)
 
+def get_chain_color(chan):
+    """ Stable identity hue for a chain, used consistently across screens
+    (mixer legend accent, chain manager, pattern editor) and matching the
+    launcher pad / hardware controller LED colour for the same channel.
+    chan: chain.midi_chan (0-15), launcher group (16-31) or None/32 for main.
+    """
+    if chan is None:
+        chan = 32
+    return LAUNCHER_COLOUR[min(chan, len(LAUNCHER_COLOUR) - 1)]["rgb"]
+
 LAUNCHER_PLAYING_COLOUR = {"rgb": "#009000", "launchpad": 21, "apc": 87, "apc_mk1": 3} #green
 LAUNCHER_STARTING_COLOUR = {"rgb": "#009000", "launchpad": 21, "apc": 87, "apc_mk1": 3} #green
 LAUNCHER_STOPPING_COLOUR = {"rgb": "#D00000", "launchpad": 5, "apc": 72, "apc_mk1": 1} #red
 LAUNCHER_REC_COLOUR = {"rgb": "#FF2020", "launchpad": 5, "apc": 72, "apc_mk1": 1} #red (clip recording)
 
-def get_color_relux(hex_color):
-    if len(hex_color) != 7:
-        raise Exception("Passed %s into get_color_relux2(), needs to be in #RRGGBB format." % hex_color)
-    R, G, B = [int(hex_color[x:x + 2], 16) for x in [1, 3, 5]]
-    if R <= 10:
-        Rg = R / 3294.0
+def round_rect_points(x0, y0, x1, y1, radius, corners=(True, True, True, True)):
+    """ Point list for a rounded rectangle drawn as a smoothed polygon.
+    corners selects which to round: (top-left, top-right, bottom-right,
+    bottom-left). Use with canvas.coords() to move/resize an existing item. """
+    r = min(radius, abs(x1 - x0) // 2, abs(y1 - y0) // 2)
+    tl, tr, br, bl = corners
+    points = []
+    if tl:
+        points += [x0 + r, y0]
     else:
-        Rg = (R / 269.0 + 0.0513) ** 2.4
-    if G <= 10:
-        Gg = G / 3294.0
+        points += [x0, y0, x0, y0]
+    if tr:
+        points += [x1 - r, y0, x1, y0, x1, y0 + r]
     else:
-        Gg = (G / 269.0 + 0.0513) ** 2.4
-    if B <= 10:
-        Bg = B / 3294.0
+        points += [x1, y0, x1, y0]
+    if br:
+        points += [x1, y1 - r, x1, y1, x1 - r, y1]
     else:
-        Bg = (B / 269.0 + 0.0513) ** 2.4
-    return 0.2126 * Rg + 0.7152 * Gg + 0.0722 * Bg
-
-def get_color_lux(hex_color):
-    if len(hex_color) != 7:
-        raise Exception("Passed %s into get_color_relux(), needs to be in #RRGGBB format." % hex_color)
-    R, G, B = [int(hex_color[x:x + 2], 16) for x in [1, 3, 5]]
-    # Counting the perceptive luminance - human eye favors green color...
-    return (0.299 * R + 0.587 * G + 0.114 * B) / 255.0;
-
-def get_contrast_ratio(hex_color1, hex_color2):
-    L1 = get_color_relux(hex_color1)
-    L2 = get_color_relux(hex_color2)
-    if L1 > L2:
-        return (L1 + 0.05) / (L2 + 0.05)
+        points += [x1, y1, x1, y1]
+    if bl:
+        points += [x0 + r, y1, x0, y1, x0, y1 - r]
     else:
-        return (L2 + 0.05) / (L1 + 0.05)
+        points += [x0, y1, x0, y1]
+    if tl:
+        points += [x0, y0 + r, x0, y0]
+    return points
 
-def color_variant(hex_color, brightness_offset=1):
-    """ takes a color like #87c95f and produces a lighter or darker variant """
-    if len(hex_color) != 7:
-        raise Exception("Passed %s into color_variant(), needs to be in #RRGGBB format." % hex_color)
-    rgb_int = [int(hex_color[x:x + 2], 16) for x in [1, 3, 5]]
-    new_rgb_int = [val + brightness_offset for val in rgb_int]
-    # make sure new values are between 0 and 255
-    new_rgb_int = [min(255, max(0, i)) for i in new_rgb_int]
-    # hex() produces "0x88", we want just "88"
-    return "#" + "".join([hex(i)[2:].zfill(2) for i in new_rgb_int])
-
-def color_scale(hex_color, brightness_scale=1.0):
-    """ takes a color like #87c95f and produces a lighter or darker variant """
-    if len(hex_color) != 7:
-        raise Exception("Passed %s into color_scale(), needs to be in #87c95f format." % hex_color)
-    rgb_int = [int(hex_color[x:x + 2], 16) for x in [1, 3, 5]]
-    new_rgb_int = [int(val * brightness_scale) for val in rgb_int]
-    # make sure new values are between 0 and 255
-    new_rgb_int = [min(255, i) for i in new_rgb_int]
-    # hex() produces "0x88", we want just "88"
-    return "#" + "".join([hex(i)[2:].zfill(2) for i in new_rgb_int])
+def create_round_rect(canvas, x0, y0, x1, y1, radius, corners=(True, True, True, True), **kwargs):
+    """ Draw a rounded rectangle on a Tk canvas as a smoothed polygon.
+    Returns the canvas item id. Accepts the same options as create_polygon
+    (fill, outline, width, tags, ...). Unlike create_rectangle, the default
+    outline is empty, so pass outline explicitly if a border is wanted. """
+    return canvas.create_polygon(round_rect_points(x0, y0, x1, y1, radius, corners), smooth=True, **kwargs)
 
 for i, value in enumerate(LAUNCHER_COLOUR):
     LAUNCHER_COLOUR[i]["rgb_light"] = color_variant(value["rgb"], 40)
@@ -901,19 +989,35 @@ if "zynthian_main.py" in sys.argv[0]:
             topbar_height = screen_height // 10
             topbar_fs = int(1.1*font_size)
 
+        # Typographic scale. All UI text should use one of these named sizes
+        # (or the matching font tuples below) instead of ad-hoc multipliers:
+        #   xs    - fine print: pad time signatures, meter scale ticks
+        #   small - secondary labels: controller names, strip legends
+        #   base  - body text: lists, buttons
+        #   large - emphasized values: controller readouts
+        #   title - screen titles (topbar)
+        font_size_xs = max(8, int(0.62 * font_size))
+        font_size_small = max(9, int(0.8 * font_size))
+        font_size_base = font_size
+        font_size_large = int(1.25 * font_size)
+        font_size_title = topbar_fs
+
         # Global fonts
-        font_listbox = (font_family, int(1.0*font_size))
-        font_topbar = (font_family, topbar_fs)
+        font_listbox = (font_family, font_size_base)
+        font_topbar = (font_family, font_size_title)
         font_family_mono = "Inconsolata"
-        font_body = (font_family, font_size)
-        font_small = (font_family, int(0.8*font_size))
-        font_bold = (font_family, font_size, "bold")
-        font_mono = (font_family_mono, font_size)
+        font_body = (font_family, font_size_base)
+        font_small = (font_family, font_size_small)
+        font_xs = (font_family, font_size_xs)
+        font_large = (font_family, font_size_large)
+        font_bold = (font_family, font_size_base, "bold")
+        font_mono = (font_family_mono, font_size_base)
 
         # Spacing scale (display-proportional via font_size)
         pad_xs = max(1, font_size // 8)
         pad_sm = max(2, font_size // 4)
         pad_md = max(4, font_size // 2)
+        corner_radius = max(3, font_size // 4)
 
         # ------------------------------------------------------------------------------
         # Setup Root Frame for the GUI
@@ -922,7 +1026,7 @@ if "zynthian_main.py" in sys.argv[0]:
         root_frame = tkinter.Frame(top,
                                   width=screen_width,
                                   height=screen_height,
-                                  bg="#000000")
+                                  bg=color_bg)
 
         # Configure columns
         root_frame.grid_propagate(False)

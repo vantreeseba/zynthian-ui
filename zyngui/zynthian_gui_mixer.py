@@ -32,6 +32,7 @@ from time import sleep
 from math import log10
 from threading import Timer
 from PIL import Image, ImageTk, ImageDraw, ImageFont
+from os import environ
 from os.path import basename, splitext
 
 # Zynthian specific modules
@@ -92,8 +93,11 @@ class zynthian_gui_launcher_pad():
 
         tags = ("launcher", "launcher_show", f"strip_{chain_id}", f"launcher_{chain_id}_{phrase}")
         # Launcher pad (background)
-        self.pad = self.canvas.create_rectangle(self.x, self.y, self.x + self.width - 1, self.y + self.height - 1,
+        self.pad = zynthian_gui_config.create_round_rect(self.canvas,
+                                                self.x + 1, self.y + 1, self.x + self.width - 2, self.y + self.height - 2,
+                                                radius=zynthian_gui_config.corner_radius,
                                                 width=2,
+                                                outline="",
                                                 fill=zynthian_gui_config.color_panel_bg,
                                                 tags=(*tags, "launcher_pad"))
         if chain_id == 0:
@@ -172,7 +176,7 @@ class zynthian_gui_launcher_pad():
     def highlight(self):
         """ Show selection cursor highlight"""
 
-        self.canvas.itemconfig(self.pad, outline=zynthian_gui_config.color_ml)
+        self.canvas.itemconfig(self.pad, outline=zynthian_gui_config.color_select)
 
     def get_pattern_length(self, beats, bpb):
         if not bpb:
@@ -593,18 +597,19 @@ class zynthian_gui_mixer_strip():
         # Audio mixer elements
         if self.chain.zynmixer_proc:
             # Toggle 1 button
-            self.toggle = self.canvas.create_rectangle(x, self.toggle_y, x + self.width, self.mute_y, fill=self.gui_mixer.button_bgcol, width=0, tags=(f"toggle_{id}",))
+            self.toggle = zynthian_gui_config.create_round_rect(self.canvas, x + 1, self.toggle_y + 1, x + self.width - 1, self.mute_y - 1, radius=zynthian_gui_config.corner_radius, fill=self.gui_mixer.button_bgcol, width=0, tags=(f"toggle_{id}",))
             self.toggle_text = self.canvas.create_text(x + self.width / 2, self.toggle_y + self.button_height * 0.5, text="S", fill=self.gui_mixer.button_txcol, font=self.gui_mixer.font, tags=(f"toggle_{id}",))
 
             # Mute button
-            self.mute = self.canvas.create_rectangle(x, self.mute_y, x + self.width, self.balance_y, fill=self.gui_mixer.button_bgcol, width=0, tags=(f"mute_{id}",))
+            self.mute = zynthian_gui_config.create_round_rect(self.canvas, x + 1, self.mute_y + 1, x + self.width - 1, self.balance_y - 1, radius=zynthian_gui_config.corner_radius, fill=self.gui_mixer.button_bgcol, width=0, tags=(f"mute_{id}",))
             self.mute_text = self.canvas.create_text(x + self.width / 2, self.mute_y + self.button_height * 0.5, text="M", fill=self.gui_mixer.button_txcol, font=self.gui_mixer.font, tags=(f"mute_{id}",))
 
             # Balance indicator
             self.balance_bg = self.canvas.create_rectangle(self.x + 1, self.balance_y, self.x + self.width - 1, self.fader_y, fill=self.gui_mixer.balance_bg_color, width=0, tags=(f"balance_{id}",))
             self.balance_fg = self.canvas.create_rectangle(self.centre_x - 1, self.balance_y, self.centre_x + 1, self.fader_y, fill=self.gui_mixer.balance_fg_color, width=0, tags=(f"balance_{id}",))
             # Fader
-            self.fader_overlay = self.canvas.create_rectangle(x, self.fader_y, x + self.fader_width, self.legend_y, fill=self.gui_mixer.fader_color, width=0, tags=("fader", "fader_overlay", f"fader_{id}"))
+            # Fader level fill: square top edge marks the level, rounded bottom corners
+            self.fader_overlay = zynthian_gui_config.create_round_rect(self.canvas, x, self.fader_y, x + self.fader_width, self.legend_y, radius=zynthian_gui_config.corner_radius, corners=(False, False, True, True), fill=self.gui_mixer.fader_color, width=0, tags=("fader", "fader_overlay", f"fader_{id}"))
             self.fader_horizontal = self.canvas.create_rectangle(x, self.fader_y, x + self.width, self.fader_y + self.balance_height, fill=self.gui_mixer.fader_color, width=0, tags=("fader_horizontal",), state=tkinter.HIDDEN)
 
             # DPM
@@ -642,6 +647,14 @@ class zynthian_gui_mixer_strip():
         self.legend_strip_bg = self.canvas.create_rectangle(x, self.gui_mixer.legend_y, x + self.width, self.gui_mixer.legend_y + self.legend_height - 2, width=0, fill=self.gui_mixer.legend_bg_color, tags=tags)
         self.legend_strip_txt = self.canvas.create_text(self.centre_x, self.gui_mixer.legend_y + self.legend_height / 2, fill=self.gui_mixer.legend_txt_color, text="-", tags=(f"legend_strip_{id}",), font=self.gui_mixer.font)
         self.legend_strip_midi_bg = self.canvas.create_rectangle(x, self.gui_mixer.legend_y + self.legend_height - 2, x + self.width, self.gui_mixer.legend_y + self.legend_height, width=0, fill=self.gui_mixer.legend_bg_color, tags=tags)
+        # Chain identity accent: same hue as the chain's launcher pads and
+        # controller LEDs. Deliberately not tagged "legend" so the bulk
+        # legend recolor in highlight_active_chain() leaves it alone.
+        if self.chain.chain_id:
+            self.legend_chain_accent = self.canvas.create_rectangle(
+                x, self.gui_mixer.legend_y, x + self.width, self.gui_mixer.legend_y + 3,
+                width=0, fill=zynthian_gui_config.get_chain_color(self.chan),
+                tags=(f"legend_strip_{id}",))
 
         # MIDI pedal indicators
         self.pedals = []
@@ -671,7 +684,8 @@ class zynthian_gui_mixer_strip():
         self.clip_progress = self.canvas.create_rectangle(x, self.gui_mixer.legend_y, x, self.gui_mixer.legend_y + 4, width=0, fill=self.gui_mixer.legend_txt_color, tags=(f"legend_strip_{id}",))
 
         # Indicators
-        self.record_indicator = self.canvas.create_text(x + 2, self.gui_mixer.legend_y + self.gui_mixer.legend_height - 16, text="⚫", fill=zynthian_gui_config.color_hl, anchor="sw", state=tkinter.HIDDEN)
+        # Record arm has no legend indicator: the strip's record toggle button
+        # already shows the armed state.
         self.play_indicator = self.canvas.create_text(x + 2, self.gui_mixer.legend_y + self.gui_mixer.legend_height - 2, text="⏹", fill=zynthian_gui_config.color_hl, anchor="sw", state=tkinter.HIDDEN)
 
         # Bind events to gui elements
@@ -741,12 +755,14 @@ class zynthian_gui_mixer_strip():
             db = max(-50, min(0, db))
             return (db + 50) / 50
 
-        c_low = (0, 200, 0)
-        c_zero = (200, 200, 200)
-        c_mid = (200, 200, 0)
-        c_high = (240, 0, 0)
+        c_low = zynthian_gui_config.hex_rgb(zynthian_gui_config.color_meter_low)
+        c_zero = zynthian_gui_config.hex_rgb(zynthian_gui_config.color_tx_off)
+        c_mid = zynthian_gui_config.hex_rgb(zynthian_gui_config.color_meter_high)
+        c_high = zynthian_gui_config.hex_rgb(zynthian_gui_config.color_meter_over)
         try:
-            font = ImageFont.truetype("Exo2-Regular.ttf", int(width * 0.6))
+            # PIL needs a filename, not a Tk family name: "Exo 2" -> "Exo2-Regular.ttf"
+            font_file = "".join(zynthian_gui_config.font_family.split()) + "-Regular.ttf"
+            font = ImageFont.truetype(font_file, int(width * 0.6))
         except OSError:
             font = ImageFont.truetype("DejaVuSans.ttf", int(width * 0.6))
         for db in (-40, -30, -20, -16, -13, -10, -7, -4, -1):
@@ -802,8 +818,10 @@ class zynthian_gui_mixer_strip():
         level = self.chain.zynmixer_proc.controllers_dict["level"].value
         if level is not None:
             self.canvas.coords(self.fader_overlay,
-                self.x, self.fader_y + self.gui_mixer.fader_height * (1 - level),
-                self.x + self.fader_width, self.legend_y)
+                *zynthian_gui_config.round_rect_points(
+                    self.x, self.fader_y + self.gui_mixer.fader_height * (1 - level),
+                    self.x + self.fader_width, self.legend_y,
+                    zynthian_gui_config.corner_radius, corners=(False, False, True, True)))
             self.canvas.coords(self.fader_horizontal,
                 self.x, self.fader_y,
                 self.x + self.width * level, self.fader_y + self.balance_height)
@@ -915,18 +933,6 @@ class zynthian_gui_mixer_strip():
 
             if control in [None, 'balance']:
                 self.draw_balance()
-
-            if control in [None, 'record']:
-                if self.chain.zynmixer_proc.controllers_dict['record'].value:
-                    if self.state_manager.audio_recorder.status:
-                        self.canvas.itemconfig(
-                            self.record_indicator, fill=self.gui_mixer.rec_color, state=tkinter.NORMAL)
-                    else:
-                        self.canvas.itemconfig(
-                            self.record_indicator, fill=self.gui_mixer.high_color, state=tkinter.NORMAL)
-                else:
-                    self.canvas.itemconfig(
-                        self.record_indicator, state=tkinter.HIDDEN)
 
             if control in [None, 'play']:
                 try:
@@ -1185,7 +1191,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
             int(self.status_l - self.status_fs * 3.5), 2,
             anchor=tkinter.NE,
             fill=zynthian_gui_config.color_header_tx,
-            font=("forkawesome", int(0.25 * self.status_h)),
+            font=(zynthian_gui_config.font_family, int(0.25 * self.status_h)),
             text="120.0 bpm",
             state=tkinter.NORMAL)
 
@@ -1193,7 +1199,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
             int(self.status_l - self.status_fs * 8.5), 2,
             anchor=tkinter.NE,
             fill=zynthian_gui_config.color_header_tx,
-            font=("forkawesome", int(0.25 * self.status_h)),
+            font=(zynthian_gui_config.font_family, int(0.25 * self.status_h)),
             text="1 | 4/4",
             state=tkinter.NORMAL)
 
@@ -1281,7 +1287,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         self.fader_color_hl = zynthian_gui_config.color_variant(zynthian_gui_config.color_off, 40)
         self.legend_txt_color = zynthian_gui_config.color_tx
         self.legend_bg_color = zynthian_gui_config.color_panel_bg
-        self.legend_bg_color_hl = zynthian_gui_config.color_on
+        self.legend_bg_color_hl = zynthian_gui_config.color_select_bg
         self.main_legend_bg_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_low_on, -80)
         self.bus_legend_bg_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_midi, -120)
         self.button_bgcol = zynthian_gui_config.color_panel_bg
@@ -1300,7 +1306,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         self.font_clip_title = (zynthian_gui_config.font_family, int(0.8 * font_size))
         self.font_clip_title_small = (zynthian_gui_config.font_family, int(0.65 * font_size))
         self.font_timebase = (zynthian_gui_config.font_family, int(0.5 * font_size))
-        self.font_icons = ("forkawesome", int(1.2 * font_size))
+        self.font_icons = (zynthian_gui_config.font_family_icons, int(1.2 * font_size))
 
         if zynthian_gui_config.visible_launchers < 1:
             # Automatic sizing if not defined in config
@@ -1331,7 +1337,8 @@ class zynthian_gui_mixer(zynthian_gui_base):
         self.mode_icons = {}
         for f in ("empty", "loopsync", "oneshot", "oneshotall"):
             try:
-                img = Image.open(f"/zynthian/zynthian-ui/icons/zynpad_mode_{f}.png")
+                ui_dir = environ.get('ZYNTHIAN_UI_DIR', "/zynthian/zynthian-ui")
+                img = Image.open(f"{ui_dir}/icons/zynpad_mode_{f}.png")
                 self.mode_icons[f] = ImageTk.PhotoImage(img.resize(iconsize))
             except:
                 self.mode_icons[f] = empty_icon
@@ -1368,6 +1375,16 @@ class zynthian_gui_mixer(zynthian_gui_base):
             # Add to optimisation map
             if chain.zynmixer_proc:
                 self.chan2strip[chain.zynmixer_proc.eng_code=="MR", chain.zynmixer_proc.mixer_chan] = self.chain_strips[idx]
+
+        # Empty-state hint: only pinned strips (main bus) exist, so the
+        # scrollable canvas would otherwise be a blank panel.
+        if self.scrollable_strips == 0 and not self.moving_chain:
+            hint_w = self.width - int(self.strip_width * self.chain_manager.get_pinned_count() + self.loop_info_width)
+            self.left_canvas.create_text(
+                hint_w // 2, self.height // 2,
+                text="No chains yet\nOpen the menu to add one",
+                font=self.font, justify="center",
+                fill=zynthian_gui_config.color_scale(zynthian_gui_config.color_tx_off, 0.6))
 
         #self.build_launchers()
         self.pending_build_launchers=True

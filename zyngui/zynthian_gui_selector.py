@@ -79,8 +79,8 @@ class zynthian_gui_selector(zynthian_gui_base):
             relief='flat',
             bg=self.lb_bg,
             fg=self.lb_fg,
-            selectbackground=zynthian_gui_config.color_ctrl_bg_on,
-            selectforeground=zynthian_gui_config.color_ctrl_tx,
+            selectbackground=zynthian_gui_config.color_select_bg,
+            selectforeground=zynthian_gui_config.color_tx,
             selectmode=tkinter.SINGLE)
 
         # Configure layout

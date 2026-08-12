@@ -52,7 +52,7 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
         self.BLOCK_WIDTH = 120  # Width of each processor block in pixels
         self.BLOCK_HEIGHT = 40  # Height of each processor block in pixels
         self.SPACING = 10  # Horizontal spacing between processor blocks in pixels
-        self.font = (zynthian_gui_config.font_family, int(0.065 * self.BLOCK_WIDTH))
+        self.font = (zynthian_gui_config.font_family, int(0.06 * self.BLOCK_WIDTH))
         self.icon_size = (8, 8)
 
         self.config = []  # List of dictionaries, each describing a button
@@ -145,7 +145,8 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
         for idx, node in enumerate(self.config):
             if node:
                 fill = zynthian_gui_config.color_panel_hl if node["action"] else zynthian_gui_config.color_panel_bg
-                self.canvas.create_rectangle(x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
+                zynthian_gui_config.create_round_rect(self.canvas, x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
+                    radius=2 * zynthian_gui_config.corner_radius,
                     fill=fill,
                     outline=fill,
                     tags=("node", f"node_{idx}"))
@@ -182,7 +183,7 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
         """
         self.canvas.itemconfig("node", outline="")
         node_tag = f"node_{self.selected_node}"
-        self.canvas.itemconfig(node_tag, outline=zynthian_gui_config.color_ml, width=2)
+        self.canvas.itemconfig(node_tag, outline=zynthian_gui_config.color_select, width=2)
         if self.shown and self.zyngui.tts:
             self.zyngui.tts.announce(self.config[self.selected_node]["title"])
 

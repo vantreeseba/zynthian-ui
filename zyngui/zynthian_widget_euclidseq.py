@@ -177,9 +177,9 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
         self.control_widgets = {}
         parent = self.controls_frame
     
-        label_font = tkFont.Font(family="TkFixedFont", size=10)
-        button_font = tkFont.Font(family="TkFixedFont", size=10, weight="bold")
-        channel_label_font = tkFont.Font(family="TkFixedFont", size=12, weight="bold")
+        label_font = tkFont.Font(family=zynthian_gui_config.font_family_mono, size=10)
+        button_font = tkFont.Font(family=zynthian_gui_config.font_family_mono, size=10, weight="bold")
+        channel_label_font = tkFont.Font(family=zynthian_gui_config.font_family_mono, size=12, weight="bold")
 
         # Create Mode button first
         mode_frame = tk.Frame(parent, bg=parent["bg"])
@@ -562,8 +562,8 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
             else: self.canvas.create_oval(x-6,y-6,x+6,y+6,outline=zynthian_gui_config.color_tx,width=2)
 
     def draw_labels(self):
-        note_font = ("TkFixedFont",int(10*self.scale/1.5),"bold")
-        chan_font = ("TkFixedFont",int(8*self.scale/1.5),"normal")
+        note_font = (zynthian_gui_config.font_family_mono, int(10*self.scale/1.5), "bold")
+        chan_font = (zynthian_gui_config.font_family_mono, int(8*self.scale/1.5), "normal")
         radius = 25*self.scale
 
         for k in range(self.channels):

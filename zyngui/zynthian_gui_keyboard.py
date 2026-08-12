@@ -118,7 +118,7 @@ class zynthian_gui_keyboard(zynthian_gui_fullscreen_modal):
             self.btn_delete = self.add_button('Del', 7, row, 1)
             self.btn_enter = self.add_button('Enter', 8, row, 2)
         self.highlight_box = self.key_canvas.create_rectangle(
-            0, 0, self.key_width, self.key_height, outline=zynthian_gui_config.color_hl, width=2)
+            0, 0, self.key_width, self.key_height, outline=zynthian_gui_config.color_select, width=2)
         self.refresh_keys()
 
     # Function to draw keyboard

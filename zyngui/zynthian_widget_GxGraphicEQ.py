@@ -53,7 +53,7 @@ class zynthian_widget_GxGraphicEQ(zynthian_widget_base.zynthian_widget_base):
         self.bar_width = 1
         self.tick_height = 1
         self.padx = 1
-        self.font_labels = ("monoid", 8)
+        self.font_labels = (zynthian_gui_config.font_family_mono, zynthian_gui_config.font_size_xs)
 
         self.widget_canvas = tkinter.Canvas(self,
                                             bd=0,
@@ -128,7 +128,7 @@ class zynthian_widget_GxGraphicEQ(zynthian_widget_base.zynthian_widget_base):
         self.tick_height = int(self.height / 80)
         self.padx = int((w % self.n_bands) / 2)
         self.font_labels_size = int(0.3 * self.bar_width)
-        self.font_labels = ("monoid", self.font_labels_size)
+        self.font_labels = (zynthian_gui_config.font_family_mono, self.font_labels_size)
         fpad = self.font_labels_size // 4
         x = self.padx + self.bar_width // 2
         # Update labels

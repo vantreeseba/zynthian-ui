@@ -41,7 +41,7 @@ from zyngui import zynthian_gui_config
 # ------------------------------------------------------------------------------
 
 # Local constants
-SELECT_BORDER = zynthian_gui_config.color_on
+SELECT_BORDER = zynthian_gui_config.color_select
 PLAYHEAD_CURSOR = zynthian_gui_config.color_on
 CANVAS_BACKGROUND = zynthian_gui_config.color_panel_bd
 GRID_LINE_WEAK = zynthian_gui_config.color_off
@@ -431,7 +431,12 @@ class zynthian_gui_pated_base(zynthian_gui_base):
         if not title:
             title = self.get_title()
         if not color_fg:
-            color_fg = zynthian_gui_config.color_panel_tx
+            # Chain identity accent: title takes the same hue as the chain's
+            # launcher pads, mixer legend and controller LEDs. Lifted towards
+            # white because some pad colours (e.g. pure blue) lack contrast
+            # as text on the dark header.
+            color_fg = zynthian_gui_config.color_variant(
+                zynthian_gui_config.get_chain_color(self.channel), 90)
         if not color_bg:
             color_bg = zynthian_gui_config.color_header_bg
         super().set_title(title, color_fg, color_bg, timeout)

@@ -340,8 +340,9 @@ class zynthian_side_chain(tkinter.Canvas):
                     bg_col = c_special
             if disabled:
                 fg_col = zynthian_gui_config.color_tx_off
-        node["id"] = self.create_rectangle(
-            x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
+        node["id"] = zynthian_gui_config.create_round_rect(
+            self, x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
+            radius=zynthian_gui_config.corner_radius,
             fill=bg_col, outline=bg_col, tags="node"
         )
         title, size = self.fit_text_to_box(title)
@@ -412,9 +413,9 @@ class zynthian_side_chain(tkinter.Canvas):
         if self.selected_index is None:
             self.selected_index = 0
         if self.moving_proc:
-            color = "yellow"
+            color = zynthian_gui_config.color_info
         else:
-            color = "white"
+            color = zynthian_gui_config.color_select
         try:
             node_id = self.nodes[self.selected_index]["id"]
             self.itemconfig(node_id, outline=color, width=2)

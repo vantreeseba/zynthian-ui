@@ -927,14 +927,14 @@ class zynthian_gui_pated_notes(zynthian_gui_pated_base):
         if mode == EVENT_DRAW_CP:
             cell_tag = f"cp_{step},{row}"
             cell_tags = (cell_tag, f"step{step}", "gridcell", "cp")
-            fill_colour = f"#{velocity_colour//2:02x}{velocity_colour:02x}{velocity_colour//2:02x}"
+            fill_colour = f"#{velocity_colour:02x}{velocity_colour:02x}{velocity_colour//3:02x}"
         else:
             cell_tag = f"pat_{step},{row}"
             cell_tags = (cell_tag, f"step{step}", "gridcell", "pat")
             if mode == EVENT_DRAW_SEL:
                 fill_colour = f"#{velocity_colour//2:02x}{velocity_colour//2:02x}{velocity_colour:02x}"
             else:
-                fill_colour = f"#{velocity_colour:02x}{velocity_colour:02x}{velocity_colour:02x}"
+                fill_colour = f"#{velocity_colour//2:02x}{velocity_colour:02x}{velocity_colour//2:02x}"
         if evdata.play_freq == 0 or evdata.play_chance == 0:
             stipple = 'gray12'
         else:

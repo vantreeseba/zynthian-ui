@@ -28,9 +28,9 @@ import logging
 from PIL import Image, ImageTk
 from tkinter import NORMAL, HIDDEN
 
-from zyngui.zynthian_gui_config import color_panel_bg, color_tx, color_tx_off, \
+from zyngui.zynthian_gui_config import color_tx, color_tx_off, \
     color_meter_low, color_meter_low_hold, color_meter_high, color_meter_high_hold, \
-    color_meter_over, color_meter_over_hold
+    color_meter_over, color_meter_over_hold, color_meter_bg
 
 
 class zynthian_gui_dpm():
@@ -79,7 +79,7 @@ class zynthian_gui_dpm():
         self.mono_color = color_tx_off
         self.mono_hold_color = color_tx
         self.line_color = color_tx_off
-        self.bg_color = color_panel_bg
+        self.bg_color = color_meter_bg
 
         self.hold_thickness = 1
         self.mono = 0

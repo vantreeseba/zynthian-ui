@@ -47,7 +47,7 @@ from zynlibs.zynseq import zynseq
 
 
 # Local constants
-SELECT_BORDER = zynthian_gui_config.color_on
+SELECT_BORDER = zynthian_gui_config.color_select
 PLAYHEAD_CURSOR = zynthian_gui_config.color_on
 CANVAS_BACKGROUND = zynthian_gui_config.color_panel_bg
 CELL_BACKGROUND = zynthian_gui_config.color_panel_bd

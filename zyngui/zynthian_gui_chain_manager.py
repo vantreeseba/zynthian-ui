@@ -494,10 +494,24 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
                     bg_col = c_special
             if disabled:
                 fg_col = zynthian_gui_config.color_tx_off
-        node["id"] = self.canvas.create_rectangle(
-            x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
+        node["id"] = zynthian_gui_config.create_round_rect(
+            self.canvas, x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
+            radius=zynthian_gui_config.corner_radius,
             fill=bg_col, outline=bg_col, tags="node"
         )
+        # Chain identity accent on the chain-title node: same hue as the
+        # chain's mixer legend and launcher pads. Left corners rounded to
+        # follow the node outline.
+        if proc == "chain_options" and node["chain_id"]:
+            try:
+                chan = self.chain_manager.chains[node["chain_id"]].midi_chan
+                zynthian_gui_config.create_round_rect(
+                    self.canvas, x, y, x + 5, y + self.BLOCK_HEIGHT,
+                    radius=zynthian_gui_config.corner_radius,
+                    corners=(True, False, False, True), width=0,
+                    fill=zynthian_gui_config.get_chain_color(chan))
+            except Exception:
+                pass
         title, size = self.fit_text_to_box(title)
         # Draw node text
         node["text_id"] = self.canvas.create_text(
@@ -564,8 +578,10 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
 
             if self.moving_chain and self.selected_node[0] == chain_idx:
                 # Highlight chain being moved
-                self.canvas.create_rectangle(
+                zynthian_gui_config.create_round_rect(
+                    self.canvas,
                     chain_offset - 1, 0, chain_offset + 1 + self.BLOCK_WIDTH, divider_height,
+                    radius=zynthian_gui_config.corner_radius,
                     outline=zynthian_gui_config.color_ml,
                     width=3,
                     fill="",
@@ -608,9 +624,9 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
         if not self.selected_node:
             self.selected_node = [0, 0, 0]
         if self.moving_proc:
-            color = "yellow"
+            color = zynthian_gui_config.color_info
         else:
-            color = "white"
+            color = zynthian_gui_config.color_select
         try:
             chain_idx, col_idx, row_idx = self.selected_node
             node_id = self.nodes[chain_idx][col_idx][row_idx]["id"]
