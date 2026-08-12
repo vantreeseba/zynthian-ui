@@ -28,7 +28,9 @@ import logging
 from PIL import Image, ImageTk
 from tkinter import NORMAL, HIDDEN
 
-from zyngui.zynthian_gui_config import color_panel_bg
+from zyngui.zynthian_gui_config import color_panel_bg, color_tx, color_tx_off, \
+    color_meter_low, color_meter_low_hold, color_meter_high, color_meter_high_hold, \
+    color_meter_over, color_meter_over_hold
 
 
 class zynthian_gui_dpm():
@@ -68,16 +70,16 @@ class zynthian_gui_dpm():
         self.zerodB = -10
 
         # Colors
-        self.low_color = "#00AA00"
-        self.low_hold_color = "#00FF00"
-        self.high_color = "#CCCC00"
-        self.high_hold_color = "#FFFF00"
-        self.over_color = "#CC0000"
-        self.over_hold_color = "#FF0000"
-        self.mono_color = "#DDDDDD"
-        self.mono_hold_color = "#FFFFFF"
-        self.line_color = "#999999"
-        self.bg_color = "#222222" #color_panel_bg
+        self.low_color = color_meter_low
+        self.low_hold_color = color_meter_low_hold
+        self.high_color = color_meter_high
+        self.high_hold_color = color_meter_high_hold
+        self.over_color = color_meter_over
+        self.over_hold_color = color_meter_over_hold
+        self.mono_color = color_tx_off
+        self.mono_hold_color = color_tx
+        self.line_color = color_tx_off
+        self.bg_color = color_panel_bg
 
         self.hold_thickness = 1
         self.mono = 0
@@ -97,7 +99,7 @@ class zynthian_gui_dpm():
         self.hold = parent.create_rectangle(*coords['hold'], width=0, fill=self.low_color, tags=tags, state=HIDDEN)
         self.zero_line = parent.create_line(*coords['line'], fill=self.line_color, tags=tags)
         if self.main:
-            self.over_indicator = parent.create_rectangle(*coords['over'], width=0, fill="#FF0000", state=HIDDEN)
+            self.over_indicator = parent.create_rectangle(*coords['over'], width=0, fill=self.over_hold_color, state=HIDDEN)
 
     # --------------------------------------------------
     # Helper to compute bounds
@@ -254,10 +256,13 @@ class zynthian_gui_dpm():
         img = Image.new("RGB", (width, height), (0, 0, 0))
         pixels = img.load()
 
-        bg_c1 = (0, 150, 0) # Dark green
-        bg_c2 = (0, 255, 0) # Green
-        bg_c3 = (255, 255, 0) # Yellow
-        bg_c4 = (200, 0, 0) # Red
+        def hex_rgb(c):
+            return tuple(int(c[i:i + 2], 16) for i in (1, 3, 5))
+
+        bg_c2 = hex_rgb(self.low_color)
+        bg_c1 = tuple(v // 2 for v in bg_c2)  # Darkened low color
+        bg_c3 = hex_rgb(self.high_color)
+        bg_c4 = hex_rgb(self.over_color)
 
         def lerp(c1, c2, t):
             return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))

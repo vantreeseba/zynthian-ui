@@ -101,12 +101,12 @@ class zynthian_gui_launcher_pad():
             # Loop indicators
             self.loop1_top = self.canvas.create_rectangle(x, self.y, x + line_width, self.y + self.height // 2,
                                                     width=0,
-                                                    fill="#50FF50",
+                                                    fill=zynthian_gui_config.color_hl,
                                                     tags=("launcher",),
                                                     state=tkinter.HIDDEN)
             self.loop1_bottom = self.canvas.create_rectangle(x, self.y + self.height // 2, x + line_width, self.y + self.height,
                                                     width=0,
-                                                    fill="#50FF50",
+                                                    fill=zynthian_gui_config.color_hl,
                                                     tags=("launcher",),
                                                     state=tkinter.HIDDEN)
             self.loop1_text = self.canvas.create_text(x, self.y + self.height // 2 - 1,
@@ -118,12 +118,12 @@ class zynthian_gui_launcher_pad():
             x += loop_info_width // 2
             self.loop2_top = self.canvas.create_rectangle(x, self.y, x + line_width, self.y + self.height // 2,
                                                     width=0,
-                                                    fill="#50FF50",
+                                                    fill=zynthian_gui_config.color_hl,
                                                     tags=("launcher",),
                                                     state=tkinter.HIDDEN)
             self.loop2_bottom = self.canvas.create_rectangle(x, self.y + self.height // 2, x + line_width, self.y + self.height,
                                                     width=0,
-                                                    fill="#50FF50",
+                                                    fill=zynthian_gui_config.color_hl,
                                                     tags=("launcher",),
                                                     state=tkinter.HIDDEN)
             self.loop2_text = self.canvas.create_text(x + line_width // 2, self.y + self.height // 2 - 1,
@@ -309,12 +309,12 @@ class zynthian_gui_launcher_pad():
                             loop_top = self.loop1_top
                             loop_bottom = self.loop1_bottom
                             loop_text = self.loop1_text
-                            c1 = c2 = "#5050FF"
+                            c1 = c2 = zynthian_gui_config.color_info
                         elif i == 1:
                             loop_top = self.loop2_top
                             loop_bottom = self.loop2_bottom
                             loop_text = self.loop2_text
-                            c1 = c2 = "#40C040"
+                            c1 = c2 = zynthian_gui_config.color_hl
                         else:
                             logging.warning("Loop at level {i} not displayable!")
                         if state_seq["followAction"] == zynseq.FOLLOW_ACTION_NONE:
@@ -671,8 +671,8 @@ class zynthian_gui_mixer_strip():
         self.clip_progress = self.canvas.create_rectangle(x, self.gui_mixer.legend_y, x, self.gui_mixer.legend_y + 4, width=0, fill=self.gui_mixer.legend_txt_color, tags=(f"legend_strip_{id}",))
 
         # Indicators
-        self.record_indicator = self.canvas.create_text(x + 2, self.gui_mixer.legend_y + self.gui_mixer.legend_height - 16, text="⚫", fill="#009000", anchor="sw", state=tkinter.HIDDEN)
-        self.play_indicator = self.canvas.create_text(x + 2, self.gui_mixer.legend_y + self.gui_mixer.legend_height - 2, text="⏹", fill="#009000", anchor="sw", state=tkinter.HIDDEN)
+        self.record_indicator = self.canvas.create_text(x + 2, self.gui_mixer.legend_y + self.gui_mixer.legend_height - 16, text="⚫", fill=zynthian_gui_config.color_hl, anchor="sw", state=tkinter.HIDDEN)
+        self.play_indicator = self.canvas.create_text(x + 2, self.gui_mixer.legend_y + self.gui_mixer.legend_height - 2, text="⏹", fill=zynthian_gui_config.color_hl, anchor="sw", state=tkinter.HIDDEN)
 
         # Bind events to gui elements
         self.canvas.tag_bind(f"fader_{id}", "<ButtonPress-1>", self.on_fader_press)
@@ -775,7 +775,7 @@ class zynthian_gui_mixer_strip():
         self.dpm_a.refresh(dpm.a, dpm.a_hold, dpm.mono)
         self.dpm_b.refresh(dpm.b, dpm.b_hold, dpm.mono)
         if self.chain.chain_id == 0 and (dpm.a_hold >= 0 or dpm.b_hold >= 0):
-            self.canvas.itemconfig(self.mute_text, fill="#FF0000")
+            self.canvas.itemconfig(self.mute_text, fill=zynthian_gui_config.color_on)
             if self.over_id is not None:
                 self.canvas.after_cancel(self.over_id)
             self.over_id = self.canvas.after(4000, lambda: self.canvas.itemconfig(self.mute_text, fill=self.gui_mixer.button_txcol))
@@ -933,9 +933,9 @@ class zynthian_gui_mixer_strip():
                     processor = self.chain.synth_slots[0][0]
                     if processor.eng_code == "AP":
                         if zynaudioplayer.get_playback_state(processor.handle):
-                            self.canvas.itemconfig(self.play_indicator, text="▶", fill="#009000", state=tkinter.NORMAL)
+                            self.canvas.itemconfig(self.play_indicator, text="▶", fill=zynthian_gui_config.color_hl, state=tkinter.NORMAL)
                         else:
-                            self.canvas.itemconfig(self.play_indicator, text="⏹", fill="#909090", state=tkinter.NORMAL)
+                            self.canvas.itemconfig(self.play_indicator, text="⏹", fill=zynthian_gui_config.color_tx_off, state=tkinter.NORMAL)
                     else:
                         self.canvas.itemconfig(self.play_indicator, state=tkinter.HIDDEN)
                 except:
@@ -1278,27 +1278,27 @@ class zynthian_gui_mixer(zynthian_gui_base):
         # Style
         self.fader_bg_color = zynthian_gui_config.color_panel_bg
         self.fader_color = zynthian_gui_config.color_off
-        self.fader_color_hl = "#6a727d"  # "#207024"
+        self.fader_color_hl = zynthian_gui_config.color_variant(zynthian_gui_config.color_off, 40)
         self.legend_txt_color = zynthian_gui_config.color_tx
         self.legend_bg_color = zynthian_gui_config.color_panel_bg
         self.legend_bg_color_hl = zynthian_gui_config.color_on
-        self.main_legend_bg_color = "#550000"
-        self.bus_legend_bg_color = "#000055"
+        self.main_legend_bg_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_low_on, -80)
+        self.bus_legend_bg_color = zynthian_gui_config.color_variant(zynthian_gui_config.color_midi, -120)
         self.button_bgcol = zynthian_gui_config.color_panel_bg
         self.button_txcol = zynthian_gui_config.color_tx
-        self.balance_bg_color = "#888888"
-        self.balance_fg_color = "#00EE00"
-        self.high_color = "#CCCCCC"  # yellow
-        self.rec_color = "#CC0000"  # red
-        self.mute_color = "#CC0000"
-        self.toggle_color = "#D0D000"
-        self.mono_color = "#B0B0B0"
+        self.balance_bg_color = zynthian_gui_config.color_off
+        self.balance_fg_color = zynthian_gui_config.color_hl
+        self.high_color = zynthian_gui_config.color_tx_off
+        self.rec_color = zynthian_gui_config.color_on
+        self.mute_color = zynthian_gui_config.color_on
+        self.toggle_color = zynthian_gui_config.color_ml
+        self.mono_color = zynthian_gui_config.color_tx_off
         font_size = min(int(0.5 * self.legend_height), int(0.25 * self.width))
         self.font = (zynthian_gui_config.font_family, font_size)
         self.font_fader = (zynthian_gui_config.font_family, int(0.9 * font_size))
         self.font_clip_state = (zynthian_gui_config.font_family, int(0.6 * font_size))
         self.font_clip_title = (zynthian_gui_config.font_family, int(0.8 * font_size))
-        self.font_clip_title_small = ("sans-serif", int(0.65 * font_size))
+        self.font_clip_title_small = (zynthian_gui_config.font_family, int(0.65 * font_size))
         self.font_timebase = (zynthian_gui_config.font_family, int(0.5 * font_size))
         self.font_icons = ("forkawesome", int(1.2 * font_size))
 
