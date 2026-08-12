@@ -44,8 +44,8 @@ class zynthian_gui_zs3(zynthian_gui_selector_info):
         self.zs3_waiting_label = tkinter.Label(self.main_frame,
                                                text='Waiting for MIDI Program Change...',
                                                font=(zynthian_gui_config.font_family,
-                                                     int(0.85 * zynthian_gui_config.font_size)),
-                                               fg=zynthian_gui_config.color_ml,
+                                                     zynthian_gui_config.font_size_small),
+                                               fg=zynthian_gui_config.color_info,
                                                bg=zynthian_gui_config.color_panel_bg)
 
     def show_waiting_label(self):

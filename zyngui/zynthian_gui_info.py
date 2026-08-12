@@ -46,7 +46,6 @@ class zynthian_gui_info(zynthian_gui_fullscreen_modal):
                                      font=(zynthian_gui_config.font_family,
                                            zynthian_gui_config.font_size, "normal"),
                                     wrap=tkinter.WORD,
-                                     # font=("sans-serif", zynthian_gui_config.font_size, "normal"),
                                      # wraplength=80,
                                      # justify=tkinter.LEFT,
                                      bd=0,

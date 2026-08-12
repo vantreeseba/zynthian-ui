@@ -140,6 +140,14 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
             return # Not yet resized
         self.canvas.delete("all")
         self.icons = {}
+        if not any(self.config):
+            # Empty grid: say so instead of presenting a blank canvas.
+            self.canvas.create_text(
+                self.width // 2, self.height // 2,
+                text="Nothing to show here",
+                fill=zynthian_gui_config.color_scale(zynthian_gui_config.color_tx_off, 0.6),
+                font=self.font, justify=tkinter.CENTER)
+            return
         x = self.SPACING
         y = self.SPACING
         for idx, node in enumerate(self.config):

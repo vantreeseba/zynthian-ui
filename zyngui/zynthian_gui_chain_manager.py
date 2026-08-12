@@ -582,7 +582,7 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
                     self.canvas,
                     chain_offset - 1, 0, chain_offset + 1 + self.BLOCK_WIDTH, divider_height,
                     radius=zynthian_gui_config.corner_radius,
-                    outline=zynthian_gui_config.color_ml,
+                    outline=zynthian_gui_config.color_info,
                     width=3,
                     fill="",
                     tags="chain_move"

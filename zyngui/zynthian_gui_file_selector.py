@@ -230,6 +230,10 @@ class zynthian_gui_file_selector(zynthian_gui_selector_info):
             self.list_data = zynthian_engine.get_dir_file_list(fexts=self.fexts,
                                                                root_dirs=self.root_dirs,
                                                                recursion=1)
+        if not self.list_data:
+            # Empty directory: show a disabled hint row instead of a blank
+            # list (action None rows render as non-selectable labels).
+            self.list_data = [[None, None, "No matching files here"]]
         # Add info and find selected index
         self.index = 0
         for i, item in enumerate(self.list_data):

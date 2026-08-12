@@ -58,7 +58,7 @@ class zynthian_widget_sooperlooper(zynthian_widget_base.zynthian_widget_base):
         self.flash_count = 0
 
         if zynthian_gui_config.layout['columns'] <= 2:
-            self.font_size_sl = zynthian_gui_config.font_size
+            self.font_size_sl = zynthian_gui_config.font_size_base
         else:
             # TODO: Use better font scaling based on screen resolution
             self.font_size_sl = int(0.7 * zynthian_gui_config.font_size)
@@ -87,6 +87,8 @@ class zynthian_widget_sooperlooper(zynthian_widget_base.zynthian_widget_base):
                 fill=zynthian_gui_config.color_ml,
                 width=2
             )
+            # Kept as create_rectangle: refresh_gui() resizes this border per-frame via
+            # canvas.coords(x0, y0, x1, y1), which a create_round_rect polygon can't accept.
             pos_border = pos_canvas.create_rectangle(2, 2, 2, 2, width=2,
                                                      outline=zynthian_gui_config.color_on,
                                                      state=tkinter.HIDDEN)
@@ -390,7 +392,7 @@ class zynthian_widget_sooperlooper(zynthian_widget_base.zynthian_widget_base):
             if waiting or state in [1, 3]:
                 # Pending states
                 # TODO: Split to pending rec, pending play, etc.
-                bg = zynthian_gui_config.color_ml
+                bg = zynthian_gui_config.color_info
 
             elif state in (SL_STATE_RECORDING, SL_STATE_OVERDUBBING, SL_STATE_MULTIPLYING, SL_STATE_INSERTING, SL_STATE_REPLACING, SL_STATE_DELAYING, SL_STATE_SUBSTITUTING):
                 # Record states

@@ -47,6 +47,11 @@ class zynthian_gui_bank(zynthian_gui_selector_info):
         # self.list_data = self.processor.bank_list
         # TODO: Can't optimize because of setBfree / Aeolus "bank anomaly"
         self.list_data = self.processor.get_bank_list()
+        if not self.list_data:
+            # Show a disabled hint row rather than refusing to open: a button
+            # press that silently does nothing reads as a broken UI. Fresh
+            # list so the processor's own bank list is not polluted.
+            self.list_data = [(None, None, "No banks for this engine")]
         super().fill_list()
 
     def build_view(self):

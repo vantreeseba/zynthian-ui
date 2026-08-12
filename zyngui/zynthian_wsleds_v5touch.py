@@ -118,12 +118,15 @@ class zynthian_wsleds_v5touch(zynthian_wsleds_v5):
     def setup_colors(self):
         # Predefined colors
         self.wscolor_off = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_OFF', zynthian_gui_config.color_bg)
-        self.wscolor_white = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_WHITE', "#FCFCFC")
-        self.wscolor_red = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_RED', "#FE2C2F")
-        self.wscolor_green = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_GREEN', "#00FA00")
-        self.wscolor_yellow = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_YELLOW', "#F0EA00")
+        # Defaults follow the palette semantics (white=text, red=record/danger,
+        # green=play, yellow=selection amber, blue=info). Orange, light blue,
+        # purple and low-lime have no palette token and stay literal.
+        self.wscolor_white = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_WHITE', zynthian_gui_config.color_tx)
+        self.wscolor_red = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_RED', zynthian_gui_config.color_on)
+        self.wscolor_green = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_GREEN', zynthian_gui_config.color_hl)
+        self.wscolor_yellow = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_YELLOW', zynthian_gui_config.color_ml)
         self.wscolor_orange = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_ORANGE', "#FF6A00")
-        self.wscolor_blue = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_BLUE', "#1070FE")
+        self.wscolor_blue = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_BLUE', zynthian_gui_config.color_info)
         self.wscolor_blue_light = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_LIGHTBLUE', "#05FDFF")
         self.wscolor_purple = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_PURPLE', "#D000E0")
         self.wscolor_default = os.environ.get('ZYNTHIAN_TOUCH_KEYPAD_COLOR_DEFAULT', self.wscolor_blue)

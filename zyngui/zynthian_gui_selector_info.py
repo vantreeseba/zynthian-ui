@@ -101,7 +101,7 @@ class zynthian_gui_selector_info(zynthian_gui_selector):
 
     def update_info(self):
         side_width = int(self.layout['ctrl_width'] * zynthian_gui_config.screen_width)
-        fs = min(int(0.8 * zynthian_gui_config.font_size), side_width // 16)
+        fs = min(zynthian_gui_config.font_size_small, side_width // 16)
         info = self.get_info()
         if info:
             image = self.get_icon(info[1])

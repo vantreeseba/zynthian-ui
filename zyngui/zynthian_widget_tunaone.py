@@ -25,6 +25,7 @@
 
 import tkinter
 import logging
+from functools import lru_cache
 
 # Zynthian specific modules
 from zyngui import zynthian_gui_config
@@ -33,6 +34,24 @@ from zyngui import zynthian_widget_base
 # ------------------------------------------------------------------------------
 # Zynthian Widget Class for "x42 Instrument Tuner"
 # ------------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=None)
+def _monitor_color(acent):
+    # acent: absolute cents deviation, quantized to int and clamped by caller
+    if acent > 25:
+        cr = 255
+        cg = 0
+        cb = 0
+    elif acent > 10:
+        cr = 255
+        cg = int((25 - acent) * 255 / 15)
+        cb = 0
+    else:
+        cr = int(acent * 255 / 40)
+        cg = 255
+        cb = 0
+    return "#%02x%02x%02x" % (cr, cg, cb)
 
 
 class zynthian_widget_tunaone(zynthian_widget_base.zynthian_widget_base):
@@ -114,20 +133,9 @@ class zynthian_widget_tunaone(zynthian_widget_base.zynthian_widget_base):
 
     def calc_monitor_color(self, cent):
         try:
-            acent = abs(cent)
-            if acent > 25:
-                cr = 255
-                cg = 0
-                cb = 0
-            elif acent > 10:
-                cr = 255
-                cg = int((25 - acent) * 255 / 15)
-                cb = 0
-            else:
-                cr = int(acent * 255 / 40)
-                cg = 255
-                cb = 0
-            color = "#%02x%02x%02x" % (cr, cg, cb)
+            # Quantize to whole cents so the memoized color lookup stays a small dict
+            acent = min(50, int(round(abs(cent))))
+            color = _monitor_color(acent)
         except:
             color = zynthian_gui_config.color_hl
         return color

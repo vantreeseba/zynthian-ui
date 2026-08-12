@@ -113,6 +113,11 @@ class zynthian_gui_midi_recorder(zynthian_gui_selector_info):
         # Internal storage
         fill_from_source(self.capture_dir_sdc, "SD> Captured MIDI Tracks")
         fill_from_source(self.user_dir_sdc, "SD> User MIDI Tracks")
+
+        if i == 1:
+            # No capture rows were added by any source; explain the empty
+            # space (same non-selectable convention as the section headers).
+            self.list_data.append([None, 0, "No MIDI captures yet — recordings will appear here"])
         fill_from_source(self.system_dir_sdc, "SD> System MIDI Tracks")
         super().fill_list()
 

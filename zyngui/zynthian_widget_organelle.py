@@ -37,6 +37,10 @@ COLOR_BUTTON = zynthian_gui_config.color_variant(zynthian_gui_config.color_alt2,
 COLOR_BUTTON_LIGHT = zynthian_gui_config.color_hl
 COLOR_KNOB = zynthian_gui_config.color_variant(zynthian_gui_config.color_alt2, -60)
 
+# Emulated OLED is monochrome: pixel on/off map to the theme fg/bg.
+COLOR_OLED_ON = zynthian_gui_config.color_tx
+COLOR_OLED_OFF = zynthian_gui_config.color_bg
+
 ORGANELLE_OLED_WIDTH = 128
 ORGANELLE_OLED_HEIGHT = 64
 
@@ -57,7 +61,7 @@ class OscButton(tk.Canvas):
         # Draw the circular button.
         self.button = self.create_oval(2, 2, diameter - 2, diameter - 2, fill=COLOR_BUTTON, outline=COLOR_OUTLINE, width=2)
         # Place the label at the center.
-        self.create_text(diameter // 2, diameter // 2, text=label, font=(zynthian_gui_config.font_family, 12), fill=COLOR_TEXT, anchor=tk.CENTER)
+        self.create_text(diameter // 2, diameter // 2, text=label, font=(zynthian_gui_config.font_family, zynthian_gui_config.font_size_small), fill=COLOR_TEXT, anchor=tk.CENTER)
 
         # Bind press and release events.
         self.bind("<ButtonPress-1>", self.on_press)
@@ -85,9 +89,12 @@ class LedIndicator(tk.Canvas):
     """
     LED indicator widget controlled via OSC messages.
     """
+    # Emulates the physical Organelle LED hues; purple/cyan have no palette token.
     COLORS = {
-        0: "black", 1: "red", 2: "green", 3: "blue",
-        4: "yellow", 5: "purple", 6: "cyan", 7: "white"
+        0: zynthian_gui_config.color_bg, 1: zynthian_gui_config.color_on,
+        2: zynthian_gui_config.color_hl, 3: zynthian_gui_config.color_info,
+        4: zynthian_gui_config.color_ml, 5: "purple",
+        6: "cyan", 7: zynthian_gui_config.color_tx
     }
 
     def __init__(self, parent, diameter=15, **kwargs):
@@ -120,6 +127,8 @@ class VolumeSlider(tk.Frame):
         self.slider = tk.Scale(self, to=100, from_=0, resolution=1, orient=tk.HORIZONTAL,
             length=width, width=int(0.7 * height), sliderlength=width//8, showvalue=True,
             bg=COLOR_PANEL, fg=COLOR_TEXT, highlightthickness=0, troughcolor=zynthian_gui_config.color_bg,
+            font=(zynthian_gui_config.font_family, zynthian_gui_config.font_size_small),
+            activebackground=COLOR_PANEL, sliderrelief=tk.FLAT,
             command=self.on_value_change)
         self.slider.pack(side="top", pady=0)
         # Create and pack the label.
@@ -198,7 +207,7 @@ class MarkedEncoder(tk.Canvas):
         )
 
         # Add label below the knob.
-        self.create_text(center, center, text=label, font=(zynthian_gui_config.font_family, 12), fill=COLOR_TEXT, anchor=tk.CENTER)
+        self.create_text(center, center, text=label, font=(zynthian_gui_config.font_family, zynthian_gui_config.font_size_small), fill=COLOR_TEXT, anchor=tk.CENTER)
 
         # Bind events for interaction.
         self.bind("<ButtonPress-1>", self.on_press)
@@ -634,7 +643,7 @@ class zynthian_widget_organelle(zynthian_widget_base):
         mode, x1, y1, x2, y2, color = args
         x1, y1 = int(x1 * self.oled_scale) + 2, int(y1 * self.oled_scale) + 6
         x2, y2 = int(x2 * self.oled_scale) + 2, int(y2 * self.oled_scale) + 6
-        fill_color = "white" if int(color) == 1 else "black"
+        fill_color = COLOR_OLED_ON if int(color) == 1 else COLOR_OLED_OFF
 
         def draw_line():
             self.canvas.create_line(x1, y1, x2, y2, fill=fill_color, width=self.oled_scale)
@@ -645,7 +654,7 @@ class zynthian_widget_organelle(zynthian_widget_base):
         #logging.debug(f"Received OSC: {path} {args}")
         dummy, x, y, c = args
         x, y = int(x * self.oled_scale), int(y * self.oled_scale)
-        fill_color = "white" if int(c) == 1 else "black"
+        fill_color = COLOR_OLED_ON if int(c) == 1 else COLOR_OLED_OFF
 
         def draw_pixel():
             self.canvas.create_rectangle(x, y, x + self.oled_scale, y + self.oled_scale, fill=fill_color, outline=fill_color)
@@ -661,7 +670,7 @@ class zynthian_widget_organelle(zynthian_widget_base):
             y = int(y * self.oled_scale) + woffset
             w = int(w * self.oled_scale) - woffset
             h = int(h * self.oled_scale) - woffset
-            outline_color = "white" if int(color) == 1 else "black"
+            outline_color = COLOR_OLED_ON if int(color) == 1 else COLOR_OLED_OFF
 
             def draw_box():
                 self.canvas.create_rectangle(x, y, x + w, y + h, outline=outline_color, width=self.oled_scale, fill="")
@@ -679,7 +688,7 @@ class zynthian_widget_organelle(zynthian_widget_base):
             y = int(y * self.oled_scale) + woffset
             w = int(w * self.oled_scale) - woffset
             h = int(h * self.oled_scale) - woffset
-            fill_color = 'black' if int(color) == 0 else 'white'
+            fill_color = COLOR_OLED_OFF if int(color) == 0 else COLOR_OLED_ON
 
             def draw_filled_area():
                 self.canvas.create_rectangle(x, y, x + w, y + h, fill=fill_color, outline=fill_color)
@@ -695,7 +704,7 @@ class zynthian_widget_organelle(zynthian_widget_base):
         x = int(x * self.oled_scale) + woffset
         y = int(y * self.oled_scale) + woffset
         r = int(r * self.oled_scale) - woffset
-        outline_color = "white" if int(color) == 1 else "black"
+        outline_color = COLOR_OLED_ON if int(color) == 1 else COLOR_OLED_OFF
 
         def draw_circle():
             self.canvas.create_oval(x - r, y - r, x + r, y + r, outline=outline_color, width=self.oled_scale, fill="")
@@ -709,7 +718,7 @@ class zynthian_widget_organelle(zynthian_widget_base):
         x = int(x * self.oled_scale) + woffset
         y = int(y * self.oled_scale) + woffset
         r = int(r * self.oled_scale) - woffset
-        outline_color = "white" if int(color) == 1 else "black"
+        outline_color = COLOR_OLED_ON if int(color) == 1 else COLOR_OLED_OFF
 
         def draw_filled_circle():
             self.canvas.create_oval(x - r, y - r, x + r, y + r, outline=outline_color, fill=outline_color, width=self.oled_scale)
@@ -738,14 +747,13 @@ class zynthian_widget_organelle(zynthian_widget_base):
         except Exception:
             fs = 8 * self.oled_scale
         if fs > 16:
-            #font_family = "TkFixedFont"
             font_family = "FreeMonoBold"
         else:
             font_family = "FreeMono"
         text = " ".join(map(str, text_words)).strip()
         if not text:
             return
-        fill_color = "white" if int(color) == 1 else "black"
+        fill_color = COLOR_OLED_ON if int(color) == 1 else COLOR_OLED_OFF
         tag = f"line_{x_unscaled}_{y_unscaled}"
         y_tag = f"y_{y_unscaled}"
 
@@ -792,13 +800,14 @@ class zynthian_widget_organelle(zynthian_widget_base):
                 if key == sorted_keys[page]:
                     bbox = self.canvas.bbox(text_id)
                     if bbox:
-                        highlight = self.canvas.create_rectangle(
-                            0, bbox[1] - 2, self.oled_width, bbox[3] + 2,
-                            fill=zynthian_gui_config.color_ctrl_bg_on,
+                        highlight = zynthian_gui_config.create_round_rect(
+                            self.canvas, 0, bbox[1] - 2, self.oled_width, bbox[3] + 2,
+                            zynthian_gui_config.corner_radius,
+                            fill=zynthian_gui_config.color_select_bg,
                             outline="", tags=["highlight"]
                         )
                         self.canvas.tag_lower(highlight, text_id)
-                    self.canvas.itemconfig(text_id, fill=zynthian_gui_config.color_ctrl_tx)
+                    self.canvas.itemconfig(text_id, fill=zynthian_gui_config.color_tx)
                 else:
                     self.canvas.itemconfig(text_id, fill=zynthian_gui_config.color_panel_tx)
         self.add_to_batch(update_highlights)
@@ -870,7 +879,7 @@ class zynthian_widget_organelle(zynthian_widget_base):
         w, h = int(w * self.oled_scale), int(h * self.oled_scale)
 
         def invert_area():
-            self.canvas.create_rectangle(x, y, x + w, y + h, fill=COLOR_TEXT)
+            self.canvas.create_rectangle(x, y, x + w, y + h, fill=COLOR_OLED_ON)
 
         self.add_to_batch(invert_area)
 

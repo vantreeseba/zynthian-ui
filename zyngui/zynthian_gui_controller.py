@@ -87,6 +87,7 @@ class zynthian_gui_controller(tkinter.Canvas):
         self.value_plot = 0  # Normalised position of plot start point
         self.value_print = None
         self.value_font = tkFont.Font(family=zynthian_gui_config.font_family, size=zynthian_gui_config.font_size)
+        self.value_font_cache = {}  # size -> Font, so refresh paths don't allocate a Font per redraw
         if orientation:
             self.vertical = (orientation == 'vertical' and not selcounter)
         else:
@@ -167,7 +168,7 @@ class zynthian_gui_controller(tkinter.Canvas):
             self.value_text = self.create_text(0, 0, width=1,
                 justify=tkinter.CENTER,
                 fill=zynthian_gui_config.color_ctrl_tx,
-                font=self.value_font.copy(),
+                font=self.get_value_font(),
                 text=self.value_print,
                 tags='gui')
 
@@ -259,7 +260,7 @@ class zynthian_gui_controller(tkinter.Canvas):
             self.itemconfigure(self.label_title, width=self.title_width, anchor='nw', justify=tkinter.LEFT)
 
         self.coords(self.value_text, x0, y0)
-        self.itemconfigure(self.value_text, font=self.value_font.copy(), width=self.value_width)
+        self.itemconfigure(self.value_text, font=self.get_value_font(), width=self.value_width)
         if not self.selector_counter:
             # x1,y1 top left of arc, x2,y2 bottom right of arc
             x1 = x0 - radius
@@ -294,7 +295,7 @@ class zynthian_gui_controller(tkinter.Canvas):
         vty = y1 + hrect // 2
         vtx = ww // 2
         self.coords(self.value_text, vtx, vty)
-        self.itemconfigure(self.value_text, font=self.value_font.copy(), width=ww - 2 * pad)
+        self.itemconfigure(self.value_text, font=self.get_value_font(), width=ww - 2 * pad)
         if not self.selector_counter:
             self.coords(self.graph, (x1, y1, x2, y2))
             self.coords(self.graph_pickup, (x1, y1, x2, y2))
@@ -324,7 +325,7 @@ class zynthian_gui_controller(tkinter.Canvas):
         vty = 2 * hh // 3
         vtx = ww // 2
         self.coords(self.value_text, vtx, vty)
-        self.itemconfigure(self.value_text, font=self.value_font.copy(), width=ww - 2 * pad)
+        self.itemconfigure(self.value_text, font=self.get_value_font(), width=ww - 2 * pad)
 
         if not self.selector_counter:
             self.coords(self.graph, (x1, y1, x2, y1, x2, y2))
@@ -496,7 +497,7 @@ class zynthian_gui_controller(tkinter.Canvas):
                     x1 = 4 + (8 - ww) * self.zctrl.value_min / self.zctrl.value_range
                     x2 = x1 + x2 - 4
             self.coords(self.graph, (x1, y1, x2, y2))
-        self.itemconfig(self.value_text, text=self.value_print, font=self.value_font.copy())
+        self.itemconfig(self.value_text, text=self.value_print, font=self.get_value_font())
 
     def plot_value_triangle(self):
         if not self.selector_counter and not self.zctrl.is_path:
@@ -525,7 +526,7 @@ class zynthian_gui_controller(tkinter.Canvas):
                 elif self.zctrl.value_range and self.zctrl.value_min <= 0 <= self.zctrl.value_max:
                     deg0 += degmax * self.zctrl.value_min / self.zctrl.value_range
             self.itemconfig(self.graph, start=deg0, extent=degd)
-        self.itemconfig(self.value_text, text=self.value_print, font=self.value_font.copy())
+        self.itemconfig(self.value_text, text=self.value_print, font=self.get_value_font())
         #self.set_text(self.value_text, self.value_print, self.value_width, self.value_height, False)
 
     def plot_midi_bind(self, midi_cc, color=zynthian_gui_config.color_ctrl_tx):
@@ -551,7 +552,7 @@ class zynthian_gui_controller(tkinter.Canvas):
             elif preselection is not None or self.zctrl == self.zyngui.state_manager.get_midi_learn_zctrl():
                 # TODO THIS IS SUPER UGLY!!!!
                 if self.zyngui.screens["chain_control"].subscreens["control"].get_midi_learn() > 1:
-                    self.plot_midi_bind("??#??", zynthian_gui_config.color_ml)
+                    self.plot_midi_bind("??#??", zynthian_gui_config.color_info)
                 else:
                     self.plot_midi_bind("??#??", zynthian_gui_config.color_hl)
             elif self.zctrl == self.zyngui.state_manager.zctrl_x:
@@ -565,7 +566,7 @@ class zynthian_gui_controller(tkinter.Canvas):
                     case "abs":
                         #zmip = (key >> 16) & 0xff
                         chan = (key >> 8) & 0xff
-                        self.plot_midi_bind(f"{chan + 1}#{cc}", zynthian_gui_config.color_ml)
+                        self.plot_midi_bind(f"{chan + 1}#{cc}", zynthian_gui_config.color_info)
                     case "chain":
                         chan = (key >> 8) & 0xff
                         if chan < 16:
@@ -628,6 +629,18 @@ class zynthian_gui_controller(tkinter.Canvas):
             return
         self.title = title
         self.set_text(self.label_title, title, self.title_width, self.title_height)
+
+    # Returns a Font frozen at value_font's current size. value_font itself is
+    # mutated by calculate_value_font_size(), so the canvas item needs its own
+    # Font object; caching per size avoids allocating one on every redraw.
+    def get_value_font(self):
+        fs = self.value_font.cget("size")
+        try:
+            return self.value_font_cache[fs]
+        except KeyError:
+            font = self.value_font.copy()
+            self.value_font_cache[fs] = font
+            return font
 
     def calculate_value_font_size(self, val_text=None):
         if self.value_width < 10:

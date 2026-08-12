@@ -59,7 +59,7 @@ class zynthian_gui_loading(zynthian_gui_fullscreen_modal):
             int(0.85 * self.height),
             anchor=tkinter.CENTER,
             justify=tkinter.CENTER,
-            font=(zynthian_gui_config.font_family, int(0.8*zynthian_gui_config.font_size)),
+            font=(zynthian_gui_config.font_family, zynthian_gui_config.font_size_small),
             fill=zynthian_gui_config.color_tx_off,
             text="")
         # Setup Loading Logo Animation

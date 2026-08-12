@@ -89,7 +89,7 @@ class zynthian_gui_control_xy(zynthian_gui_fullscreen_modal):
             anchor=tkinter.S,
             justify=tkinter.CENTER,
             font=zynthian_gui_config.font_topbar,
-            fill=zynthian_gui_config.color_ctrl_bg_off,
+            fill=zynthian_gui_config.color_tx_off,
             text="Tap 3 times to exit"
         )
 
@@ -99,7 +99,7 @@ class zynthian_gui_control_xy(zynthian_gui_fullscreen_modal):
             anchor=tkinter.NW,
             justify=tkinter.LEFT,
             font=zynthian_gui_config.font_topbar,
-            fill=zynthian_gui_config.color_ctrl_bg_off,
+            fill=zynthian_gui_config.color_tx_off,
             text=""
         )
         font = tkfont.Font(family=zynthian_gui_config.font_family, size=zynthian_gui_config.topbar_fs)
@@ -111,7 +111,7 @@ class zynthian_gui_control_xy(zynthian_gui_fullscreen_modal):
             anchor=tkinter.NW,
             justify=tkinter.LEFT,
             font=zynthian_gui_config.font_topbar,
-            fill=zynthian_gui_config.color_ctrl_bg_off,
+            fill=zynthian_gui_config.color_tx_off,
             text=""
         )
 

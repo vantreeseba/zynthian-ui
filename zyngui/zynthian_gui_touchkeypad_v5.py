@@ -144,9 +144,11 @@ class zynthian_gui_touchkeypad_v5(tkinter.Canvas):
             x = self.x_offset + self.button_width * column
         y = self.button_height * row
         tag = f"v5_button_{button}"
-        config[RECT_ID] = self.create_rectangle(
+        config[RECT_ID] = zynthian_gui_config.create_round_rect(
+            self,
             x, y,
             x+self.button_width, y+self.button_height,
+            radius=zynthian_gui_config.corner_radius,
             outline=zynthian_gui_config.color_bg,
             width=1,
             fill=self.bg_color,
@@ -188,13 +190,13 @@ class zynthian_gui_touchkeypad_v5(tkinter.Canvas):
             # or an icon included in the "forkawesome" font (unicode char >= \uf000)
             if label[0] >= '\uf000':
                 font_family = zynthian_gui_config.font_family_icons
-                font_size = int(1.5 * zynthian_gui_config.font_size)
+                font_size = zynthian_gui_config.font_size_title
             else:
                 font_family = zynthian_gui_config.font_family
                 if len(label) <= 3:
-                    font_size = int(1.3 * zynthian_gui_config.font_size)
+                    font_size = zynthian_gui_config.font_size_large
                 else:
-                    font_size = int(0.9 * zynthian_gui_config.font_size)
+                    font_size = zynthian_gui_config.font_size_small
             font = tkfont.Font(family=font_family, size=font_size)
 
             #label = label.replace("/", "\n")

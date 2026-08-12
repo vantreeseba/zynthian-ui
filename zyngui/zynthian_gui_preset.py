@@ -50,6 +50,11 @@ class zynthian_gui_preset(zynthian_gui_selector_info, zynthian_gui_save_preset):
             return
         self.processor.load_preset_list()
         self.list_data = self.processor.preset_list
+        if not self.list_data:
+            # Show a disabled hint row rather than refusing to open: a button
+            # press that silently does nothing reads as a broken UI. Fresh
+            # list so the processor's own preset_list is not polluted.
+            self.list_data = [(None, None, "No presets for this engine")]
         super().fill_list()
 
     def build_view(self):

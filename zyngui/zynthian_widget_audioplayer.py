@@ -152,7 +152,7 @@ class zynthian_widget_audioplayer(zynthian_widget_base.zynthian_widget_base):
             anchor=tkinter.SE,
             justify=tkinter.RIGHT,
             width=self.width,
-            font=(zynthian_gui_config.font_family_mono, int(1.3 * zynthian_gui_config.font_size)),
+            font=(zynthian_gui_config.font_family_mono, zynthian_gui_config.font_size_large),
             fill=zynthian_gui_config.color_panel_tx,
             text="",
             state=tkinter.HIDDEN,
@@ -188,7 +188,7 @@ class zynthian_widget_audioplayer(zynthian_widget_base.zynthian_widget_base):
                 coords[2] = self.width
                 self.widget_canvas.coords(f"waveform_bg_{chan}", coords)
 
-        font = tkinter.font.Font(family=zynthian_gui_config.font_family_mono, size=int(1.3 * zynthian_gui_config.font_size))
+        font = tkinter.font.Font(family=zynthian_gui_config.font_family_mono, size=zynthian_gui_config.font_size_large)
         self.waveform_height = self.height - font.metrics("linespace")
         self.refresh_waveform = True
 
@@ -358,8 +358,7 @@ class zynthian_widget_audioplayer(zynthian_widget_base.zynthian_widget_base):
                 0,
                 anchor=tkinter.NE,
                 justify=tkinter.RIGHT,
-                font=(zynthian_gui_config.font_family_mono, int(
-                    0.8 * zynthian_gui_config.font_size)),
+                font=(zynthian_gui_config.font_family_mono, zynthian_gui_config.font_size_small),
                 fill=zynthian_gui_config.color_panel_tx,
                 text=f"{i+1}",
                 tags=["overlay", "cues", f"cuetxt{i+1}", f"cue{i+1}"]

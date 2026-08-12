@@ -1,12 +1,13 @@
 body.help_ui {
-	background: #000000;
-	color: #ffffff;
+	background: #121212;
+	color: #f2f2f2;
+	font-family: 'Exo 2', sans-serif;
 	font-size: 150%;
 	margin-bottom: 2em;
 }
 
 .help_ui a {
-	color: #8080ff;
+	color: #64b5f6;
 	text-decoration: none;
 }
 
@@ -15,13 +16,14 @@ header.global_header {
 	margin-bottom: 0.2em;
 	padding: 0.5em;
 	padding-bottom: 0.2em;
-	background: #C0C0C0;
+	background: #1e1e1e;
+	border-bottom: 1px solid #2c2c2c;
 }
 
 header.global_header a {
 	font-size: 120%;
 	font-weight: bold;
-	color: #0000C0;
+	color: #64b5f6;
 }
 
 .help_ui ul.index li a {
@@ -29,19 +31,19 @@ header.global_header a {
 }
 
 .help_ui title {
-	color: #ffffff;
+	color: #f2f2f2;
 	font-size: 180%;
 }
 
 .help_ui h1 {
-	color: #ffffff;
+	color: #ffd54f;
 	font-size: 180%;
 	margin-top: 0.8em;
 	margin-bottom: 0.3em;
 }
 
 .help_ui h2 {
-	color: #ffffff;
+	color: #f2f2f2;
 	font-size: 150%;
 	margin-top: 0.8em;
 	margin-bottom: 0.3em;
@@ -63,8 +65,8 @@ header.global_header a {
 .help_ui .note-block {
 	margin: 1em auto;
 	padding: 1em 1em;
-	background-color: #9020c0;
-	border-left: 0.3em solid #aaaaaa;
+	background-color: #1e1e1e;
+	border-left: 0.3em solid #ffd54f;
 }
 
 .help_ui div.clear {
@@ -72,5 +74,5 @@ header.global_header a {
 }
 
 div.knob_action {
-	color: #ffffff;
+	color: #f2f2f2;
 }

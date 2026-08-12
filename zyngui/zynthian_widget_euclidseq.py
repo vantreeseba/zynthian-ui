@@ -75,7 +75,8 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
         self.canvas_width = 420
         self.canvas_height = 350 
         self.control_panel_width = 160
-        self.scale = 2 
+        self.scale = 2
+        self.update_scaled_fonts()
 
         self.graph_x = [4, 77, 150, 4, 77, 150]
         self.graph_y = [20, 20, 20, 110, 110, 110]
@@ -177,9 +178,9 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
         self.control_widgets = {}
         parent = self.controls_frame
     
-        label_font = tkFont.Font(family=zynthian_gui_config.font_family_mono, size=10)
-        button_font = tkFont.Font(family=zynthian_gui_config.font_family_mono, size=10, weight="bold")
-        channel_label_font = tkFont.Font(family=zynthian_gui_config.font_family_mono, size=12, weight="bold")
+        label_font = tkFont.Font(family=zynthian_gui_config.font_family_mono, size=zynthian_gui_config.font_size_small)
+        button_font = tkFont.Font(family=zynthian_gui_config.font_family_mono, size=zynthian_gui_config.font_size_small, weight="bold")
+        channel_label_font = tkFont.Font(family=zynthian_gui_config.font_family_mono, size=zynthian_gui_config.font_size_base, weight="bold")
 
         # Create Mode button first
         mode_frame = tk.Frame(parent, bg=parent["bg"])
@@ -541,7 +542,7 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
             if len(coords) > 1: self.canvas.create_polygon(coords,fill="",outline=zynthian_gui_config.color_tx,width=1)
             elif len(coords)==1: self.canvas.create_line(base_x+target_r,base_y+target_r,coords[0][0],coords[0][1],fill=zynthian_gui_config.color_tx,width=1)
             
-            color = zynthian_gui_config.color_ml if k==self.select_ch else zynthian_gui_config.color_info
+            color = zynthian_gui_config.color_select if k==self.select_ch else zynthian_gui_config.color_info
             for x,y in coords: self.canvas.create_oval(x-3,y-3,x+3,y+3,fill=color,outline=color)
 
     def draw_play_positions(self):
@@ -561,23 +562,27 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
             if filled: self.canvas.create_oval(x-8,y-8,x+8,y+8,fill=zynthian_gui_config.color_tx,outline=zynthian_gui_config.color_tx)
             else: self.canvas.create_oval(x-6,y-6,x+6,y+6,outline=zynthian_gui_config.color_tx,width=2)
 
+    def update_scaled_fonts(self):
+        # Precompute scale-dependent font tuples so perform_draw doesn't rebuild them per frame
+        self.note_font = (zynthian_gui_config.font_family_mono, int(10*self.scale/1.5), "bold")
+        self.chan_font = (zynthian_gui_config.font_family_mono, int(8*self.scale/1.5), "normal")
+        self.ch_label_font = (zynthian_gui_config.font_family, 16, "bold")
+
     def draw_labels(self):
-        note_font = (zynthian_gui_config.font_family_mono, int(10*self.scale/1.5), "bold")
-        chan_font = (zynthian_gui_config.font_family_mono, int(8*self.scale/1.5), "normal")
         radius = 25*self.scale
 
         for k in range(self.channels):
             cx = self.graph_x[k]*self.scale + radius
             cy = self.graph_y[k]*self.scale + radius
-            
+
             if k == self.select_ch:
                 size=10*self.scale*0.8
-                self.canvas.create_rectangle(cx-size,cy-size,cx+size,cy+size,fill=zynthian_gui_config.color_panel_hl,outline=zynthian_gui_config.color_ml,width=2)
-            
-            self.canvas.create_text(cx,cy,text=f"{self.note_numbers[k]}",fill=zynthian_gui_config.color_hl,font=note_font)
+                zynthian_gui_config.create_round_rect(self.canvas,cx-size,cy-size,cx+size,cy+size,zynthian_gui_config.corner_radius,fill=zynthian_gui_config.color_panel_hl,outline=zynthian_gui_config.color_select,width=2)
+
+            self.canvas.create_text(cx,cy,text=f"{self.note_numbers[k]}",fill=zynthian_gui_config.color_hl,font=self.note_font)
 
             label_y_pos = cy + radius - 115
-            self.canvas.create_text(cx, label_y_pos, text=f"Ch: {k+1}", fill=zynthian_gui_config.color_on, font=(zynthian_gui_config.font_family, 16, "bold"))
+            self.canvas.create_text(cx, label_y_pos, text=f"Ch: {k+1}", fill=zynthian_gui_config.color_on, font=self.ch_label_font)
 
     def calculate_circle_hit_areas(self):
         r=25*self.scale; self.circle_hit_areas=[(self.graph_x[k]*self.scale+r, self.graph_y[k]*self.scale+r,r) for k in range(self.channels)]

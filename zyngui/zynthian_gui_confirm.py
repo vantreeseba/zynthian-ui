@@ -48,7 +48,7 @@ class zynthian_gui_confirm(zynthian_gui_fullscreen_modal):
         # Main Frame
         super().__init__()
 
-        self.text_fs = int(1.5 * zynthian_gui_config.font_size)
+        self.text_fs = zynthian_gui_config.font_size_title
         self.button_fs = 2 * zynthian_gui_config.font_size
 
         self.text = tkinter.StringVar()

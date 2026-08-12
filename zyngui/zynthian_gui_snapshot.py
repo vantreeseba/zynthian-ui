@@ -191,13 +191,19 @@ class zynthian_gui_snapshot(zynthian_gui_selector_info):
 
         self.change_index_offset(i)
 
+        n_snapshots = 0
         for fpath in sorted(glob(f"{self.sm.snapshot_dir}/{self.sm.snapshot_bank}/*.zss")):
             if isfile(fpath):
                 title = basename(fpath)[:-4].replace(';', '>', 1).replace(';', '/')
                 self.list_data.append((fpath, i, title))
                 i += 1
+                n_snapshots += 1
                 if fpath == self.sm.last_snapshot_fpath:
                     self.index = i + 1
+        if n_snapshots == 0:
+            # Same non-selectable row convention as the "> Saved snapshots:"
+            # header: action None rows render as labels.
+            self.list_data.append((None, None, "No snapshots in this bank yet"))
 
     def fill_list(self):
         self.check_bankless_mode()

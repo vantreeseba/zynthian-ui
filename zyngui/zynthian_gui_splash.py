@@ -52,10 +52,12 @@ class zynthian_gui_splash(zynthian_gui_fullscreen_modal):
 
     def show(self, text):
         font_family = zynthian_gui_config.font_family
+        # font_size is defined during config UI init; fall back to the default token
+        base_font_size = getattr(zynthian_gui_config, "font_size", 16)
         if len(text) > 40:
-            font_size = 28
+            font_size = int(1.75 * base_font_size)
         else:
-            font_size = 36
+            font_size = int(2.25 * base_font_size)
         strlen = len(text) * font_size / 2
         pos_x = self.width / 2 - strlen / 2
         pos_y = int(self.height / 10)
@@ -68,9 +70,16 @@ class zynthian_gui_splash(zynthian_gui_fullscreen_modal):
 
             img = Image.open(boot_file).convert("RGB")
             draw = ImageDraw.Draw(img)
-            #font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-            font_path = "/usr/share/fonts/truetype/Audiowide/Audiowide-Regular.ttf"
-            draw.text((pos_x, pos_y), text, fill="white", font=ImageFont.truetype(font_path, font_size))
+            try:
+                # Brand display font, if installed
+                font = ImageFont.truetype("/usr/share/fonts/truetype/Audiowide/Audiowide-Regular.ttf", font_size)
+            except OSError:
+                try:
+                    # PIL needs a filename, not a Tk family name: "Exo 2" -> "Exo2-Regular.ttf"
+                    font = ImageFont.truetype("".join(font_family.split()) + "-Regular.ttf", font_size)
+                except OSError:
+                    font = ImageFont.truetype("DejaVuSans.ttf", font_size)
+            draw.text((pos_x, pos_y), text, fill=zynthian_gui_config.color_tx, font=font)
             img.save(fpath, "PNG")
 
             self.img = tkinter.PhotoImage(file=fpath)

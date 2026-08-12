@@ -47,8 +47,7 @@ class zynthian_gui_midi_cc_range(zynthian_gui_base):
         self.text_color = zynthian_gui_config.color_tx
         self.plot_color = zynthian_gui_config.color_on
         self.axis_color = zynthian_gui_config.color_hl
-        #self.font_axis = ("sans", zynthian_gui_config.font_size)
-        self.font_axis = (zynthian_gui_config.font_family, int(1.0 * zynthian_gui_config.font_size))
+        self.font_axis = (zynthian_gui_config.font_family, zynthian_gui_config.font_size)
 
         self.main_frame.rowconfigure(0, weight=1)
         self.main_frame.rowconfigure(1, weight=1)

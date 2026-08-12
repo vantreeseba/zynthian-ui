@@ -210,7 +210,7 @@ class zynthian_gui_midi_key_range(zynthian_gui_base):
             return f"{note_names[num]}{scale}"
 
     def plot_text(self):
-        fs = int(1.7 * zynthian_gui_config.font_size)
+        fs = zynthian_gui_config.font_size_title
 
         self.nlow_text = tkinter.Label(self.note_info_frame,
                                        fg=zynthian_gui_config.color_ctrl_tx,
@@ -331,7 +331,7 @@ class zynthian_gui_midi_key_range(zynthian_gui_base):
     def enter_midi_learn(self):
         self.learn_mode = -1
         self.learn_text['text'] = "learning..."
-        self.learn_text['fg'] = zynthian_gui_config.color_ml
+        self.learn_text['fg'] = zynthian_gui_config.color_info
 
     def exit_midi_learn(self):
         self.learn_mode = 0

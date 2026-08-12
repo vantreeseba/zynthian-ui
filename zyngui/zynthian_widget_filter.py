@@ -172,7 +172,6 @@ class zynthian_widget_filter(zynthian_widget_base.zynthian_widget_base):
         for db in self.db_ticks:
             y = self.m_t + gh * (1.0 - (db - self.db_min) / self.db_range)
             self.widget_canvas.create_line(self.m_l, y, self.width - self.m_r, y, fill=self.grid_color, dash=dash, tags="grid")
-            #self.widget_canvas.create_text(5, y, text=f"{db} dB", fill=zynthian_gui_config.color_tx, anchor="w", font=("sans", 8), tags="grid")
 
         # Evenly spaced vertical gridlines (linear spacing)
         num_vlines = 8

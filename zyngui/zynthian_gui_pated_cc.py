@@ -287,7 +287,12 @@ class zynthian_gui_pated_cc(zynthian_gui_pated_base):
             coord[3] = coord[1] + self.marker_width
             coord[0] -= self.marker_width
             coord[1] -= self.marker_width
-            self.grid_canvas.create_rectangle(coord, fill=zynthian_gui_config.color_tx, width=0, tags=("ccevent", f"step{step}"))
+            # Radius capped by the marker's own half-size so the tiny CC
+            # marker keeps a valid rounded shape.
+            zynthian_gui_config.create_round_rect(
+                self.grid_canvas, coord[0], coord[1], coord[2], coord[3],
+                radius=min(zynthian_gui_config.corner_radius, self.marker_width),
+                fill=zynthian_gui_config.color_tx, width=0, tags=("ccevent", f"step{step}"))
 
     # Function to update selectedCell
     # step: Step (column) of selected cell (Optional - default to reselect current column)
@@ -341,11 +346,14 @@ class zynthian_gui_pated_cc(zynthian_gui_pated_base):
             coord[3] = coord[1] + sw
             coord[0] -= sw
             coord[1] -= sw
-        if not self.rect_selected_cell:
-            self.rect_selected_cell = self.grid_canvas.create_rectangle(coord, fill=SELECT_BORDER, outline=SELECT_BORDER,
-                                                     width=self.select_thickness, tags="selected_cell")
-        else:
-            self.grid_canvas.coords(self.rect_selected_cell, coord)
+        # Rounded cursor: smoothed polygons can't be resized with a 4-value
+        # coords() call, so recreate on move (user-paced, not per-frame).
+        if self.rect_selected_cell:
+            self.grid_canvas.delete(self.rect_selected_cell)
+        self.rect_selected_cell = zynthian_gui_config.create_round_rect(
+            self.grid_canvas, coord[0], coord[1], coord[2], coord[3],
+            radius=zynthian_gui_config.corner_radius, fill=SELECT_BORDER, outline=SELECT_BORDER,
+            width=self.select_thickness, tags="selected_cell")
         self.grid_canvas.tag_raise(self.rect_selected_cell)
 
 

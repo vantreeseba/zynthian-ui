@@ -30,6 +30,7 @@ import tkinter
 import logging
 from math import ceil
 from queue import Queue
+from functools import lru_cache
 from xml.dom import minidom
 import tkinter.font as tkfont
 
@@ -46,6 +47,18 @@ from zyngui.zynthian_gui_base import zynthian_gui_base
 EVENT_DRAW_NORMAL = 0       # Draw as normal event
 EVENT_DRAW_CP = 1           # Draw as copied into the copy/paste buffer
 EVENT_DRAW_SEL = 2          # Draw as selected event
+
+
+# Velocity-shaded cell fill: green for normal events, blue for selected,
+# yellow for the copy/paste buffer. 128 velocities x 3 modes, rebuilt for
+# every event on every grid redraw, so the string formatting is memoized.
+@lru_cache(maxsize=512)
+def get_velocity_fill(velocity_colour, mode):
+    if mode == EVENT_DRAW_CP:
+        return f"#{velocity_colour:02x}{velocity_colour:02x}{velocity_colour//3:02x}"
+    if mode == EVENT_DRAW_SEL:
+        return f"#{velocity_colour//2:02x}{velocity_colour//2:02x}{velocity_colour:02x}"
+    return f"#{velocity_colour//2:02x}{velocity_colour:02x}{velocity_colour//2:02x}"
 
 EDIT_PARAM_DUR = 0          # Edit event duration
 EDIT_PARAM_VEL = 1          # Edit event velocity
@@ -924,17 +937,13 @@ class zynthian_gui_pated_notes(zynthian_gui_pated_base):
         #logging.debug(f"DRAWING EVENT AT CELL {step}, {row}")
 
         velocity_colour = evdata.val2_start + 70
+        fill_colour = get_velocity_fill(velocity_colour, mode)
         if mode == EVENT_DRAW_CP:
             cell_tag = f"cp_{step},{row}"
             cell_tags = (cell_tag, f"step{step}", "gridcell", "cp")
-            fill_colour = f"#{velocity_colour:02x}{velocity_colour:02x}{velocity_colour//3:02x}"
         else:
             cell_tag = f"pat_{step},{row}"
             cell_tags = (cell_tag, f"step{step}", "gridcell", "pat")
-            if mode == EVENT_DRAW_SEL:
-                fill_colour = f"#{velocity_colour//2:02x}{velocity_colour//2:02x}{velocity_colour:02x}"
-            else:
-                fill_colour = f"#{velocity_colour//2:02x}{velocity_colour:02x}{velocity_colour//2:02x}"
         if evdata.play_freq == 0 or evdata.play_chance == 0:
             stipple = 'gray12'
         else:
@@ -947,7 +956,9 @@ class zynthian_gui_pated_notes(zynthian_gui_pated_base):
             self.grid_canvas.coords(cells[0], coord)
             self.grid_canvas.itemconfig(cells[0], fill=fill_colour, stipple=stipple, tags=cell_tags)
         else:
-            # Create new cell
+            # Create new cell. Stays a plain rectangle: hundreds of cells are
+            # resized via coords() on every grid refresh, which smoothed
+            # polygons can't do, and the extra polygon cost matters on the Pi.
             self.grid_canvas.create_rectangle(coord, width=0, fill=fill_colour, stipple=stipple, tags=cell_tags)
 
         # Redraw cell decoration
@@ -1143,9 +1154,15 @@ class zynthian_gui_pated_notes(zynthian_gui_pated_base):
                 color = "black"
             else:
                 color = "white"
+            # Keymap colours stay the semantic literals "black"/"white" (XML
+            # keymaps may carry arbitrary colours); translate the two piano-key
+            # literals to palette tones only at draw time.
             if color == "black":
-                fill = "white"
+                color = zynthian_gui_config.color_bg
+                fill = zynthian_gui_config.color_tx
             else:
+                if color == "white":
+                    color = zynthian_gui_config.color_tx
                 fill = CANVAS_BACKGROUND
         else:
             fill = CANVAS_BACKGROUND
@@ -1264,11 +1281,14 @@ class zynthian_gui_pated_notes(zynthian_gui_pated_base):
         coord = self.get_cell(step, row, duration, offset)
         coord[0] -= 1
         coord[1] -= 1
-        if not self.rect_selected_cell:
-            self.rect_selected_cell = self.grid_canvas.create_rectangle(coord, fill="", outline=SELECT_BORDER,
-                                                                   width=self.select_thickness, tags="selected_cell")
-        else:
-            self.grid_canvas.coords(self.rect_selected_cell, coord)
+        # Rounded cursor: smoothed polygons can't be resized with a 4-value
+        # coords() call, so recreate on move (user-paced, not per-frame).
+        if self.rect_selected_cell:
+            self.grid_canvas.delete(self.rect_selected_cell)
+        self.rect_selected_cell = zynthian_gui_config.create_round_rect(
+            self.grid_canvas, coord[0], coord[1], coord[2], coord[3],
+            radius=zynthian_gui_config.corner_radius, fill="", outline=SELECT_BORDER,
+            width=self.select_thickness, tags="selected_cell")
         self.grid_canvas.tag_raise(self.rect_selected_cell)
         if step_changed:
             tts_step = f"Step {step + 1}"
