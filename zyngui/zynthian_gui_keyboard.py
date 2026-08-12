@@ -132,7 +132,11 @@ class zynthian_gui_keyboard(zynthian_gui_fullscreen_modal):
         self.highlight_box = zynthian_gui_config.create_round_rect(
             self.key_canvas, x0, y0, x1, y1,
             radius=zynthian_gui_config.corner_radius,
-            outline=zynthian_gui_config.color_select, width=2, fill="")
+            outline=zynthian_gui_config.color_select, width=2, fill="",
+            # Unlike rectangles, polygons swallow clicks across their whole
+            # interior even when unfilled; disable the cursor so the key
+            # underneath keeps receiving presses.
+            state=tkinter.DISABLED)
 
     # Function to draw keyboard
     def refresh_keys(self):
