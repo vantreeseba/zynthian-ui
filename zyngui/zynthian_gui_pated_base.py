@@ -364,6 +364,13 @@ class zynthian_gui_pated_base(zynthian_gui_base):
                                           state="normal",
                                           width=0,
                                           tags="playCursor")
+        # Off-page playhead hint: when the play cursor scrolls out of the
+        # visible step window, an arrow at the strip's edge points to it.
+        self.play_canvas.create_text(0, PLAYHEAD_HEIGHT // 2, text="",
+                                     fill=PLAYHEAD_CURSOR,
+                                     font=(zynthian_gui_config.font_family, PLAYHEAD_HEIGHT - 4),
+                                     state=tkinter.HIDDEN,
+                                     tags="playOffscreen")
         self.play_canvas.grid(column=1, row=1, sticky="ew")
 
         # Create velocity level indicator canvas
@@ -1859,6 +1866,22 @@ class zynthian_gui_pated_base(zynthian_gui_base):
             self.play_canvas.coords("playCursor",
                                     1 + self.playhead * self.step_width, 0,
                                     1 + self.step_width * (self.playhead + 1), PLAYHEAD_HEIGHT)
+        # Point toward the play cursor when it is scrolled off-page so the
+        # transport position stays glanceable. Evaluated every refresh (not
+        # only on playhead change) because scrolling also moves the window.
+        if self.playstate == zynseq.SEQ_STOPPED:
+            hint = None
+        elif step < self.step_offset:
+            hint = ("◀", tkinter.W, self.step_offset * self.step_width + 2)
+        elif step >= self.step_offset + int(self.view_steps):
+            hint = ("▶", tkinter.E, (self.step_offset + int(self.view_steps)) * self.step_width - 2)
+        else:
+            hint = None
+        if hint:
+            self.play_canvas.coords("playOffscreen", hint[2], PLAYHEAD_HEIGHT // 2)
+            self.play_canvas.itemconfig("playOffscreen", text=hint[0], anchor=hint[1], state=tkinter.NORMAL)
+        else:
+            self.play_canvas.itemconfig("playOffscreen", state=tkinter.HIDDEN)
         if (self.zynseq.libseq.isPatternModified()) and self.redraw_pending < 3:
             self.redraw_pending = 3
         if self.redraw_pending:

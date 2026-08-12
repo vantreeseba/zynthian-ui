@@ -81,6 +81,10 @@ class zynthian_gui_launcher_pad():
         self.width = width
         self.chain = chain
         self.phrase = phrase
+        self.flashing = False  # True while queued (starting/stopping) => beat-synced pulse
+        self.flash_bright = None
+        self.flash_dim = None
+        self.playing = False  # True while playing/recording => progress sweep shown
 
         chain_id = self.chain.chain_id
         if chain_id == 0:
@@ -100,6 +104,15 @@ class zynthian_gui_launcher_pad():
                                                 outline="",
                                                 fill=zynthian_gui_config.color_panel_bg,
                                                 tags=(*tags, "launcher_pad"))
+        # Playhead sweep along the pad's bottom edge while playing. Not
+        # tagged "launcher_show" so mode entry can't reveal a stale bar;
+        # update_progress() and set_launcher_mode() manage its state.
+        self.progress_line = self.canvas.create_rectangle(
+            self.x + 2, self.y + self.height - 6, self.x + 2, self.y + self.height - 3,
+            width=0,
+            fill=zynthian_gui_config.color_tx,
+            state=tkinter.HIDDEN,
+            tags=("launcher", "launcher_progress", f"strip_{chain_id}", f"launcher_{chain_id}_{phrase}"))
         if chain_id == 0:
             line_width = int(0.3 * loop_info_width)
             # Loop indicators
@@ -211,12 +224,36 @@ class zynthian_gui_launcher_pad():
         except:
             return None
 
+    def update_progress(self, progress):
+        """ Sweep a thin playhead bar along the pad's bottom edge
+        args:
+            progress: Playback position within the sequence (0..100) or None
+        """
+        if self.playing and progress is not None:
+            x1 = self.x + 2 + int((self.width - 5) * progress / 100)
+            self.canvas.coords(self.progress_line,
+                               self.x + 2, self.y + self.height - 6,
+                               x1, self.y + self.height - 3)
+            self.canvas.itemconfig(self.progress_line, state=tkinter.NORMAL)
+        else:
+            self.canvas.itemconfig(self.progress_line, state=tkinter.HIDDEN)
+
+    def flash_tick(self):
+        """ Beat-synced pulse for queued (starting/stopping) pads """
+        if self.flashing and self.flash_bright:
+            if self.gui_mixer.flash_on:
+                self.canvas.itemconfig(self.pad, fill=self.flash_bright)
+            else:
+                self.canvas.itemconfig(self.pad, fill=self.flash_dim)
+
     def draw(self):
         """ Update the launcher button elements"""
 
         mode_text = ""
         timesig_text = ""
         tempo_text = ""
+        self.flashing = False
+        self.playing = False
         color_mode = self.gui_mixer.legend_txt_color
         color_text = self.gui_mixer.legend_txt_color
         try:
@@ -322,7 +359,7 @@ class zynthian_gui_launcher_pad():
                         else:
                             logging.warning("Loop at level {i} not displayable!")
                         if state_seq["followAction"] == zynseq.FOLLOW_ACTION_NONE:
-                            c2 = "#" + "".join(f"{int(int(c1[i:i+2],16)*0.85):02x}" for i in (1,3,5))
+                            c2 = zynthian_gui_config.color_scale(c1, 0.85)
                         if linfo[0] == self.phrase:
                             self.canvas.itemconfig(loop_top, state=tkinter.NORMAL, fill=c1)
                             repeat = state_seq["followRepeat"]
@@ -423,6 +460,29 @@ class zynthian_gui_launcher_pad():
                     # Live MIDI capture into this pad's pattern
                     color_state = zynthian_gui_config.PAD_COLOUR_RECORDING
                     state_text = "⏺"
+
+                # Progress sweep (update_progress) only shows on pads
+                # actively sounding, not queued or child-playing ones.
+                self.playing = state_seq["state"] in (
+                    zynseq.SEQ_PLAYING, zynseq.SEQ_RECORDING) and not empty
+
+                # Brightness codes activity (dim = has content but idle,
+                # bright = playing); queued pads pulse on the beat via
+                # flash_tick(). Phrase pads (main chain) keep their colour.
+                if self.chain.chain_id and not empty:
+                    st = state_seq["state"]
+                    if st in (zynseq.SEQ_STARTING, zynseq.SEQ_STARTING_RECORD,
+                              zynseq.SEQ_STOPPING, zynseq.SEQ_STOPPING_SYNC,
+                              zynseq.SEQ_STOPPING_RECORD, zynseq.SEQ_CHILD_STOPPING):
+                        self.flashing = True
+                        self.flash_bright = color
+                        self.flash_dim = zynthian_gui_config.color_scale(color, 0.45)
+                        if not self.gui_mixer.flash_on:
+                            color = self.flash_dim
+                    elif st not in (zynseq.SEQ_PLAYING, zynseq.SEQ_RECORDING,
+                                    zynseq.SEQ_CHILD_PLAYING):
+                        # Stopped with content
+                        color = zynthian_gui_config.color_scale(color, 0.55)
         except:
             #logging.exception(traceback.format_exc())
             title = ""
@@ -632,6 +692,17 @@ class zynthian_gui_mixer_strip():
             self.dpm_scale = self.canvas.create_image(self.dpm_scale_x0, self.dpm_y0, anchor="nw", image=self.get_bg_img("dpm", self.dpm_scale_width, self.dpm_length), state=dpm_xstate)
             if self.chain.chain_id == 0:
                 self.dpm_labels = self.canvas.create_image(self.dpm_a_x0, self.dpm_y0, anchor="ne", image=self.get_bg_img("dpm_lbl", parent.loop_info_width, self.dpm_length), state=dpm_xstate)
+        else:
+            # MIDI-only chain: there is no fader, mute or meter to draw. Dim
+            # the empty fader well and caption it so the bare column reads as
+            # intentional rather than as a missing control.
+            self.canvas.itemconfig(self.fader_bg, fill=zynthian_gui_config.color_scale(self.gui_mixer.fader_bg_color, 0.6))
+            self.canvas.create_text(
+                self.centre_x, (self.fader_y + self.legend_y) // 2,
+                text="MIDI", angle=90,
+                fill=zynthian_gui_config.color_scale(zynthian_gui_config.color_tx_off, 0.6),
+                font=(zynthian_gui_config.font_family, zynthian_gui_config.font_size_xs),
+                tags=("fader", f"fader_{id}"))
 
         # Chain title
         self.fader_text = self.canvas.create_text(x, self.legend_y - 2, fill=self.gui_mixer.legend_txt_color, angle=90, anchor="nw", font=self.gui_mixer.font_fader, text="",
@@ -644,15 +715,20 @@ class zynthian_gui_mixer_strip():
             tags = ("legend", f"legend_strip_{id}", "legend_strip_bus")
         else:
             tags = ("legend", f"legend_strip_{id}")
-        self.legend_strip_bg = self.canvas.create_rectangle(x, self.gui_mixer.legend_y, x + self.width, self.gui_mixer.legend_y + self.legend_height - 2, width=0, fill=self.gui_mixer.legend_bg_color, tags=tags)
+        self.legend_strip_bg = zynthian_gui_config.create_round_rect(self.canvas, x, self.gui_mixer.legend_y, x + self.width, self.gui_mixer.legend_y + self.legend_height - 2, radius=zynthian_gui_config.corner_radius, corners=(True, True, False, False), width=0, fill=self.gui_mixer.legend_bg_color, tags=tags)
         self.legend_strip_txt = self.canvas.create_text(self.centre_x, self.gui_mixer.legend_y + self.legend_height / 2, fill=self.gui_mixer.legend_txt_color, text="-", tags=(f"legend_strip_{id}",), font=self.gui_mixer.font)
         self.legend_strip_midi_bg = self.canvas.create_rectangle(x, self.gui_mixer.legend_y + self.legend_height - 2, x + self.width, self.gui_mixer.legend_y + self.legend_height, width=0, fill=self.gui_mixer.legend_bg_color, tags=tags)
         # Chain identity accent: same hue as the chain's launcher pads and
         # controller LEDs. Deliberately not tagged "legend" so the bulk
         # legend recolor in highlight_active_chain() leaves it alone.
         if self.chain.chain_id:
-            self.legend_chain_accent = self.canvas.create_rectangle(
+            # Radius 3 (the bar's own height) rather than corner_radius so the
+            # rounding maths stays valid on a 3px-tall shape; the 1px radius
+            # mismatch with the legend bg underneath is invisible at this size.
+            self.legend_chain_accent = zynthian_gui_config.create_round_rect(
+                self.canvas,
                 x, self.gui_mixer.legend_y, x + self.width, self.gui_mixer.legend_y + 3,
+                radius=3, corners=(True, True, False, False),
                 width=0, fill=zynthian_gui_config.get_chain_color(self.chan),
                 tags=(f"legend_strip_{id}",))
 
@@ -666,7 +742,7 @@ class zynthian_gui_mixer_strip():
                     int(x + self.width / 5 * (col + 1)),
                     self.gui_mixer.legend_y + self.legend_height,
                     width=0,
-                    fill=zynthian_gui_config.color_ml,
+                    fill=zynthian_gui_config.color_info,
                     state=tkinter.HIDDEN
                 )
             )
@@ -1164,6 +1240,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         self.zynseq = self.state_manager.zynseq
         self.bpb = 4
         self.beat = 0
+        self.flash_on = False  # Beat-synced pulse phase for queued launcher pads
         self.rec_countdown_clip = None # (clip label, armed) of clip recording in flight, for punch countdown toasts
         self.chain_strips = [] # List of channel strips excluding main mixbus, indexed by strip position
         self.state_changed = True
@@ -1297,7 +1374,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         self.high_color = zynthian_gui_config.color_tx_off
         self.rec_color = zynthian_gui_config.color_on
         self.mute_color = zynthian_gui_config.color_on
-        self.toggle_color = zynthian_gui_config.color_ml
+        self.toggle_color = zynthian_gui_config.color_select
         self.mono_color = zynthian_gui_config.color_tx_off
         font_size = min(int(0.5 * self.legend_height), int(0.25 * self.width))
         self.font = (zynthian_gui_config.font_family, font_size)
@@ -1527,7 +1604,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         if tempo is None:
             self.status_canvas.itemconfig(self.status_tempo, text=f"{self.zynseq.get_tempo():.1f} bpm")
         else:
-            self.status_canvas.itemconfig(self.status_tempo, fill=zynthian_gui_config.color_ml, text=f"{tempo:.1f} bpm")
+            self.status_canvas.itemconfig(self.status_tempo, fill=zynthian_gui_config.color_info, text=f"{tempo:.1f} bpm")
             Timer(0.6, self.clear_tempo_highlight).start()
 
     def clear_tempo_highlight(self):
@@ -1535,7 +1612,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
 
     def set_bpb(self, bpb):
         self.bpb = bpb
-        self.status_canvas.itemconfig(self.status_timesig, fill=zynthian_gui_config.color_ml, text=f"{self.beat} | {bpb}/4")
+        self.status_canvas.itemconfig(self.status_timesig, fill=zynthian_gui_config.color_info, text=f"{self.beat} | {bpb}/4")
         Timer(0.6, self.clear_timesig_highlight).start()
 
     def clear_timesig_highlight(self):
@@ -1562,6 +1639,12 @@ class zynthian_gui_mixer(zynthian_gui_base):
             if self.beat != self.zynseq.beat:
                 self.beat = self.zynseq.beat
                 self.status_canvas.itemconfig(self.status_timesig, text=f"{self.beat} | {self.bpb}/4")
+                # Pulse queued launcher pads in time with the beat
+                self.flash_on = not self.flash_on
+                if self.launcher_mode and not self.state_changed:
+                    for strip in self.chain_strips:
+                        for launcher in strip.launchers:
+                            launcher.flash_tick()
                 if self.launcher_mode and self.rec_countdown_clip:
                     # Beats remaining until the pending record punch in/out
                     beats = self.zynseq.libseq.getPunchBeatsRemaining()
@@ -1588,9 +1671,17 @@ class zynthian_gui_mixer(zynthian_gui_base):
                         strip.canvas.itemconfig(strip.midi_indicator, state=tkinter.HIDDEN)
                 # Update progress indicators
                 if strip.chain.midi_chan is not None and strip.chain.midi_chan < 32:
-                    strip.update_clip_progress(self.zynseq.progress[strip.chain.midi_chan])
+                    progress = self.zynseq.progress[strip.chain.midi_chan]
                 elif strip.chain.chain_id == 0:
-                    strip.update_clip_progress(self.zynseq.progress[32])
+                    progress = self.zynseq.progress[32]
+                else:
+                    progress = None
+                if progress is not None:
+                    strip.update_clip_progress(progress)
+                if self.launcher_mode:
+                    # Sweep the playhead along playing launcher pads
+                    for launcher in strip.launchers:
+                        launcher.update_progress(progress)
 
     def plot_zctrls(self):
         """Function to refresh display (fast)
@@ -2017,6 +2108,8 @@ class zynthian_gui_mixer(zynthian_gui_base):
             self.right_canvas.itemconfig("fader_horizontal", state=tkinter.HIDDEN)
             self.left_canvas.itemconfig("launcher_show", state=tkinter.HIDDEN)
             self.right_canvas.itemconfig("launcher_show", state=tkinter.HIDDEN)
+            self.left_canvas.itemconfig("launcher_progress", state=tkinter.HIDDEN)
+            self.right_canvas.itemconfig("launcher_progress", state=tkinter.HIDDEN)
             if self.shown:
                 self.zyngui.current_screen = "mixer"
             self.tts_title = "Mixer"
@@ -2964,6 +3057,39 @@ class zynthian_gui_mixer(zynthian_gui_base):
         # Knob#4 sets main mixbus balance
         elif i == 3:
             self.chain_strips[-1].set_balance((val * 2) - 1)
+
+    def get_zynpot_labels(self):
+        """ Encoder legend labels, mirroring zynpot_cb's mapping """
+
+        labels = [None, None, None, None]
+        strip = self.highlighted_strip
+        if strip is not None and strip.chain and strip.chain.zynmixer_proc:
+            ctrls = strip.chain.zynmixer_proc.controllers_dict
+            try:
+                labels[0] = ("Volume", str(ctrls["level"].get_value2label()))
+            except Exception:
+                labels[0] = ("Volume", None)
+            try:
+                labels[1] = ("Balance", str(ctrls["balance"].get_value2label()))
+            except Exception:
+                labels[1] = ("Balance", None)
+        try:
+            main_ctrls = self.chain_strips[-1].chain.zynmixer_proc.controllers_dict
+            labels[2] = ("Main", str(main_ctrls["level"].get_value2label()))
+        except Exception:
+            labels[2] = ("Main", None)
+        if self.moving_chain:
+            labels[3] = ("Move chain", None)
+        else:
+            try:
+                labels[3] = ("Chain", self.chain_manager.get_active_chain().get_name())
+            except Exception:
+                labels[3] = ("Chain", None)
+        # In launcher mode one encoder is claimed for the vertical cursor
+        # (same precedence as in zynpot_cb)
+        if self.launcher_mode:
+            labels[zynthian_gui_config.layout["ctrl_order"][2]] = ("Scroll", None)
+        return labels
 
     def zynpot_cb(self, i, dval):
         """ Function to handle zynpot callback
