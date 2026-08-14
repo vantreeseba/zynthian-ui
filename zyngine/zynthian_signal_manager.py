@@ -171,23 +171,22 @@ class zynthian_signal_manager:
     def unregister(self, signal, subsignal, callback):
         if 0 <= signal <= self.last_signal and 0 <= subsignal <= self.last_subsignal:
             # logging.debug(f"Unregistering callback '{callback.__name__}()' from signal({signal},{subsignal})")
-            n = 0
-            for k, rdata in enumerate(self.signal_register[signal][subsignal]):
-                if rdata[0] == callback:
-                    del self.signal_register[signal][subsignal][k]
-                    n += 1
+            register = self.signal_register[signal][subsignal]
+            kept = [rdata for rdata in register if rdata[0] != callback]
+            n = len(register) - len(kept)
+            self.signal_register[signal][subsignal] = kept
             if n == 0:
                 #logging.warning(f"Callback not registered for signal({signal},{subsignal})")
                 pass
 
     def unregister_all(self, callback):
         n = 0
-        for i in range(self.last_signal):
-            for j in range(self.last_subsignal):
-                for k, rdata in enumerate(self.signal_register[i][j]):
-                    if rdata[0] == callback:
-                        del self.signal_register[i][j][k]
-                        n += 1
+        for i in range(self.last_signal + 1):
+            for j in range(self.last_subsignal + 1):
+                register = self.signal_register[i][j]
+                kept = [rdata for rdata in register if rdata[0] != callback]
+                n += len(register) - len(kept)
+                self.signal_register[i][j] = kept
         if n == 0:
             logging.warning(f"Callback not registered")
 
