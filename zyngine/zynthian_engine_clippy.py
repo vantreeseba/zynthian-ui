@@ -796,9 +796,14 @@ class zynthian_engine_clippy(zynthian_engine):
     def cleanup_recording(self, processor, phrase):
         """Abort path: free clippy recorder resources and clear tracking"""
 
-        rec = self.recordings.pop((processor, phrase), None)
+        rec = self.recordings.get((processor, phrase))
         if rec is None:
             return
+        if rec.get("state") == "saving":
+            # The clippy_save thread owns teardown now: disarming here would
+            # shrink/free the clip buffers saveClip() is still reading
+            return
+        self.recordings.pop((processor, phrase), None)
         self.libclippy.disarmRecord()
         if not rec.get("free"):
             self.state_manager.stop_record_metronome()
