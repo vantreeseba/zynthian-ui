@@ -171,8 +171,10 @@ jack_nframes_t process_clip(uint8_t channel, Clip* clip, jack_nframes_t frames, 
     // Out of range
     if (pos >= clip->frames)
         return 0;
-    // Last fragment
-    if (pos >= clip->frames - frames)
+    // Last fragment. Compare this way round: clip->frames - frames would
+    // wrap for clips shorter than one period (possible for recorded takes),
+    // skipping the clamp and reading past the clip buffer.
+    if (frames > clip->frames - (uint32_t)pos)
         frames = clip->frames - pos;
 
     float gain;
