@@ -85,6 +85,7 @@ class zynthian_gui_launcher_pad():
         self.flash_bright = None
         self.flash_dim = None
         self.playing = False  # True while playing/recording => progress sweep shown
+        self.progress_shown = False  # Mirrors progress_line visibility to skip no-op canvas calls
 
         chain_id = self.chain.chain_id
         if chain_id == 0:
@@ -237,9 +238,12 @@ class zynthian_gui_launcher_pad():
             self.canvas.coords(self.progress_line,
                                self.x + 2, self.y + self.height - 6,
                                x1, self.y + self.height - 3)
-            self.canvas.itemconfig(self.progress_line, state=tkinter.NORMAL)
-        else:
+            if not self.progress_shown:
+                self.canvas.itemconfig(self.progress_line, state=tkinter.NORMAL)
+                self.progress_shown = True
+        elif self.progress_shown:
             self.canvas.itemconfig(self.progress_line, state=tkinter.HIDDEN)
+            self.progress_shown = False
 
     def flash_tick(self):
         """ Beat-synced pulse for queued (starting/stopping) pads """
@@ -2138,6 +2142,9 @@ class zynthian_gui_mixer(zynthian_gui_base):
             self.right_canvas.itemconfig("launcher_show", state=tkinter.HIDDEN)
             self.left_canvas.itemconfig("launcher_progress", state=tkinter.HIDDEN)
             self.right_canvas.itemconfig("launcher_progress", state=tkinter.HIDDEN)
+            for strip in self.chain_strips:
+                for launcher in strip.launchers:
+                    launcher.progress_shown = False
             if self.shown:
                 self.zyngui.current_screen = "mixer"
             self.tts_title = "Mixer"
