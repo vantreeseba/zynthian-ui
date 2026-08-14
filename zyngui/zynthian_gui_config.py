@@ -725,7 +725,7 @@ mixer_toggle = os.environ.get('ZYNTHIAN_UI_MIXER_TOGGLE', "record")
 # loop. ui_status_fps drives the slower status loop: DPM meters, beat
 # counter, pattern editor playhead, MIDI activity. Higher rates cost CPU.
 ui_fps = max(1, min(60, get_env_int('ZYNTHIAN_UI_FPS', 30)))
-ui_status_fps = max(1, min(60, get_env_int('ZYNTHIAN_UI_STATUS_FPS', 10)))
+ui_status_fps = max(1, min(60, get_env_int('ZYNTHIAN_UI_STATUS_FPS', 15)))
 
 # Encoder legend: bottom strip labelling what each encoder does on screens
 # that provide labels (see zynthian_gui_base.get_zynpot_labels). Can also be
