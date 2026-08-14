@@ -53,6 +53,9 @@ class zynthian_widget_audio_file(zynthian_widget_base.zynthian_widget_base):
         self.rows //= 2
 
         self.zctrl = None
+        # show() runs on every controller-page pass without a matching
+        # hide(), so guard the signal registration or callbacks pile up
+        self.rec_state_registered = False
         self.fpath = ""
         self.fname = ""
         self.sf = None
@@ -159,11 +162,13 @@ class zynthian_widget_audio_file(zynthian_widget_base.zynthian_widget_base):
     def show(self):
         self.refreshing = False
         super().show()
-        if self.clip_info:
+        if self.clip_info and not self.rec_state_registered:
+            self.rec_state_registered = True
             zynsigman.register_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE, self.clippy_rec_cb)
 
     def hide(self):
-        if self.clip_info:
+        if self.rec_state_registered:
+            self.rec_state_registered = False
             zynsigman.unregister(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE, self.clippy_rec_cb)
         super().hide()
 
