@@ -84,6 +84,11 @@ class zynthian_gui_dpm():
         self.hold_thickness = 1
         self.mono = 0
         self.over_id = None
+        # Last drawn positions/config: refresh() runs every status tick for
+        # every meter, so identical values must not reach the canvas
+        self._last_dpm = None
+        self._last_hold = None
+        self._last_hold_cfg = None
 
         # ---------------------------------------------
         # Compute bounds for initial position
@@ -163,6 +168,9 @@ class zynthian_gui_dpm():
         self.y1 = y0 + height
 
         coords = self._compute_bounds()
+        self._last_dpm = None
+        self._last_hold = None
+        self._last_hold_cfg = None
 
         self.parent.itemconfig(self.bg_image, image=self.get_bg(width, height))
         self.parent.coords(self.bg_image, *coords['bg_image'])
@@ -191,37 +199,46 @@ class zynthian_gui_dpm():
 
         if self.vertical:
             y1 = int(self.y0 + self.height * k_dpm)
-            self.parent.coords(self.overlay, (self.x0, self.y0, self.x1, y1))
+            if y1 != self._last_dpm:
+                self._last_dpm = y1
+                self.parent.coords(self.overlay, (self.x0, self.y0, self.x1, y1))
             y1 = int(self.y0 + self.height * k_hold)
-            self.parent.coords(self.hold, (self.x0, y1, self.x1, y1 + self.hold_thickness))
+            if y1 != self._last_hold:
+                self._last_hold = y1
+                self.parent.coords(self.hold, (self.x0, y1, self.x1, y1 + self.hold_thickness))
             if y1 <= self.y_over:
-                self.parent.itemconfig(self.hold, state=NORMAL, fill=self.over_hold_color)
+                cfg = self.over_hold_color
             elif y1 <= self.y_high:
-                self.parent.itemconfig(self.hold, state=NORMAL, fill=self.high_hold_color)
+                cfg = self.high_hold_color
             elif y1 < self.y_low:
-                if self.mono:
-                    self.parent.itemconfig(self.hold, state=NORMAL, fill=self.mono_color)
-                else:
-                    self.parent.itemconfig(self.hold, state=NORMAL, fill=self.low_hold_color)
+                cfg = self.mono_color if self.mono else self.low_hold_color
             else:
-                self.parent.itemconfig(self.hold, state=HIDDEN)
+                cfg = None
 
         else:
             x0 = int(self.width - self.width * k_dpm)
-            self.parent.coords(self.overlay, (x0, self.y0, self.x1, self.y1))
+            if x0 != self._last_dpm:
+                self._last_dpm = x0
+                self.parent.coords(self.overlay, (x0, self.y0, self.x1, self.y1))
             x0 = int(self.width - self.width * k_hold)
-            self.parent.coords(self.hold, (x0, self.y0, x0 + self.hold_thickness, self.y1))
+            if x0 != self._last_hold:
+                self._last_hold = x0
+                self.parent.coords(self.hold, (x0, self.y0, x0 + self.hold_thickness, self.y1))
             if x0 > self.x_over:
-                self.parent.itemconfig(self.hold, state=NORMAL, fill=self.over_hold_color)
+                cfg = self.over_hold_color
             elif x0 > self.x_high:
-                self.parent.itemconfig(self.hold, state=NORMAL, fill=self.high_hold_color)
+                cfg = self.high_hold_color
             elif x0 > self.x_low:
-                if self.mono:
-                    self.parent.itemconfig(self.hold, state=NORMAL, fill=self.mono_hold_color)
-                else:
-                    self.parent.itemconfig(self.hold, state=NORMAL, fill=self.low_hold_color)
+                cfg = self.mono_hold_color if self.mono else self.low_hold_color
             else:
+                cfg = None
+
+        if cfg != self._last_hold_cfg:
+            self._last_hold_cfg = cfg
+            if cfg is None:
                 self.parent.itemconfig(self.hold, state=HIDDEN)
+            else:
+                self.parent.itemconfig(self.hold, state=NORMAL, fill=cfg)
 
         if self.main and dpm >= 0.0:
             self.parent.itemconfig(self.over_indicator, state=NORMAL)
