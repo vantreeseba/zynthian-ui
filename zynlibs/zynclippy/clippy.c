@@ -109,6 +109,7 @@ typedef struct {
     float* tail[2];         // Aliases of the committed clip's alloc[] whilst capturing the latency tail (not owned)
     Clip* pending_clip;     // Preallocated clip shell committed at punch-out (RT-safe pointer swap)
     Clip* old_clip;         // Clip displaced at commit, freed later by disarmRecord()
+    Clip* committed_clip;   // Clip committed at punch-out, shrink-wrapped by disarmRecord() (not owned)
 } Recorder;
 
 static Recorder g_recorder = {REC_IDLE}; // Single global recorder => only one clip records at a time
@@ -404,6 +405,7 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                     // otherwise it doubles the playback until the UI catches up
                     rp->monitor = 0;
                 g_recorder.pending_clip = NULL;
+                g_recorder.committed_clip = clip;
                 if (latency) {
                     // Keep capturing until the loop's tail (delayed by the
                     // latency) has fully arrived. The buffer is now owned by
@@ -779,6 +781,8 @@ uint8_t removePlayer(uint8_t channel) {
     releaseMutex();
     for (uint32_t id = 0; id < MAX_CLIPS; ++id) {
         if (player->clips[id]) {
+            if (player->clips[id] == g_recorder.committed_clip)
+                g_recorder.committed_clip = NULL;
             for (int i=0; i < player->clips[id]->channels; i++)
                 free(player->clips[id]->alloc[i]);
             free(player->clips[id]);
@@ -1246,6 +1250,8 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
         player->current_clip_id = -1;
         releaseMutex();
     }
+    if (clip == g_recorder.committed_clip)
+        g_recorder.committed_clip = NULL;
     player->clips[id] = NULL;
     for (int i=0; i < clip->channels; i++)
         free(clip->alloc[i]);
@@ -1313,6 +1319,7 @@ uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, 
     g_recorder.tail[1] = NULL;
     g_recorder.pending_clip = clip;
     g_recorder.old_clip = NULL;
+    g_recorder.committed_clip = NULL;
     getMutex();
     g_recorder.state = REC_ARMED;
     releaseMutex();
@@ -1320,6 +1327,45 @@ uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, 
 }
 
 uint8_t disarmRecord() {
+    // Shrink the committed clip's buffers from the armRecord() capacity
+    // (default 120s/channel) down to what the take actually used, else every
+    // recorded clip retains the full capture allocation for its lifetime.
+    // The copy happens here on the UI thread while the audio thread can
+    // still play the old buffers; it only ever sees the swap, under mutex.
+    // Skipped while REC_FINISHING: the tail capture still writes data[].
+    Clip* clip = g_recorder.committed_clip;
+    if (clip && g_recorder.state == REC_DONE) {
+        uint32_t offset = (uint32_t)(clip->data[0] - clip->alloc[0]);
+        uint32_t used = offset + clip->frames;
+        if (used < g_recorder.max_frames) {
+            float* shrunk[2] = {NULL, NULL};
+            uint8_t ok = 1;
+            for (int i = 0; i < clip->channels; i++) {
+                shrunk[i] = malloc(used * sizeof(float));
+                if (shrunk[i])
+                    memcpy(shrunk[i], clip->alloc[i], used * sizeof(float));
+                else
+                    ok = 0;
+            }
+            if (ok) {
+                float* old[2] = {clip->alloc[0], clip->alloc[1]};
+                getMutex();
+                for (int i = 0; i < clip->channels; i++) {
+                    clip->alloc[i] = shrunk[i];
+                    clip->data[i] = shrunk[i] + offset;
+                }
+                if (clip->channels == 1)
+                    clip->data[1] = clip->data[0];
+                releaseMutex();
+                for (int i = 0; i < clip->channels; i++)
+                    free(old[i]);
+            } else {
+                free(shrunk[0]);
+                free(shrunk[1]);
+            }
+        }
+    }
+    g_recorder.committed_clip = NULL;
     getMutex();
     g_recorder.state = REC_IDLE;
     // tail[] alias the committed clip's buffer (owned by the clip) => drop, don't free
