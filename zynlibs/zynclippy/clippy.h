@@ -263,6 +263,22 @@ uint32_t getFileFrames(const char* path);
 */
 uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, uint32_t max_frames);
 
+/** @brief  Pre-allocate and prefault capture buffers for the next armRecord()
+    @param  channels Quantity of channels to prepare (1 or 2)
+    @param  max_frames Capture buffer capacity in frames (0 for default MAX_DURATION * samplerate)
+    @retval uint8_t Error code (ERROR_EXISTS if another thread holds the prewarm lock)
+    @note   Allocating and prefaulting the default capacity takes tens of ms,
+            so call this from a background thread after init and after each
+            disarmRecord(). armRecord() claims the prepared buffers when the
+            size fits (a stereo prewarm also serves a mono take) and falls
+            back to allocating inline when it doesn't.
+*/
+uint8_t prewarmRecordBuffer(uint8_t channels, uint32_t max_frames);
+
+/** @brief  Free any prewarmed capture buffers (called by end())
+*/
+void freePrewarmBuffer();
+
 /** @brief  Disarm the recorder from any state, freeing uncommitted capture buffers
     @retval uint8_t Error code
     @note   Must be called after REC_DONE (post save), REC_ABORTED or REC_OVERFLOW.

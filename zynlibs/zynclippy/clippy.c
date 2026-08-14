@@ -657,6 +657,7 @@ static int onSamplerate(jack_nframes_t frames, __attribute__((unused)) void* arg
 
 void end() {
     disarmRecord();
+    freePrewarmBuffer();
     for (uint8_t i = 0; i < 16; ++i)
         removePlayer(i);
     if (jack_client)
@@ -1274,6 +1275,68 @@ static void prefaultBuffer(float* buffer, size_t frames) {
         p[bytes - 1] = 0;
 }
 
+// Prewarmed capture buffers: allocating and prefaulting the default
+// capture capacity (~23MB/channel) takes tens of ms, too slow for
+// armRecord() when arming comes from a MIDI control surface on the fast
+// MIDI thread. A worker thread fills these ahead of time via
+// prewarmRecordBuffer(); armRecord() claims them if they fit.
+// g_prewarm_busy serializes the (non-RT) claimant threads.
+static float* g_prewarm[2] = {NULL, NULL};
+static uint8_t g_prewarm_channels = 0;
+static uint32_t g_prewarm_frames = 0;
+static uint8_t g_prewarm_ready = 0;
+static volatile uint8_t g_prewarm_busy = 0;
+
+uint8_t prewarmRecordBuffer(uint8_t channels, uint32_t max_frames) {
+    if (channels < 1 || channels > 2)
+        return ERROR_RANGE;
+    if (max_frames == 0)
+        max_frames = MAX_DURATION * samplerate;
+    if (__atomic_exchange_n(&g_prewarm_busy, 1, __ATOMIC_ACQUIRE))
+        return ERROR_EXISTS;
+    uint8_t result = ERROR_SUCCESS;
+    if (g_prewarm_ready && g_prewarm_channels == channels && g_prewarm_frames == max_frames) {
+        // Already warm at the right size
+    } else {
+        if (g_prewarm_ready) {
+            free(g_prewarm[0]);
+            free(g_prewarm[1]);
+            g_prewarm[0] = NULL;
+            g_prewarm[1] = NULL;
+            g_prewarm_ready = 0;
+        }
+        g_prewarm[0] = calloc(max_frames, sizeof(float));
+        g_prewarm[1] = (channels == 2) ? calloc(max_frames, sizeof(float)) : NULL;
+        if (!g_prewarm[0] || (channels == 2 && !g_prewarm[1])) {
+            free(g_prewarm[0]);
+            free(g_prewarm[1]);
+            g_prewarm[0] = NULL;
+            g_prewarm[1] = NULL;
+            result = ERROR_CREATE;
+        } else {
+            prefaultBuffer(g_prewarm[0], max_frames);
+            if (g_prewarm[1])
+                prefaultBuffer(g_prewarm[1], max_frames);
+            g_prewarm_channels = channels;
+            g_prewarm_frames = max_frames;
+            g_prewarm_ready = 1;
+        }
+    }
+    __atomic_store_n(&g_prewarm_busy, 0, __ATOMIC_RELEASE);
+    return result;
+}
+
+void freePrewarmBuffer() {
+    if (__atomic_exchange_n(&g_prewarm_busy, 1, __ATOMIC_ACQUIRE))
+        return;
+    free(g_prewarm[0]);
+    free(g_prewarm[1]);
+    g_prewarm[0] = NULL;
+    g_prewarm[1] = NULL;
+    g_prewarm_ready = 0;
+    __atomic_store_n(&g_prewarm_busy, 0, __ATOMIC_RELEASE);
+}
+
 uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, uint32_t max_frames) {
     // Auto-clean a finished / aborted recording
     if (g_recorder.state == REC_DONE || g_recorder.state == REC_ABORTED || g_recorder.state == REC_OVERFLOW)
@@ -1292,21 +1355,42 @@ uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, 
     memset(clip, 0, sizeof(Clip));
     clip->gain = 1.0f;
     clip->state = STATE_IDLE;
-    // calloc => any uncaptured latency tail is silence
-    g_recorder.data[0] = calloc(max_frames, sizeof(float));
-    g_recorder.data[1] = (channels == 2) ? calloc(max_frames, sizeof(float)) : NULL;
-    if (!g_recorder.data[0] || (channels == 2 && !g_recorder.data[1])) {
-        free(g_recorder.data[0]);
-        free(g_recorder.data[1]);
-        g_recorder.data[0] = NULL;
-        g_recorder.data[1] = NULL;
-        free(clip);
-        return ERROR_CREATE;
+    // Claim the prewarmed buffers if they fit; a stereo prewarm serves a
+    // mono take (the spare channel is just freed — one munmap, cheap)
+    uint8_t claimed = 0;
+    if (!__atomic_exchange_n(&g_prewarm_busy, 1, __ATOMIC_ACQUIRE)) {
+        if (g_prewarm_ready && g_prewarm_frames == max_frames && g_prewarm_channels >= channels) {
+            g_recorder.data[0] = g_prewarm[0];
+            if (channels == 2) {
+                g_recorder.data[1] = g_prewarm[1];
+            } else {
+                g_recorder.data[1] = NULL;
+                free(g_prewarm[1]);
+            }
+            g_prewarm[0] = NULL;
+            g_prewarm[1] = NULL;
+            g_prewarm_ready = 0;
+            claimed = 1;
+        }
+        __atomic_store_n(&g_prewarm_busy, 0, __ATOMIC_RELEASE);
     }
-    // Still on the UI thread: fault the capture pages in before arming
-    prefaultBuffer(g_recorder.data[0], max_frames);
-    if (g_recorder.data[1])
-        prefaultBuffer(g_recorder.data[1], max_frames);
+    if (!claimed) {
+        // calloc => any uncaptured latency tail is silence
+        g_recorder.data[0] = calloc(max_frames, sizeof(float));
+        g_recorder.data[1] = (channels == 2) ? calloc(max_frames, sizeof(float)) : NULL;
+        if (!g_recorder.data[0] || (channels == 2 && !g_recorder.data[1])) {
+            free(g_recorder.data[0]);
+            free(g_recorder.data[1]);
+            g_recorder.data[0] = NULL;
+            g_recorder.data[1] = NULL;
+            free(clip);
+            return ERROR_CREATE;
+        }
+        // Fault the capture pages in before arming (see prefaultBuffer)
+        prefaultBuffer(g_recorder.data[0], max_frames);
+        if (g_recorder.data[1])
+            prefaultBuffer(g_recorder.data[1], max_frames);
+    }
     g_recorder.channel = channel;
     g_recorder.clip_id = note - 1;
     g_recorder.channels = channels;

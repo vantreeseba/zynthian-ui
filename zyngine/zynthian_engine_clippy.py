@@ -131,9 +131,12 @@ class zynthian_engine_clippy(zynthian_engine):
         self.libclippy.getRecordLatencyOffset.restype = ctypes.c_int32
         self.libclippy.setClipBeats.argtypes = [ctypes.c_uint8, ctypes.c_uint8, ctypes.c_uint16, ctypes.c_float]
         self.libclippy.setClipBeats.restype = None
+        self.libclippy.prewarmRecordBuffer.argtypes = [ctypes.c_uint8, ctypes.c_uint32]
+        self.libclippy.prewarmRecordBuffer.restype = ctypes.c_uint8
         self.jackname = self.libclippy.getJackname().decode("utf-8")
         self.zynseq.clippy = self
         self.refresh_monitor_routing()
+        self.prewarm_record_buffer()
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TEMPO, self.start_tempo_timer)
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.on_seq_play_state)
         zynsigman.register_queued(zynsigman.S_MIXER, zynsigman.SS_ZYNMIXER_SET_VALUE, self.on_mixer_set_value)
@@ -783,6 +786,7 @@ class zynthian_engine_clippy(zynthian_engine):
         except Exception as e:
             logging.error(f"Failed to save recorded clip => {e}")
         self.libclippy.disarmRecord()
+        self.prewarm_record_buffer()
         rec = self.recordings.pop((processor, phrase), None)
         if not (rec and rec.get("free")):
             # Free takes never started the record metronome => keep depth balanced
@@ -792,6 +796,17 @@ class zynthian_engine_clippy(zynthian_engine):
                               chan=processor.midi_chan, phrase=phrase, state=0)
         if processor == self.selected_proc and phrase == self.selected_phrase:
             self.set_phrase(processor, phrase)
+
+    def prewarm_record_buffer(self):
+        """Prepare the next take's capture buffers on a background thread
+
+        Allocating and prefaulting the default capture capacity (~46MB
+        stereo) takes tens of ms: too slow for armRecord() when arming
+        comes from a pad controller on the fast MIDI thread. A stereo
+        prewarm also serves a mono take.
+        """
+        Thread(target=self.libclippy.prewarmRecordBuffer, args=(2, 0),
+               name="clippy_prewarm", daemon=True).start()
 
     def cleanup_recording(self, processor, phrase):
         """Abort path: free clippy recorder resources and clear tracking"""
@@ -805,6 +820,7 @@ class zynthian_engine_clippy(zynthian_engine):
             return
         self.recordings.pop((processor, phrase), None)
         self.libclippy.disarmRecord()
+        self.prewarm_record_buffer()
         if not rec.get("free"):
             self.state_manager.stop_record_metronome()
         self.update_monitor(processor)
@@ -1205,6 +1221,7 @@ class zynthian_engine_clippy(zynthian_engine):
         # removePlayer aborts any capture on this player => free the recorder buffers
         if self.libclippy.getRecordState() != REC_IDLE and self.libclippy.getRecordChannel() == processor.midi_chan - 16:
             self.libclippy.disarmRecord()
+            self.prewarm_record_buffer()
         for phrase in range(self.zynseq.phrases):
             self.zynseq.set_sequence_param(self.zynseq.scene, phrase, processor.midi_chan, "name", "")
             self.set_mode(phrase, processor.midi_chan, 0)
