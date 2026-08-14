@@ -26,6 +26,7 @@
 import board
 import logging
 import traceback
+from time import monotonic
 import neopixel_spi as neopixel
 
 # Zynthian specific modules
@@ -50,10 +51,13 @@ class zynthian_wsleds_base:
         self.wsleds = None
 
         # LED state variables
-        self.blink_count = 0
         self.blink_state = False
         self.pulse_step = 0
         self.brightness = 1
+        # Last frame pushed over SPI: update() runs every status tick and
+        # a full strip refresh is comparatively expensive, so identical
+        # frames must not reach show()
+        self.last_frame = None
 
         self.wsled_state_enabled = True
         self.last_wsled_state = ""
@@ -143,14 +147,14 @@ class zynthian_wsleds_base:
             # Light all LEDs
             for i in range(0, self.num_leds):
                 self.wsleds[i] = self.wscolor_default
-            self.wsleds.show()
+            self.show()
 
     def light_off_all(self):
         if self.num_leds > 0:
             # Light-off all LEDs
             for i in range(0, self.num_leds):
                 self.wsleds[i] = self.wscolor_off
-            self.wsleds.show()
+            self.show()
 
     def blink(self, i, color):
         if self.blink_state:
@@ -162,7 +166,9 @@ class zynthian_wsleds_base:
         if self.blink_state:
             color = self.create_color(
                 0, int(self.brightness * self.pulse_step * 6), 0)
-            self.pulse_step += 1
+            # Cap the ramp so a high status refresh rate can't push the
+            # green component past 8 bits into the red field
+            self.pulse_step = min(self.pulse_step + 1, 40)
         elif self.pulse_step > 0:
             color = self.create_color(
                 0, int(self.brightness * self.pulse_step * 6), 0)
@@ -173,29 +179,34 @@ class zynthian_wsleds_base:
 
         self.wsleds[i] = color
 
+    def show(self):
+        """Push the frame over SPI, skipping if nothing changed"""
+        frame = tuple(self.get_led(i) for i in range(self.num_leds))
+        if frame != self.last_frame:
+            self.last_frame = frame
+            self.wsleds.show()
+
     def update(self):
+        # Blink/pulse phase from wall-clock so timing doesn't depend on
+        # the status refresh rate (periods match the historical 10Hz tick)
+        now = monotonic()
+
         # Power Save Mode
         if self.zyngui.state_manager.power_save_mode:
-            if self.blink_count % 64 > 44:
-                self.blink_state = True
-            else:
-                self.blink_state = False
+            self.blink_state = (now % 6.4) >= 4.5
             for i in range(0, self.num_leds):
                 self.wsleds[i] = self.wscolor_off
             self.pulse(0)
-            self.wsleds.show()
+            self.show()
 
         # Normal mode
         else:
-            if self.blink_count % 4 > 1:
-                self.blink_state = True
-            else:
-                self.blink_state = False
+            self.blink_state = (now % 0.4) >= 0.2
             try:
                 self.update_wsleds()
             except Exception as e:
                 logging.exception(traceback.format_exc())
-            self.wsleds.show()
+            self.show()
 
             if self.wsled_state_enabled and (self.zyngui.capture_log or self.ctrldev_manager.need_wsled_state()):
                 try:
@@ -214,8 +225,6 @@ class zynthian_wsleds_base:
                             # logging.debug(f"Capturing LED state log => {wsled_state}")
                 except Exception as e:
                     logging.error(f"Generating LED state string => {e}")
-
-        self.blink_count += 1
 
     def reset_last_state(self):
         self.last_wsled_state = ""
