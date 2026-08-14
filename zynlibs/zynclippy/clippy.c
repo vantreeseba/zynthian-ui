@@ -1335,8 +1335,12 @@ uint8_t disarmRecord() {
     // The copy happens here on the UI thread while the audio thread can
     // still play the old buffers; it only ever sees the swap, under mutex.
     // Skipped while REC_FINISHING: the tail capture still writes data[].
-    Clip* clip = g_recorder.committed_clip;
-    if (clip && g_recorder.state == REC_DONE) {
+    // Atomically claim the clip: disarmRecord can be entered concurrently
+    // (save thread vs reset()/end()), and two claimants would both free
+    // the displaced buffers. Acquire pairs with the audio thread's
+    // FINISHING->DONE store so the tail/fade writes are visible here.
+    Clip* clip = __atomic_exchange_n(&g_recorder.committed_clip, NULL, __ATOMIC_ACQ_REL);
+    if (clip && __atomic_load_n(&g_recorder.state, __ATOMIC_ACQUIRE) == REC_DONE) {
         uint32_t offset = (uint32_t)(clip->data[0] - clip->alloc[0]);
         uint32_t used = offset + clip->frames;
         if (used < g_recorder.max_frames) {
@@ -1367,7 +1371,6 @@ uint8_t disarmRecord() {
             }
         }
     }
-    g_recorder.committed_clip = NULL;
     getMutex();
     g_recorder.state = REC_IDLE;
     // tail[] alias the committed clip's buffer (owned by the clip) => drop, don't free
