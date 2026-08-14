@@ -198,6 +198,11 @@ class zynthian_gui_base(tkinter.Frame):
 
             # Init status area
             self.init_status()
+            # Last written state per status item: refresh_status runs every
+            # status tick on every screen, so unchanged flags must not
+            # reach the canvas
+            self._status_flag_states = {}
+            self._status_error_state = None
             self.init_dpmeter()
 
             # Update Title
@@ -513,97 +518,48 @@ class zynthian_gui_base(tkinter.Frame):
                 else:
                     flags = "\u2665"
 
+            if (flags, color) != self._status_error_state:
+                self._status_error_state = (flags, color)
+                self.status_canvas.itemconfig(
+                    self.status_error, text=flags, fill=color)
+
+            # Audio Rec / Audio Play / MIDI Rec / MIDI Play flags
+            self._set_status_flag(self.status_audio_rec,
+                                  bool(self.state_manager.audio_recorder.status))
+            self._set_status_flag(self.status_audio_play,
+                                  bool(self.state_manager.status_audio_player))
+            self._set_status_flag(self.status_midi_rec,
+                                  bool(self.state_manager.status_midi_recorder))
+            self._set_status_flag(self.status_midi_play,
+                                  bool(self.state_manager.status_midi_player))
+
+            # SEQ Rec / SEQ Play flags
+            self._set_status_flag(self.status_seq_rec,
+                                  bool(self.state_manager.zynseq.libseq.isMidiRecord()))
+            self._set_status_flag(self.status_seq_play,
+                                  self.state_manager.zynseq.playing_sequences > 0)
+
+            # Clip session-record mode flag
+            session_rec = bool(self.state_manager.session_record_mode)
+            self._set_status_flag(self.status_clip_rec_box, session_rec)
+            self._set_status_flag(self.status_clip_rec, session_rec)
+
+            # Record quantize flag (magnet while input snap is on)
+            self._set_status_flag(self.status_rec_quantize,
+                                  bool(self.state_manager.record_quantize_enabled))
+
+            # MIDI activity / MIDI clock flags
+            self._set_status_flag(self.status_midi,
+                                  bool(self.state_manager.status_midi))
+            self._set_status_flag(self.status_midi_clock,
+                                  bool(self.state_manager.status_midi_clock))
+
+    def _set_status_flag(self, item, shown):
+        """Show/hide a topbar status item, skipping no-op canvas calls"""
+        if self._status_flag_states.get(item) != shown:
+            self._status_flag_states[item] = shown
             self.status_canvas.itemconfig(
-                self.status_error, text=flags, fill=color)
-
-            # Display Audio Rec flag
-            flags = ""
-            color = zynthian_gui_config.color_bg
-            if self.state_manager.audio_recorder.status:
-                self.status_canvas.itemconfig(
-                    self.status_audio_rec, state=tkinter.NORMAL)
-            else:
-                self.status_canvas.itemconfig(
-                    self.status_audio_rec, state=tkinter.HIDDEN)
-
-            # Display Audio Play flag
-            flags = ""
-            color = zynthian_gui_config.color_bg
-            if self.state_manager.status_audio_player:
-                self.status_canvas.itemconfig(
-                    self.status_audio_play, state=tkinter.NORMAL)
-            else:
-                self.status_canvas.itemconfig(
-                    self.status_audio_play, state=tkinter.HIDDEN)
-
-            # Display MIDI Rec flag
-            flags = ""
-            color = zynthian_gui_config.color_status_midi
-            if self.state_manager.status_midi_recorder:
-                self.status_canvas.itemconfig(
-                    self.status_midi_rec, state=tkinter.NORMAL)
-            else:
-                self.status_canvas.itemconfig(
-                    self.status_midi_rec, state=tkinter.HIDDEN)
-
-            # Display MIDI Play flag
-            if self.state_manager.status_midi_player:
-                self.status_canvas.itemconfig(
-                    self.status_midi_play, state=tkinter.NORMAL)
-            else:
-                self.status_canvas.itemconfig(
-                    self.status_midi_play, state=tkinter.HIDDEN)
-            # Display SEQ Rec flag
-            if self.state_manager.zynseq.libseq.isMidiRecord():
-                self.status_canvas.itemconfig(
-                    self.status_seq_rec, state=tkinter.NORMAL)
-            else:
-                self.status_canvas.itemconfig(
-                    self.status_seq_rec, state=tkinter.HIDDEN)
-
-            # Display SEQ Play flag
-            if self.state_manager.zynseq.playing_sequences > 0:
-                self.status_canvas.itemconfig(
-                    self.status_seq_play, state=tkinter.NORMAL)
-            else:
-                self.status_canvas.itemconfig(
-                    self.status_seq_play, state=tkinter.HIDDEN)
-
-            # Display clip session-record mode flag
-            if self.state_manager.session_record_mode:
-                self.status_canvas.itemconfig(
-                    self.status_clip_rec_box, state=tkinter.NORMAL)
-                self.status_canvas.itemconfig(
-                    self.status_clip_rec, state=tkinter.NORMAL)
-            else:
-                self.status_canvas.itemconfig(
-                    self.status_clip_rec_box, state=tkinter.HIDDEN)
-                self.status_canvas.itemconfig(
-                    self.status_clip_rec, state=tkinter.HIDDEN)
-
-            # Display record quantize flag (magnet while input snap is on)
-            if self.state_manager.record_quantize_enabled:
-                self.status_canvas.itemconfig(
-                    self.status_rec_quantize, state=tkinter.NORMAL)
-            else:
-                self.status_canvas.itemconfig(
-                    self.status_rec_quantize, state=tkinter.HIDDEN)
-
-            # Display MIDI activity flag
-            if self.state_manager.status_midi:
-                self.status_canvas.itemconfig(
-                    self.status_midi, state=tkinter.NORMAL)
-            else:
-                self.status_canvas.itemconfig(
-                    self.status_midi, state=tkinter.HIDDEN)
-
-            # Display MIDI clock flag
-            if self.state_manager.status_midi_clock:
-                self.status_canvas.itemconfig(
-                    self.status_midi_clock, state=tkinter.NORMAL)
-            else:
-                self.status_canvas.itemconfig(
-                    self.status_midi_clock, state=tkinter.HIDDEN)
+                item, state=tkinter.NORMAL if shown else tkinter.HIDDEN)
 
     def refresh_loading(self):
         pass
