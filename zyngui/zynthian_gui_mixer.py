@@ -634,6 +634,11 @@ class zynthian_gui_mixer_strip():
         self.centre_x = x + int(self.width * 0.5)
         self.fader_text_limit = int(0.95 * self.gui_mixer.fader_height)
         self.dragging = False
+        # Last drawn MIDI-activity/clip-progress state: refresh_status
+        # touches every strip each status tick, so unchanged values must
+        # not reach the canvas
+        self.midi_act_shown = False
+        self.last_clip_progress = None
 
         # Digital Peak Meter (DPM) parameters
         if zynthian_gui_config.enable_dpm or self.chain.chain_id == 0:
@@ -927,7 +932,9 @@ class zynthian_gui_mixer_strip():
 
     def update_clip_progress(self, progress):
         x1 = self.x + 1 + int(progress * (self.width - 2) / 100)
-        self.canvas.coords(self.clip_progress, self.x + 1, self.gui_mixer.legend_y, x1, self.gui_mixer.legend_y + 4)
+        if x1 != self.last_clip_progress:
+            self.last_clip_progress = x1
+            self.canvas.coords(self.clip_progress, self.x + 1, self.gui_mixer.legend_y, x1, self.gui_mixer.legend_y + 4)
 
     def draw_toggle(self):
         txcolor = self.gui_mixer.button_txcol
@@ -1697,10 +1704,12 @@ class zynthian_gui_mixer(zynthian_gui_base):
                         midi_act = self.zyngui.state_manager.status_midi_ch != 0
                     else:
                         midi_act = False
-                    if midi_act:
-                        strip.canvas.itemconfig(strip.midi_indicator, state=tkinter.NORMAL)
-                    else:
-                        strip.canvas.itemconfig(strip.midi_indicator, state=tkinter.HIDDEN)
+                    midi_act = bool(midi_act)
+                    if midi_act != strip.midi_act_shown:
+                        strip.midi_act_shown = midi_act
+                        strip.canvas.itemconfig(
+                            strip.midi_indicator,
+                            state=tkinter.NORMAL if midi_act else tkinter.HIDDEN)
                 # Update progress indicators
                 if strip.chain.midi_chan is not None and strip.chain.midi_chan < 32:
                     progress = self.zynseq.progress[strip.chain.midi_chan]
