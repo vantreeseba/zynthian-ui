@@ -188,7 +188,10 @@ class zynthian_gui_launcher_pad():
                                              font=self.gui_mixer.font_timebase,
                                              tags=(*tags, "launcher_tempo"))
 
-        self.canvas.tag_bind(f"launcher_{chain_id}_{phrase}", '<ButtonRelease-1>', self.on_clip_release)
+        # Tracked so build_launchers can unbind without leaking the
+        # per-bind Tcl command
+        self.gui_mixer.track_launcher_bind(
+            self.canvas, f"launcher_{chain_id}_{phrase}", '<ButtonRelease-1>', self.on_clip_release)
 
     def highlight(self):
         """ Show selection cursor highlight"""
@@ -779,20 +782,22 @@ class zynthian_gui_mixer_strip():
         # already shows the armed state.
         self.play_indicator = self.canvas.create_text(x + 2, self.gui_mixer.legend_y + self.gui_mixer.legend_height - 2, text="⏹", fill=zynthian_gui_config.color_hl, anchor="sw", state=tkinter.HIDDEN)
 
-        # Bind events to gui elements
-        self.canvas.tag_bind(f"fader_{id}", "<ButtonPress-1>", self.on_fader_press)
-        self.canvas.tag_bind(f"fader_{id}", "<ButtonRelease-1>", self.on_fader_release)
-        self.canvas.tag_bind(f"fader_{id}", "<B1-Motion>", self.on_fader_motion)
-        self.canvas.tag_bind(f"fader_{id}", "<Button-4>", self.on_fader_wheel_up)
-        self.canvas.tag_bind(f"fader_{id}", "<Button-5>", self.on_fader_wheel_down)
+        # Bind events to gui elements (tracked so build_mixer can unbind
+        # without leaking the per-bind Tcl commands)
+        bind = self.gui_mixer.track_strip_bind
+        bind(self.canvas, f"fader_{id}", "<ButtonPress-1>", self.on_fader_press)
+        bind(self.canvas, f"fader_{id}", "<ButtonRelease-1>", self.on_fader_release)
+        bind(self.canvas, f"fader_{id}", "<B1-Motion>", self.on_fader_motion)
+        bind(self.canvas, f"fader_{id}", "<Button-4>", self.on_fader_wheel_up)
+        bind(self.canvas, f"fader_{id}", "<Button-5>", self.on_fader_wheel_down)
         if self.chain.zynmixer_proc:
-            self.canvas.tag_bind(self.fader_horizontal, "<Button-4>", self.on_fader_wheel_up)
-            self.canvas.tag_bind(self.fader_horizontal, "<Button-5>", self.on_fader_wheel_down)
-        self.canvas.tag_bind(f"balance_{id}", "<Button-4>", self.on_balance_wheel_up)
-        self.canvas.tag_bind(f"balance_{id}", "<Button-5>", self.on_balance_wheel_down)
-        self.canvas.tag_bind(f"mute_{id}", "<ButtonRelease-1>", self.on_mute_release)
-        self.canvas.tag_bind(f"toggle_{id}", "<ButtonRelease-1>", self.on_toggle_release)
-        self.canvas.tag_bind(f"legend_strip_{id}", "<ButtonRelease-1>", self.on_strip_release)
+            bind(self.canvas, self.fader_horizontal, "<Button-4>", self.on_fader_wheel_up)
+            bind(self.canvas, self.fader_horizontal, "<Button-5>", self.on_fader_wheel_down)
+        bind(self.canvas, f"balance_{id}", "<Button-4>", self.on_balance_wheel_up)
+        bind(self.canvas, f"balance_{id}", "<Button-5>", self.on_balance_wheel_down)
+        bind(self.canvas, f"mute_{id}", "<ButtonRelease-1>", self.on_mute_release)
+        bind(self.canvas, f"toggle_{id}", "<ButtonRelease-1>", self.on_toggle_release)
+        bind(self.canvas, f"legend_strip_{id}", "<ButtonRelease-1>", self.on_strip_release)
 
         self.draw_control()
 
@@ -1269,6 +1274,11 @@ class zynthian_gui_mixer(zynthian_gui_base):
         self.flash_on = False  # Beat-synced pulse phase for queued launcher pads
         self.rec_countdown_clip = None # (clip label, armed) of clip recording in flight, for punch countdown toasts
         self.chain_strips = [] # List of channel strips excluding main mixbus, indexed by strip position
+        # (canvas, tag, seq, funcid) of active tag binds: each tag_bind
+        # registers a new Tcl command that canvas.delete() does not remove,
+        # so rebuilds must tag_unbind explicitly or the commands leak
+        self._strip_binds = []
+        self._launcher_binds = []
         self.state_changed = True
         self.press_event = None
         self.dragging = False # True if click/touch dragging
@@ -1454,6 +1464,22 @@ class zynthian_gui_mixer(zynthian_gui_base):
             except:
                 self.mode_icons[f] = empty_icon
 
+    def track_strip_bind(self, canvas, tag, seq, func):
+        """tag_bind for strip widgets, remembering the funcid for release"""
+        self._strip_binds.append((canvas, tag, seq, canvas.tag_bind(tag, seq, func)))
+
+    def track_launcher_bind(self, canvas, tag, seq, func):
+        """tag_bind for launcher pads, remembering the funcid for release"""
+        self._launcher_binds.append((canvas, tag, seq, canvas.tag_bind(tag, seq, func)))
+
+    def _release_binds(self, binds):
+        for canvas, tag, seq, funcid in binds:
+            try:
+                canvas.tag_unbind(tag, seq, funcid)
+            except tkinter.TclError:
+                pass
+        binds.clear()
+
     def build_mixer(self):
         """ Draw chain strips"""
 
@@ -1462,6 +1488,8 @@ class zynthian_gui_mixer(zynthian_gui_base):
         # Create mixer strip UI objects
         self.chan2strip = {}
         self.chain_strips = []
+        self._release_binds(self._strip_binds)
+        self._release_binds(self._launcher_binds)
         self.left_canvas.delete("all")
         self.right_canvas.delete("all")
         self.right_canvas.configure(width= int(self.strip_width * self.chain_manager.get_pinned_count() + self.loop_info_width))
@@ -1512,6 +1540,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
 
     def build_launchers(self):
         """ Build the sequence launcher buttons """
+        self._release_binds(self._launcher_binds)
         self.left_canvas.delete("launcher")
         self.right_canvas.delete("launcher")
         self.launcher_total_height = self.launcher_height * self.zynseq.phrases
