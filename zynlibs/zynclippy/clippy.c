@@ -1253,6 +1253,19 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
     return ERROR_SUCCESS;
 }
 
+static void prefaultBuffer(float* buffer, size_t frames) {
+    // calloc maps untouched zero pages; without this, first-touch page
+    // faults land in the process() capture memcpy on the JACK thread,
+    // one per 4KB for the whole take. Volatile stores so the compiler
+    // can't elide zero writes to memory it knows calloc zeroed.
+    volatile char* p = (volatile char*)buffer;
+    size_t bytes = frames * sizeof(float);
+    for (size_t offset = 0; offset < bytes; offset += 4096)
+        p[offset] = 0;
+    if (bytes)
+        p[bytes - 1] = 0;
+}
+
 uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, uint32_t max_frames) {
     // Auto-clean a finished / aborted recording
     if (g_recorder.state == REC_DONE || g_recorder.state == REC_ABORTED || g_recorder.state == REC_OVERFLOW)
@@ -1282,6 +1295,10 @@ uint8_t armRecord(uint8_t channel, uint8_t note, uint8_t channels, float tempo, 
         free(clip);
         return ERROR_CREATE;
     }
+    // Still on the UI thread: fault the capture pages in before arming
+    prefaultBuffer(g_recorder.data[0], max_frames);
+    if (g_recorder.data[1])
+        prefaultBuffer(g_recorder.data[1], max_frames);
     g_recorder.channel = channel;
     g_recorder.clip_id = note - 1;
     g_recorder.channels = channels;
