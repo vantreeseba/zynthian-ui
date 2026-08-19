@@ -480,6 +480,17 @@ class zynthian_ctrldev_launchpad_pro_mk2(zynthian_ctrldev_zynpad, zynthian_ctrld
             note = ev[1] & 0x7F
             vel = ev[2] & 0x7F
             
+            if vel == 0 and self.mode == MODE_SESSION:
+                # Velocity 0 => pad release in launcher grid mode
+                col, row = self.get_note_xy(note)
+                midi_chan = self.get_filtered_midi_chan_by_index(col)
+                if midi_chan is not None:
+                    try:
+                        self.on_pad_release(row + self.scroll_v, midi_chan)
+                    except:
+                        pass
+                return True
+
             if vel > 0:
                 if self.mode == MODE_SESSION:
                     # Launcher grid mode
@@ -488,7 +499,7 @@ class zynthian_ctrldev_launchpad_pro_mk2(zynthian_ctrldev_zynpad, zynthian_ctrld
                     if midi_chan is not None:
                         phrase = row + self.scroll_v
                         try:
-                            self.toggle_pad(phrase, midi_chan)
+                            self.on_pad_press(phrase, midi_chan)
                         except:
                             print("Error toggling play state for phrase {}, channel {}".format(phrase, midi_chan))
                             pass
@@ -531,7 +542,18 @@ class zynthian_ctrldev_launchpad_pro_mk2(zynthian_ctrldev_zynpad, zynthian_ctrld
         elif evtype == 0x8:
             note = ev[1] & 0x7F
             vel = ev[2] & 0x7F
-            
+
+            if self.mode == MODE_SESSION:
+                # Pad release in launcher grid mode => resolve short/long press
+                col, row = self.get_note_xy(note)
+                midi_chan = self.get_filtered_midi_chan_by_index(col)
+                if midi_chan is not None:
+                    try:
+                        self.on_pad_release(row + self.scroll_v, midi_chan)
+                    except:
+                        pass
+                return True
+
             if self.mode == MODE_NOTE and self.last_press:
                 try:
                     last_note, midi_chan, midi_out = self.last_press

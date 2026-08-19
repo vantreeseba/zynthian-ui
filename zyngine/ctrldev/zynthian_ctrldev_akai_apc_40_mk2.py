@@ -526,6 +526,14 @@ class zynthian_ctrldev_akai_apc_40_mk2(zynthian_ctrldev_zynpad, zynthian_ctrldev
         elif evtype == 8:
             # Note off
             note = ev[1]
+            # Clip launcher pad release => resolve short/long press
+            if note < 0x30:
+                pos = self.scroll_h + note % 8
+                chain = self.get_filtered_chain_by_index(pos)
+                if chain is not None and chain.midi_chan is not None:
+                    phrase = self.rows - 1 - note // 8 + self.scroll_v
+                    self.on_pad_release(phrase, chain.midi_chan)
+                return True
             not_enc_mode = not (self._send or self._user)
             if note == BTN_SHIFT:
                 self._shift = False
@@ -574,9 +582,9 @@ class zynthian_ctrldev_akai_apc_40_mk2(zynthian_ctrldev_zynpad, zynthian_ctrldev
                     self.chain_manager.set_active_chain_by_id(chain.chain_id)
                     self.zynseq.select_phrase(phrase)
                     zynthian_gui_config.zyngui.screens["mixer"].edit_pad()
-                # Toggle Play/Stop PAD
+                # Toggle Play/Stop PAD (long press in record mode clears the pad on release)
                 else:
-                    self.toggle_pad(phrase, midi_chan)
+                    self.on_pad_press(phrase, midi_chan)
             # Scene buttons => Phrase launcher
             elif LED_SCENE_LAUNCH_1 <= note <= LED_SCENE_LAUNCH_5:
                 row = note - LED_SCENE_LAUNCH_1

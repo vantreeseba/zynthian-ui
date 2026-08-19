@@ -28,7 +28,7 @@
 import signal
 import logging
 import traceback
-from time import sleep
+from time import sleep, monotonic
 from threading import Timer
 import multiprocessing as mp
 
@@ -38,6 +38,7 @@ import zynautoconnect
 from zyncoder.zyncore import lib_zyncore
 from zyngine.zynthian_signal_manager import zynsigman
 from zynlibs.zynseq import zynseq
+from zyngui import zynthian_gui_config
 
 # ------------------------------------------------------------------------------------------------------------------
 # Control device base class
@@ -392,6 +393,7 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
         self.phrase_launcher_col = self.cols  # Index of column used as phrase launcher
         self.record_pads = {}  # Map of pads in a record state: (phrase, chan) => play state
         self.countdown_timer = None  # Timer used to restore pads flashed by the punch countdown
+        self.pad_press_times = {}  # Map of held pads awaiting release: (phrase, chan) => press time
 
     def init(self):
         super().init()
@@ -501,6 +503,54 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
                 if record_state:
                     return
         self.zynseq.libseq.togglePlayState(self.zynseq.scene, phrase, midi_chan)
+
+    def on_pad_press(self, phrase, midi_chan):
+        """Handle a launcher pad press. Pads with a record action (record mode
+        enabled, or already recording) defer to the release so a long press can
+        clear the pad; other pads toggle immediately to keep launch latency at
+        zero. Drivers wired for press/release should call this instead of
+        toggle_pad.
+        """
+
+        defer = False
+        if midi_chan is not None and midi_chan < 32:
+            if self.state_manager.session_record_mode:
+                defer = True
+            elif self.state_manager.midi_record_pad == (phrase, midi_chan):
+                defer = True
+            else:
+                state = self.zynseq.libseq.getPlayState(self.zynseq.scene, phrase, midi_chan)
+                defer = state in (zynseq.SEQ_RECORDING, zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD)
+        if defer:
+            self.pad_press_times[(phrase, midi_chan)] = monotonic()
+        else:
+            self.toggle_pad(phrase, midi_chan)
+
+    def on_pad_release(self, phrase, midi_chan):
+        """Handle a launcher pad release. Only pads deferred by on_pad_press
+        act here: a short press toggles record/play as usual, holding the pad
+        for zynswitch_long_seconds clears it instead.
+        """
+
+        pressed = self.pad_press_times.pop((phrase, midi_chan), None)
+        if pressed is None:
+            return
+        if monotonic() - pressed >= zynthian_gui_config.zynswitch_long_seconds:
+            self.clear_pad(phrase, midi_chan)
+        else:
+            self.toggle_pad(phrase, midi_chan)
+
+    def clear_pad(self, phrase, midi_chan):
+        """Clear the pad at phrase,midi_chan: abort a recording take in flight,
+        else clear a clippy pad's clip or a MIDI pad's pattern.
+        """
+
+        try:
+            chain_id = self.chain_manager.get_chain_ids_by_midi_chan(midi_chan)[0]
+            chain = self.chain_manager.chains[chain_id]
+            zynthian_gui_config.zyngui.screens["mixer"].clear_pad(chain, phrase)
+        except Exception as e:
+            logging.error(f"Failed to clear pad => {e}")
 
     def track_record_pad(self, phrase, chan):
         """Track pads in a record state to drive the punch countdown flash

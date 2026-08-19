@@ -3023,7 +3023,16 @@ class zynthian_gui_mixer(zynthian_gui_base):
         return False
 
     def cuia_clear_pad(self, params=None):
-        """Clear the selected launcher pad (pedal-friendly undo/reset)
+        """Clear the selected launcher pad (pedal-friendly undo/reset)"""
+
+        phrase = self.zynseq.phrase
+        if self.highlighted_strip is None or phrase >= self.zynseq.phrases:
+            return True
+        self.clear_pad(self.highlighted_strip.chain, phrase)
+        return True
+
+    def clear_pad(self, chain, phrase):
+        """Clear the launcher pad at chain,phrase
 
         Recording in flight on the pad => abort the take, keeping previous pad content
         Audio clip pad => clear the clip, deleting the file only if it is a recorded take
@@ -3031,10 +3040,6 @@ class zynthian_gui_mixer(zynthian_gui_base):
         """
 
         sm = self.state_manager
-        phrase = self.zynseq.phrase
-        if self.highlighted_strip is None or phrase >= self.zynseq.phrases:
-            return True
-        chain = self.highlighted_strip.chain
         proc = chain.get_clippy_processor() if chain else None
         if proc:
             chan = proc.midi_chan
@@ -3043,13 +3048,13 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 # Force-stop aborts the clippy recorder (clock cleanup emits the abort message)
                 self.zynseq.libseq.setPlayState(self.zynseq.scene, phrase, chan, zynseq.SEQ_STOPPED)
                 self.set_title("Recording aborted", None, None, 2)
-                return True
+                return
             try:
                 fpath = proc.controllers_dict[f"file {phrase + 1}"].get_value()
             except Exception:
                 fpath = ""
             if not fpath:
-                return True
+                return
             # Recorded takes are deleted from disk, library samples are kept
             if proc.engine.clear_clip(proc, phrase, delete_file=sm.is_capture_fpath(fpath)):
                 self.set_title("Pad cleared", None, None, 2)
@@ -3063,7 +3068,6 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 self.zynseq.libseq.clearPattern(pattern)
                 self.zynseq.libseq.updateSequenceInfo()
                 self.set_title("Pad cleared", None, None, 2)
-        return True
 
     def cuia_toggle_phrase(self, params=None):
         """Launch/stop a whole row of pads (phrase) at the next bar sync

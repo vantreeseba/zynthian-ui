@@ -118,8 +118,9 @@ class zynthian_ctrldev_launchpad_mini(zynthian_ctrldev_zynpad):
     def midi_event(self, ev):
         # logging.debug("Launchpad MINI MIDI handler => {}".format(ev))
         evtype = (ev[0] >> 4) & 0x0F
-        if evtype == 0x9:
+        if evtype in (0x9, 0x8):
             note = ev[1] & 0x7F
+            vel = ev[2] & 0x7F
             col, row = self.get_note_xy(note)
             if col == 8:
                 midi_chan = zynseq.PHRASE_CHANNEL
@@ -128,7 +129,11 @@ class zynthian_ctrldev_launchpad_mini(zynthian_ctrldev_zynpad):
             if midi_chan is not None:
                 phrase = row + self.scroll_v
                 try:
-                    self.toggle_pad(phrase, midi_chan)
+                    # Press launches/arms, release resolves short/long press (velocity 0 / note off => release)
+                    if evtype == 0x9 and vel > 0:
+                        self.on_pad_press(phrase, midi_chan)
+                    else:
+                        self.on_pad_release(phrase, midi_chan)
                 except:
                     pass
             return True

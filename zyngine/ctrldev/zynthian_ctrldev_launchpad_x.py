@@ -126,19 +126,21 @@ class zynthian_ctrldev_launchpad_x(zynthian_ctrldev_zynpad):
     def midi_event(self, ev):
         # logging.debug(f"Launchpad X MIDI handler => {ev}")
         evtype = (ev[0] >> 4) & 0x0F
-        # Note ON => launch/stop sequence
-        if evtype == 0x9:
+        # Note ON => launch/stop sequence (velocity 0 / note off => release)
+        if evtype in (0x9, 0x8):
             note = ev[1] & 0x7F
             vel = ev[2] & 0x7F
-            if vel > 0:
-                col, row = self.get_note_xy(note)
-                midi_chan = self.get_filtered_midi_chan_by_index(col)
-                if midi_chan is not None:
-                    phrase = row + self.scroll_v
-                    try:
-                        self.toggle_pad(phrase, midi_chan)
-                    except:
-                        pass
+            col, row = self.get_note_xy(note)
+            midi_chan = self.get_filtered_midi_chan_by_index(col)
+            if midi_chan is not None:
+                phrase = row + self.scroll_v
+                try:
+                    if evtype == 0x9 and vel > 0:
+                        self.on_pad_press(phrase, midi_chan)
+                    else:
+                        self.on_pad_release(phrase, midi_chan)
+                except:
+                    pass
             return True
         # CC => arrows & phrases
         elif evtype == 0xB:
