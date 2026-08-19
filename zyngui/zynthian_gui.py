@@ -1471,10 +1471,10 @@ class zynthian_gui:
         # Clear the selected launcher pad (aborts an in-flight recording)
         self.screens["mixer"].cuia_clear_pad(params)
 
-    def cuia_toggle_phrase(self, params=None):
+    def cuia_toggle_seq_row(self, params=None):
         # Launch/stop a whole row of pads (phrase) at the next bar sync
-        # No params: the selected row. "N" (1-based): that row. "NEXT"/"PREV": adjacent row.
-        self.screens["mixer"].cuia_toggle_phrase(params)
+        # No params: the selected row. "NEXT"/"PREV": adjacent row. Specific row: TOGGLE_SEQ row,32.
+        self.screens["mixer"].cuia_toggle_seq_row(params)
 
     def cuia_session_reset(self, params=None):
         # Remove all sequences, pads and clips (audio files deleted from disk), keeping chains

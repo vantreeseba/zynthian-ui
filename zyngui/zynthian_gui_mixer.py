@@ -3069,12 +3069,12 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 self.zynseq.libseq.updateSequenceInfo()
                 self.set_title("Pad cleared", None, None, 2)
 
-    def cuia_toggle_phrase(self, params=None):
+    def cuia_toggle_seq_row(self, params=None):
         """Launch/stop a whole row of pads (phrase) at the next bar sync
 
         no params => the selected phrase row
-        N => 1-based phrase row, selecting it first
         NEXT / PREV => select and launch the adjacent phrase row (pedal-friendly song walk)
+        For a specific row use TOGGLE_SEQ row,32 (0-based row).
         """
 
         phrase = self.zynseq.phrase
@@ -3085,11 +3085,8 @@ class zynthian_gui_mixer(zynthian_gui_base):
             elif param == "PREV":
                 phrase -= 1
             else:
-                try:
-                    phrase = int(param) - 1
-                except ValueError:
-                    logging.error(f"Bad phrase row: {params} (expected row number, NEXT or PREV)")
-                    return True
+                logging.error(f"Bad param: {params} (expected NEXT or PREV)")
+                return True
         if phrase < 0 or phrase >= self.zynseq.phrases:
             return True
         if phrase != self.zynseq.phrase:
