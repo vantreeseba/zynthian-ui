@@ -554,13 +554,57 @@ void* file_thread_fn(void* param) {
     pthread_exit(NULL);
 }
 
+/*  Move a transport following player to the position the transport is at, treating
+    transport frame 0 as the start of the player's cropped audio. Called from the RT
+    thread, so it touches only the atomics that set_position() does.
+*/
+static void transport_seek(struct AUDIO_PLAYER* pPlayer, jack_nframes_t frame) {
+    sf_count_t span = pPlayer->crop_end_src - pPlayer->crop_start_src;
+    sf_count_t offset = (sf_count_t)frame;
+    if (span <= 0)
+        offset = 0;
+    else if (pPlayer->loop)
+        offset %= span; // Stay in phase with a transport that has run beyond the loop
+    else if (offset > span)
+        offset = span;
+    atomic_store_explicit(&pPlayer->play_pos_frames, pPlayer->crop_start_src + offset, memory_order_relaxed);
+    atomic_store_explicit(&pPlayer->file_read_status, SEEKING, memory_order_relaxed);
+}
+
 // Handle JACK process callback
 int on_jack_process(jack_nframes_t nFrames, void* arg) {
+
+    // The transport is a property of the graph, not of a player, so query it once and let
+    // every player that follows it act on the same view
+    static uint8_t bWasRolling = 0;
+    static jack_nframes_t nExpectedFrame = 0;
+    jack_position_t transportPos;
+    uint8_t bRolling = 0, bLocated = 0, bStarted = 0, bStopped = 0;
+    if (g_jack_client) {
+        bRolling = (jack_transport_query(g_jack_client, &transportPos) == JackTransportRolling);
+        // Anything other than the frame we would have reached by playing on is a locate
+        bLocated = (transportPos.frame != nExpectedFrame);
+        nExpectedFrame = bRolling ? transportPos.frame + nFrames : transportPos.frame;
+        bStarted = bRolling && !bWasRolling;
+        bStopped = !bRolling && bWasRolling;
+        bWasRolling = bRolling;
+    }
 
     for (uint8_t id = 0; id < MAX_PLAYERS; ++id) {
         struct AUDIO_PLAYER* pPlayer = g_players[id];
         if (!pPlayer || pPlayer->file_open != FILE_OPEN)
             continue;
+
+        if (pPlayer->transport_sync) {
+            // Seek before starting: STARTING waits on the seek completing, so playback
+            // begins from the transport's position rather than wherever we left off
+            if (bStarted || bLocated)
+                transport_seek(pPlayer, transportPos.frame);
+            if (bStarted)
+                start_playback(id);
+            else if (bStopped && pPlayer->play_state != STOPPED)
+                atomic_store_explicit(&pPlayer->play_state, STOPPING, memory_order_relaxed);
+        }
 
         size_t a_count = 0; // Quantity of frames delivered to JACK this cycle
         jack_default_audio_sample_t* pOutA = jack_port_get_buffer(pPlayer->jack_out_a, nFrames);
@@ -852,6 +896,20 @@ uint8_t is_loop(uint8_t id) {
     if (!pPlayer || pPlayer->file_open != FILE_OPEN)
         return 0;
     return (pPlayer->loop);
+}
+
+void enable_transport_sync(uint8_t id, uint8_t enable) {
+    struct AUDIO_PLAYER* pPlayer = get_player(id);
+    if (!pPlayer)
+        return;
+    pPlayer->transport_sync = enable ? 1 : 0;
+}
+
+uint8_t is_transport_sync(uint8_t id) {
+    struct AUDIO_PLAYER* pPlayer = get_player(id);
+    if (!pPlayer)
+        return 0;
+    return pPlayer->transport_sync;
 }
 
 void set_crop_start_time(uint8_t id, float time) {

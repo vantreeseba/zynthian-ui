@@ -261,6 +261,10 @@ class zynthian_engine_audioplayer(zynthian_engine):
             loop = 'looping'
         else:
             loop = 'one-shot'
+        if zynaudioplayer.is_transport_sync(processor.handle):
+            sync = 'transport'
+        else:
+            sync = 'free'
         logging.debug(f"Loading Audio Track '{preset[0]}' in player {processor.handle}")
         if zynaudioplayer.get_playback_state(processor.handle):
             transport = 'playing'
@@ -303,6 +307,7 @@ class zynthian_engine_audioplayer(zynthian_engine):
                 track_values.append(track)
             self._ctrl_screens = [
                 ['main', ['record', 'transport', 'position', 'loop']],
+                ['sync', ['sync', 'transport', 'position', 'loop']],
                 ['edit', ['crop start', 'crop end', 'zoom', 'v-zoom']],
                 ['speed', ['speed', 'semitones', 'cents', 'varispeed']],
                 ['audio', ['left track', 'right track', 'gain', 'info']],
@@ -316,6 +321,7 @@ class zynthian_engine_audioplayer(zynthian_engine):
             ['gain', None, gain, 2.0],
             ['record', None, record, ['stopped', 'recording']],
             ['loop', None, loop, ['one-shot', 'looping']],
+            ['sync', None, sync, ['free', 'transport']],
             ['transport', None, transport, ['stopped', 'playing']],
             ['position', None, 0.0, dur],
             ['crop start', None, 0.0, dur],
@@ -466,6 +472,8 @@ class zynthian_engine_audioplayer(zynthian_engine):
             zynaudioplayer.set_gain(handle, zctrl.value)
         elif zctrl.symbol == "loop":
             zynaudioplayer.enable_loop(handle, zctrl.value!=0)
+        elif zctrl.symbol == "sync":
+            zynaudioplayer.enable_transport_sync(handle, zctrl.value != 0)
         elif zctrl.symbol == "transport":
             if zctrl.value > 63:
                 zynaudioplayer.start_playback(handle)

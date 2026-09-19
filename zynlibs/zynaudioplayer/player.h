@@ -130,6 +130,20 @@ void enable_loop(uint8_t id, uint8_t nLoop);
 */
 uint8_t is_loop(uint8_t id);
 
+/** @brief  Set whether player follows the JACK transport
+    @param  id Player id
+    @param  enable 1 to start, stop and locate with the JACK transport
+    @note   Transport frame 0 is the player's crop start. A looping player wraps within
+            its crop region so it stays in phase with a transport running past its end.
+*/
+void enable_transport_sync(uint8_t id, uint8_t enable);
+
+/** @brief  Get whether player follows the JACK transport
+    @param  id Player id
+    @retval uint8_t 1 if following the transport
+*/
+uint8_t is_transport_sync(uint8_t id);
+
 /** @brief  Set start of audio (crop)
     @param  id Player id
     @param  time Start of crop in seconds since start of file

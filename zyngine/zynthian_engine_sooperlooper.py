@@ -23,6 +23,7 @@
 # ******************************************************************************
 
 import os
+import math
 import logging
 from glob import glob
 from threading import Timer
@@ -73,6 +74,7 @@ class zynthian_engine_sooperlooper(zynthian_engine):
     # ---------------------------------------------------------------------------
     SL_PORT = ServerPort["sooperlooper_osc"]
     MAX_LOOPS = 6
+    MAX_TEMPO_BEATS = 256  # Longest first loop, in beats, considered when deriving a tempo from it
 
     # SL_LOOP_SEL_PARAM act on the selected loop - send with osc command /sl/#/set where #=-3 for selected or index of loop (0..5)
     SL_LOOP_SEL_PARAM = [
@@ -364,6 +366,9 @@ class zynthian_engine_sooperlooper(zynthian_engine):
         self.waiting = [0] * self.MAX_LOOPS  # 1 if a change of state is pending
         self.selected_loop = None
         self.loop_count = 1
+        self.tempo_from_loop_armed = False  # True whilst the first loop is recording and may define the tempo
+        self.tempo_from_loop_done = False  # True once a loop has defined the tempo (until loop 1 is cleared)
+        self.tempo_timer = None
         self.channels = 2
         self.selected_loop_cc_binding = True # True for MIDI CC to control selected loop. False to target all loops
 
@@ -400,7 +405,7 @@ class zynthian_engine_sooperlooper(zynthian_engine):
             ['rate', {'name': 'speed', 'value': 1.0, 'value_min': 0.25, 'value_max': 4.0, 'is_integer': False, 'nudge_factor': 0.01}],
             ['stretch_ratio', {'name': 'stretch', 'value': 1.0, 'value_min': 0.5, 'value_max': 4.0, 'is_integer': False, 'nudge_factor': 0.01}],
             ['pitch_shift', {'name': 'pitch', 'value': 0.0, 'value_min': -12, 'value_max': 12, 'is_integer': False, 'nudge_factor': 0.05}],
-            ['sync_source', {'name': 'sync to', 'value': 1, 'value_min': -1, 'value_max': 1, 'labels': ['Host', 'None', 'Loop1'], 'is_integer': True}],
+            ['sync_source', {'name': 'sync to', 'value': -1, 'value_min': -1, 'value_max': 1, 'labels': ['Host', 'None', 'Loop1'], 'is_integer': True}],  # Host = JACK transport
             ['sync', {'name': 'enable sync', 'value': 1, 'value_max': 1, 'labels': ['off', 'on']}],
             ['eighth_per_cycle', {'name': '8th/cycle', 'value': 16, 'value_min': 1, 'value_max': 600}],  # TODO: What makes sense for max val?
             ['quantize', {'value': 1, 'value_max': 3, 'labels': ['off', 'cycle', '8th', 'loop']}],
@@ -464,6 +469,12 @@ class zynthian_engine_sooperlooper(zynthian_engine):
             self.osc_server.send(self.osc_target, '/register_auto_update', ('s', symbol), ('i', 100), ('s', self.osc_server_url), ('s', '/control'))
         self.osc_server.send(self.osc_target, '/register', ('s', self.osc_server_url), ('s', '/info'))
 
+        # The engine's defaults are otherwise never pushed to the server - it is asked for
+        # its own values instead - so sync_source has to be sent for the default to mean
+        # anything. SooperLooper syncs to its first loop by default; zynthian drives a JACK
+        # transport, so follow that instead and let loops line up with the sequencer.
+        self.osc_server.send(self.osc_target, '/set', ('s', 'sync_source'), ('f', -1))
+
         # Request current quantity of loops
         self.osc_server.send(self.osc_target, '/ping', ('s', self.osc_server_url), ('s', '/info'))
 
@@ -479,6 +490,9 @@ class zynthian_engine_sooperlooper(zynthian_engine):
                 self.proc = None
             except Exception as err:
                 logging.error(f"Can't stop engine {self.name} => {err}")
+        if self.tempo_timer:
+            self.tempo_timer.cancel()
+            self.tempo_timer = None
         self.osc_end()
 
     # ---------------------------------------------------------------------------
@@ -730,6 +744,64 @@ class zynthian_engine_sooperlooper(zynthian_engine):
                 zctrl.set_value(self.loop_count, False)
                 self.monitors_dict['loop_del'] = True
 
+    def track_tempo_from_loop(self, state):
+        """Follow loop 1 through a recording so its length can define the session tempo
+
+        state: New SL state of loop 1
+
+        Only acts when the user has opted in to tempo-from-first-loop and the transport
+        was stopped when recording began - a rolling transport already defines the tempo
+        and the loop was synchronised to it.
+        """
+
+        if state in (SL_STATE_UNKNOWN, SL_STATE_OFF, SL_STATE_OFF_MUTED):
+            # Loop cleared => the next recording gets to define the tempo again
+            self.tempo_from_loop_armed = False
+            self.tempo_from_loop_done = False
+        elif state in (SL_STATE_REC_STARTING, SL_STATE_RECORDING):
+            if not self.tempo_from_loop_done and self.state_manager.tempo_from_loop:
+                # 1 = transport PLAYING
+                self.tempo_from_loop_armed = self.state_manager.zynseq.libseq.getTransportState() != 1
+        elif self.tempo_from_loop_armed and state not in (SL_STATE_REC_STOPPING,):
+            self.tempo_from_loop_armed = False
+            self.tempo_from_loop_done = True
+            # SooperLooper reports loop_len on a 100ms timer, so the length of a loop that
+            # has only just closed is still the one it had part way through recording
+            if self.tempo_timer:
+                self.tempo_timer.cancel()
+            self.tempo_timer = Timer(0.3, self.set_tempo_from_loop)
+            self.tempo_timer.start()
+
+    def set_tempo_from_loop(self):
+        """Set the session tempo from the length of loop 1"""
+
+        self.tempo_timer = None
+        try:
+            duration = float(self.monitors_dict.get('loop_len_0', 0))
+            if duration <= 0.0:
+                return
+            bpb = self.state_manager.zynseq.bpb
+            # The loop is some whole number of bars, but not which - take the power of two
+            # landing nearest 113 BPM, the geometric centre of the usual 80-160 range
+            best = None
+            bars = 1
+            while bars * bpb <= self.MAX_TEMPO_BEATS:
+                tempo = bars * bpb * 60 / duration
+                score = abs(math.log2(tempo / 113.14))
+                if best is None or score < best[0]:
+                    best = (score, tempo)
+                bars *= 2
+            tempo = best[1]
+            logging.info(f"Setting tempo to {tempo:.2f} BPM from a {duration:.3f}s first loop")
+            self.state_manager.set_tempo(tempo)
+            # The session now has a tempo but no clock. SooperLooper syncs to the JACK
+            # transport, so loops recorded after this one would wait on a pulse that a
+            # stopped transport never sends - roll it, as the performance has started.
+            if self.state_manager.zynseq.libseq.getTransportState() != 1:
+                self.state_manager.zynseq.transport_start("sooperlooper")
+        except Exception as e:
+            logging.warning(f"Could not derive tempo from loop => {e}")
+
     def single_pedal_cb(self):
         match self.pedal_taps:
             case 2:
@@ -763,6 +835,8 @@ class zynthian_engine_sooperlooper(zynthian_engine):
                     self.state[loop] = state
                     if state in [0, 4]:
                         self.next_state[loop] = -1
+                    if loop == 0:
+                        self.track_tempo_from_loop(state)
                 elif args[1] == 'waiting':
                     self.waiting[loop] = state
 

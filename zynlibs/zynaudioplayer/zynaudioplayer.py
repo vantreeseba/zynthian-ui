@@ -67,6 +67,7 @@ try:
     libaudioplayer.get_pitch_cent.restype = ctypes.c_int8
     libaudioplayer.get_varispeed.restype = ctypes.c_float
     libaudioplayer.is_loop.restype = ctypes.c_uint8
+    libaudioplayer.is_transport_sync.restype = ctypes.c_uint8
     libaudioplayer.get_file_duration.restype = ctypes.c_float
     libaudioplayer.get_file_channels.restype = ctypes.c_int32
     libaudioplayer.get_file_info.restype = ctypes.c_char_p
@@ -158,6 +159,18 @@ def enable_loop(id, enable):
 # Returns: True looping enabled
 def is_loop(id):
     return libaudioplayer.is_loop(id) > 0
+
+# Enable following of the JACK transport
+# id: Index of player
+# enable: True to start, stop and locate with the transport
+def enable_transport_sync(id, enable):
+    libaudioplayer.enable_transport_sync(id, ctypes.c_uint8(enable))
+
+# Get transport following state
+# id: Index of player
+# Returns: True if following the transport
+def is_transport_sync(id):
+    return libaudioplayer.is_transport_sync(id) > 0
 
 # Get end of loop in seconds from end of file
 # id: Index of player

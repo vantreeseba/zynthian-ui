@@ -61,6 +61,7 @@ struct AUDIO_PLAYER {
     _Atomic uint8_t play_state;         // Current playback state (STOPPED|STARTING|PLAYING|STOPPING)
     sf_count_t file_read_pos;           // Current file read position (frames)
     uint8_t loop;                       // 1 to loop between crop markers
+    uint8_t transport_sync;             // 1 to follow the JACK transport (start, stop and locate)
     sf_count_t crop_start;              // Start of audio (crop) in frames from start of file
     sf_count_t crop_start_src;          // Start of audio (crop) in frames from start after SRC
     sf_count_t crop_end;                // End of audio (crop) in frames from start of file
