@@ -26,6 +26,7 @@
 
 
 import tkinter
+import tkinter.font
 import logging
 #import traceback
 from time import sleep
@@ -1316,6 +1317,24 @@ class zynthian_gui_mixer(zynthian_gui_base):
             text="1 | 4/4",
             state=tkinter.NORMAL)
 
+        # Link indicator, in the gap between the time signature and the tempo.
+        # Anchored just right of the time signature, which is anchored NE and so
+        # always ends at the same x however long its text grows
+        link_x = int(self.status_l - self.status_fs * 10) + 2
+        self.status_link_font = tkinter.font.Font(
+            family=zynthian_gui_config.font_family_icons, size=int(0.25 * self.status_h))
+        # Room before the leftmost the tempo ever starts. The tempo is anchored NE,
+        # so its left edge is its anchor less the width of the widest reading
+        self.status_link_room = int(self.status_l - self.status_fs * 3.5) - link_x - tkinter.font.Font(
+            family=zynthian_gui_config.font_family, size=int(0.25 * self.status_h)).measure("888.8 bpm")
+        self.status_link = self.status_canvas.create_text(
+            link_x, 2,
+            anchor=tkinter.NW,
+            fill=zynthian_gui_config.color_tx_off,
+            font=self.status_link_font,
+            text="\uf0c1",
+            state=tkinter.HIDDEN)
+
         self.left_canvas.bind("<Button-1>", self.on_press)
         self.left_canvas.bind("<B1-Motion>", self.on_motion)
         self.left_canvas.bind("<ButtonRelease-1>", self.on_release)
@@ -1619,6 +1638,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
 
         if not self.shown:
             self.set_tempo()
+            self.set_link()
             zynsigman.register(zynsigman.S_MIXER, zynsigman.SS_ZYNMIXER_SET_VALUE, self.update_control)
             zynsigman.register_queued(zynsigman.S_MIDI, zynsigman.SS_MIDI_CC, self.midi_cc_cb)
             zynsigman.register_queued(zynsigman.S_MIDI, zynsigman.SS_MIDI_PC, self.midi_pc_cb)
@@ -1632,6 +1652,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
             zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_SELECT_PHRASE, self.highlight_launcher)
             zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TEMPO, self.set_tempo)
             zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TIMESIG, self.set_bpb)
+            zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_LINK, self.set_link)
             zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.launcher_play_state_cb)
             zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_STATE, self.refresh_launchers)
             zynsigman.register_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE, self.clip_rec_state_toast_cb)
@@ -1662,6 +1683,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
             zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_SELECT_PHRASE, self.highlight_launcher)
             zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TEMPO, self.set_tempo)
             zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TIMESIG, self.set_bpb)
+            zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_LINK, self.set_link)
             zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.launcher_play_state_cb)
             zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_STATE, self.refresh_launchers)
             zynsigman.unregister(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE, self.clip_rec_state_toast_cb)
@@ -1674,6 +1696,31 @@ class zynthian_gui_mixer(zynthian_gui_base):
         else:
             self.status_canvas.itemconfig(self.status_tempo, fill=zynthian_gui_config.color_info, text=f"{tempo:.1f} bpm")
             Timer(0.6, self.clear_tempo_highlight).start()
+
+    def set_link(self, enabled=None, peers=None):
+        """Show Link status and peer count in the topbar, hidden when Link is off"""
+        if enabled is None:
+            enabled = self.zynseq.is_link_enabled()
+            peers = self.zynseq.get_link_peers() if enabled else 0
+        if not enabled:
+            self.status_canvas.itemconfig(self.status_link, state=tkinter.HIDDEN)
+            return
+        # Dimmed while we are the only peer, so "connected to something" reads at a glance.
+        # Only a single digit fits before the tempo, so larger sessions just show "+"
+        if peers == 0:
+            text = "\uf0c1"
+        elif peers > 9:
+            text = "\uf0c1+"
+        else:
+            text = f"\uf0c1 {peers}"
+        # On a narrow topbar even that does not fit, so fall back to the bare glyph
+        if self.status_link_font.measure(text) > self.status_link_room:
+            text = "\uf0c1"
+        self.status_canvas.itemconfig(
+            self.status_link,
+            state=tkinter.NORMAL,
+            text=text,
+            fill=zynthian_gui_config.color_tx_off if peers == 0 else zynthian_gui_config.color_info)
 
     def clear_tempo_highlight(self):
         self.status_canvas.itemconfig(self.status_tempo, fill=zynthian_gui_config.color_header_tx)

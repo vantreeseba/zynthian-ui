@@ -61,6 +61,7 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         self.wifi_index = -1
         self.wifi_status = "???"
         self.filling_list = False
+        self.link_peers = 0
 
         super().__init__('Action')
 
@@ -74,6 +75,9 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
             super().refresh_status()
             if not self.filling_list and self.update_available != self.state_manager.update_available:
                 self.update_available = self.state_manager.update_available
+                self.update_list()
+            if not self.filling_list and self.link_peers != self.state_manager.zynseq.link_peers:
+                self.link_peers = self.state_manager.zynseq.link_peers
                 self.update_list()
 
     def refresh_wifi_task(self):
@@ -165,6 +169,24 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
                                ["Map channel pressure messages (monoAT) to the selected CC.", "midi_settings.png"]))
         self.list_data.append((self.test_midi, 0, "Test MIDI",
                                ["Play a MIDI track to test MIDI output.\n\nThis will play the MIDI through any loaded chains.", "midi_output.png"]))
+
+        self.list_data.append((None, 0, "> SYNC"))
+
+        zynseq = self.state_manager.zynseq
+        if zynseq.is_link_enabled():
+            peers = zynseq.get_link_peers()
+            peer_txt = "no peers yet" if peers == 0 else f"{peers} peer" + ("" if peers == 1 else "s")
+            self.list_data.append((self.toggle_link, 0, f"\u2612 Ableton Link ({peer_txt})",
+                                   ["Sharing tempo and bar phase with Link peers on the local network.", "midi_settings.png"]))
+            if zynseq.is_link_start_stop_sync_enabled():
+                self.list_data.append((self.toggle_link_start_stop_sync, 0, "\u2612 Link Start/Stop Sync",
+                                       ["Transport start/stop is shared with the Link session.", "midi_settings.png"]))
+            else:
+                self.list_data.append((self.toggle_link_start_stop_sync, 0, "\u2610 Link Start/Stop Sync",
+                                       ["Transport start/stop is local: Link shares tempo and phase only.", "midi_settings.png"]))
+        else:
+            self.list_data.append((self.toggle_link, 0, "\u2610 Ableton Link",
+                                   ["Share tempo and bar phase with Ableton Live and other Link apps on the local network.", "midi_settings.png"]))
 
         self.list_data.append((None, 0, "> AUDIO"))
 
@@ -579,6 +601,28 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         self.enable_param_editor(self, "Toggle Control",
                                  {'labels': ['solo', 'pfl', 'mono', 'phase', 'ms', 'record'], 'value': zynthian_gui_config.mixer_toggle},
                                  self.mixer_toggle_cb)
+
+    def toggle_link(self):
+        zynseq = self.state_manager.zynseq
+        enable = not zynseq.is_link_enabled()
+        zynseq.enable_link(enable)
+        logging.info(f"Ableton Link => {enable}")
+        zynthian_gui_config.link_enabled = enable
+        zynconf.save_config({
+            "ZYNTHIAN_LINK_ENABLED": str(int(enable))
+        })
+        self.update_list()
+
+    def toggle_link_start_stop_sync(self):
+        zynseq = self.state_manager.zynseq
+        enable = not zynseq.is_link_start_stop_sync_enabled()
+        zynseq.enable_link_start_stop_sync(enable)
+        logging.info(f"Link Start/Stop Sync => {enable}")
+        zynthian_gui_config.link_start_stop_sync = enable
+        zynconf.save_config({
+            "ZYNTHIAN_LINK_START_STOP_SYNC": str(int(enable))
+        })
+        self.update_list()
 
     def toggle_clip_record_ram(self):
         zynthian_gui_config.clip_record_ram = not zynthian_gui_config.clip_record_ram

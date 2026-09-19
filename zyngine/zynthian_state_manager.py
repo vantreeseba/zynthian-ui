@@ -161,6 +161,9 @@ class zynthian_state_manager:
         self.tempo_from_loop = False  # True to free-record the first clip armed from stopped transport and derive the tempo from it
         self.apply_record_quantize()
         self.zynseq.libseq.setRecordCountIn(self.record_count_in)
+        # Restore the Ableton Link settings saved from the admin menu
+        self.zynseq.enable_link_start_stop_sync(zynthian_gui_config.link_start_stop_sync)
+        self.zynseq.enable_link(zynthian_gui_config.link_enabled)
         self.midi_record_pad = None  # (phrase, midi_chan) of launcher pad capturing MIDI input, None when idle
         self.record_metronome_depth = 0  # Count of in-flight recordings forcing the metronome on
         self.saved_metronome_mode = None  # Metronome mode to restore when recordings finish

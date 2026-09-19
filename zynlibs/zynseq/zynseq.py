@@ -252,6 +252,13 @@ class zynseq(zynthian_engine):
             self.libseq.getStateChange.restype = ctypes.c_uint32
             self.libseq.getProgress.restype = ctypes.POINTER(ctypes.c_uint8)
 
+            # Ableton Link functions
+            self.libseq.enableLink.argtypes = [ctypes.c_bool]
+            self.libseq.isLinkEnabled.restype = ctypes.c_bool
+            self.libseq.enableLinkStartStopSync.argtypes = [ctypes.c_bool]
+            self.libseq.isLinkStartStopSyncEnabled.restype = ctypes.c_bool
+            self.libseq.getLinkPeers.restype = ctypes.c_uint32
+
             # Pattern functions
             self.libseq.getPattern.restype = ctypes.c_uint32
             self.libseq.getPatternAt.restype = ctypes.c_uint32
@@ -321,6 +328,8 @@ class zynseq(zynthian_engine):
         self.progress = [0] * LAUNCHER_COLS
         self.bpb = 4
         self.beat = 0 # Current beat of bar
+        self.link_enabled = False # True if joined to an Ableton Link session
+        self.link_peers = 0 # Quantity of other peers in the Link session
         self.clippy = None # Clippy engine object
         self.reset()
 
@@ -630,6 +639,49 @@ class zynseq(zynthian_engine):
         self.libseq.tapTempo()
 
     # -------------------------------------------------------------------
+    # Ableton Link
+    # -------------------------------------------------------------------
+
+    # Join or leave the Ableton Link session
+    # enable: True to join
+    def enable_link(self, enable):
+        if self.libseq and self.is_link_enabled() != bool(enable):
+            self.libseq.enableLink(bool(enable))
+            self.send_link_state()
+
+    # Check whether Link is enabled
+    def is_link_enabled(self):
+        if self.libseq:
+            return self.libseq.isLinkEnabled()
+        return False
+
+    # Share transport start/stop with the Link session
+    # enable: True to share
+    def enable_link_start_stop_sync(self, enable):
+        if self.libseq and self.is_link_start_stop_sync_enabled() != bool(enable):
+            self.libseq.enableLinkStartStopSync(bool(enable))
+            self.send_link_state()
+
+    # Check whether transport start/stop is shared with the Link session
+    def is_link_start_stop_sync_enabled(self):
+        if self.libseq:
+            return self.libseq.isLinkStartStopSyncEnabled()
+        return False
+
+    # Get quantity of other peers in the Link session
+    def get_link_peers(self):
+        if self.libseq:
+            return self.libseq.getLinkPeers()
+        return 0
+
+    # Announce the current Link state to the UI
+    def send_link_state(self):
+        self.link_enabled = self.is_link_enabled()
+        self.link_peers = self.get_link_peers() if self.link_enabled else 0
+        zynsigman.send(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_LINK,
+                       enabled=self.link_enabled, peers=self.link_peers)
+
+    # -------------------------------------------------------------------
     # Zynseq Zctrls management
     # -------------------------------------------------------------------
 
@@ -679,6 +731,12 @@ class zynseq(zynthian_engine):
         tempo = self.libseq.getTempo()
         if tempo != self.zctrl_tempo.value:
             self.zctrl_tempo.set_value(tempo)
+        if self.link_enabled:
+            peers = self.get_link_peers()
+            if peers != self.link_peers:
+                self.link_peers = peers
+                zynsigman.send(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_LINK,
+                               enabled=True, peers=peers)
         size = self.phrases * 33
         states = (ctypes.c_uint32 * size)()
         count = self.libseq.getStateChange(states, size)

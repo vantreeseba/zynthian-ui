@@ -754,6 +754,11 @@ clip_record_ram_dir = "/dev/shm/zynthian-capture"
 # Extra clip record latency offset in ms, added to the JACK-reported capture latency
 # when aligning recorded clips (may be negative)
 clip_record_latency = get_env_int('ZYNTHIAN_CLIP_RECORD_LATENCY', 0)
+# Join the Ableton Link session at startup, sharing tempo and bar phase with peers
+# on the local network
+link_enabled = get_env_int('ZYNTHIAN_LINK_ENABLED', 0)
+# Share transport start/stop with the Link session as well as tempo and phase
+link_start_stop_sync = get_env_int('ZYNTHIAN_LINK_START_STOP_SYNC', 0)
 
 # ------------------------------------------------------------------------------
 # Text To Speech Options

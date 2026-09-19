@@ -105,6 +105,7 @@ enum JTRANS_MODES {
 // Local transport flags
 #define TRANSPORT_CLIENT_ZYNSEQ   1
 #define TRANSPORT_CLIENT_METRO    2
+#define TRANSPORT_CLIENT_LINK     3
 
 // Follow action
 enum FOLLOW_ACTION {

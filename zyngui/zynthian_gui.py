@@ -1501,6 +1501,16 @@ class zynthian_gui:
         if self.current_screen != "tempo":
             self.show_screen("tempo")
 
+    def cuia_toggle_link(self, params=None):
+        # Join/leave the Ableton Link session
+        # No params: toggle. "ON"/"OFF": set explicitly.
+        zynseq = self.state_manager.zynseq
+        if params and params[0] in ("ON", "OFF"):
+            enable = params[0] == "ON"
+        else:
+            enable = not zynseq.is_link_enabled()
+        zynseq.enable_link(enable)
+
     def cuia_set_tempo(self, params=None):
         try:
             self.state_manager.zynseq.set_tempo(params[0])

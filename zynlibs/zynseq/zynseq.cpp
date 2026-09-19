@@ -43,6 +43,7 @@
 #include "metronome.h"       // metronome wav data
 #include "pattern.h"         // provides pattern objects
 #include "sequencemanager.h" // provides management of sequences, patterns, events, etc
+#include "linksync.h"        // provides Ableton Link session synchronisation
 #include "timebase.h"        // provides timebase event map
 #include "zynseq.h"          // exposes library methods as c functions
 
@@ -116,6 +117,15 @@ uint32_t g_nTick                      = 0;         // Current tick within bar
 uint32_t g_nBarStartTick              = 0;         // Quantity of ticks from start of song to start of current bar
 uint32_t g_nExtClockPPQN              = PPQN_MIDI; // Quantity of PPQN of the external clock
 
+// Ableton Link
+LinkSync* g_pLink = NULL; // Pointer to the Link session (NULL until init())
+// Phase error (in beats) beyond which the bar grid is snapped rather than steered
+#define LINK_SNAP_BEATS 0.125
+// Proportion of the phase error corrected in each period whilst steering
+#define LINK_SERVO_GAIN 0.05
+// Maximum proportional change to the tick period whilst steering
+#define LINK_SERVO_LIMIT 0.05
+
 float g_fSwingAmount = 0.0; // Swing amount, range from 0 to 1, but values over 0.5 are not "MPC swing"
 float g_fHumanTime = 0.0;   // Timing Humanization, range from 0 to FLOAT_MAX
 float g_fHumanVelo = 0.0;   // Velocity Humanization, range from 0 to FLOAT_MAX
@@ -139,6 +149,9 @@ void enableDebug(bool bEnable) {
     fprintf(stderr, "libseq setting debug mode %s\n", bEnable ? "on" : "off");
     g_bDebug = bEnable;
 }
+
+// Set tempo, optionally propagating the change to the Link session
+void setTempoInternal(double tempo, bool bPropagate);
 
 // Convert tempo to frames per clock
 void updateClockTiming() {
@@ -247,6 +260,9 @@ int onJackProcess(jack_nframes_t nFrames, void* pArgs) {
 
         switch (midiEvent.buffer[0]) {
             case MIDI_CLOCK: {
+                // Link is the clock source when enabled, so ignore external MIDI clock
+                if (g_pLink && g_pLink->isEnabled())
+                    break;
                 uint32_t nExpectedTicksBeforeClk = midiEvent.time / g_dFramesPerTick;
                 // First update tempo to get current clock period
                 double dTempo = 60.0 * g_nSampleRate / (double(g_nExtClockPPQN) * (nNow + midiEvent.time - nLastExtClockFrame));
@@ -279,9 +295,77 @@ int onJackProcess(jack_nframes_t nFrames, void* pArgs) {
         }
     }
 
+    // ** Ableton Link **
+    // Sample the session once per period and steer the internal clock towards it. The
+    // tick period used for this period may be trimmed slightly to correct phase error.
+    double dFramesPerTick = g_dFramesPerTick;
+    bool bLinkHoldStart = false; // True to hold a pending transport start until the session downbeat
+    static double dPrevLinkPhase = 0.0;
+    LinkState linkState;
+    const bool bLinkActive = g_pLink && g_pLink->audioUpdate(nFrames, g_nSampleRate, g_nBeatsPerBar, &linkState);
+    if (bLinkActive) {
+        // Follow the session tempo (without echoing it back to the session)
+        if (fabs(linkState.tempo - g_dTempo) > 0.0001) {
+            setTempoInternal(linkState.tempo, false);
+            dFramesPerTick = g_dFramesPerTick;
+        }
+
+        // Share transport start/stop with the session
+        if (g_pLink->isStartStopSyncEnabled()) {
+            if (linkState.isPlaying && g_nTransportState == STOPPED) {
+                transportStart(TRANSPORT_CLIENT_LINK);
+            } else if (!linkState.isPlaying && g_nTransportState != STOPPED && g_nTransportState != STOPPING) {
+                // The session stops every peer, whoever started our transport locally
+                g_nTransportClients = 0;
+                transportStop(TRANSPORT_CLIENT_LINK);
+            }
+        } else if (g_nTransportClients & (1 << TRANSPORT_CLIENT_LINK)) {
+            // Start/stop sync was turned off => release the slot Link was holding
+            transportStop(TRANSPORT_CLIENT_LINK);
+        }
+
+        if (g_nTransportState == PLAYING) {
+            // Our phase within the bar, in beats, at the start of this period
+            int64_t nTicksToBeat = (int64_t)nNextBeatTime - (int64_t)nTickTime;
+            if (nTicksToBeat < 0)
+                nTicksToBeat = 0;
+            else if (nTicksToBeat > PPQN_INTERNAL)
+                nTicksToBeat = PPQN_INTERNAL;
+            const double dQuantum = g_nBeatsPerBar;
+            double dSeqPhase = fmod((double)g_nBeat - (double)nTicksToBeat / PPQN_INTERNAL, dQuantum);
+            if (dSeqPhase < 0.0)
+                dSeqPhase += dQuantum;
+            // Phase error, wrapped to the shortest way round the bar
+            double dError = linkState.phase - dSeqPhase;
+            while (dError < -dQuantum / 2)
+                dError += dQuantum;
+            while (dError >= dQuantum / 2)
+                dError -= dQuantum;
+            if (fabs(dError) > LINK_SNAP_BEATS) {
+                // Too far out to steer (just joined, tempo jump, xrun) => snap the grid
+                const double dBeatInBar = floor(linkState.phase);
+                g_nBeat = (uint32_t)dBeatInBar + 1;
+                nNextBeatTime = nTickTime + (uint32_t)lround((1.0 - (linkState.phase - dBeatInBar)) * PPQN_INTERNAL);
+            } else if (dError != 0.0) {
+                // Steer by trimming the tick period. A positive error means the session
+                // is ahead of us, so we need shorter ticks to catch up.
+                double dTrim = 1.0 - dError * LINK_SERVO_GAIN;
+                if (dTrim < 1.0 - LINK_SERVO_LIMIT)
+                    dTrim = 1.0 - LINK_SERVO_LIMIT;
+                else if (dTrim > 1.0 + LINK_SERVO_LIMIT)
+                    dTrim = 1.0 + LINK_SERVO_LIMIT;
+                dFramesPerTick *= dTrim;
+            }
+        } else if (g_nTransportState == STARTING) {
+            // Launch on the session downbeat, i.e. the period in which the phase wraps
+            bLinkHoldStart = !(linkState.phase < dPrevLinkPhase);
+        }
+        dPrevLinkPhase = linkState.phase;
+    }
+
     // Populate remaining ticks in this period, at current tempo
    g_vTicks.clear();
-    for (; dNextIntClockFrame < nNow + nFrames; dNextIntClockFrame += g_dFramesPerTick) {
+    for (; dNextIntClockFrame < nNow + nFrames; dNextIntClockFrame += dFramesPerTick) {
         g_vTicks.push_back(dNextIntClockFrame - nNow);
     }
 
@@ -482,11 +566,19 @@ int onJackProcess(jack_nframes_t nFrames, void* pArgs) {
         bool bSync = false; // True if at start of bar
 
         // Update local (internal) transport
-        if (g_nTransportState == STARTING) {
+        if (g_nTransportState == STARTING && !bLinkHoldStart) {
             g_nTransportState = PLAYING;
-            nNextBeatTime = nTickTime + PPQN_INTERNAL;
-            g_nBeat = 1;
-            bSync = true;
+            if (bLinkActive) {
+                // Align the bar grid with the session phase
+                const double dBeatInBar = floor(linkState.phase);
+                g_nBeat = (uint32_t)dBeatInBar + 1;
+                nNextBeatTime = nTickTime + (uint32_t)lround((1.0 - (linkState.phase - dBeatInBar)) * PPQN_INTERNAL);
+                bSync = (g_nBeat == 1);
+            } else {
+                nNextBeatTime = nTickTime + PPQN_INTERNAL;
+                g_nBeat = 1;
+                bSync = true;
+            }
             bBeat = true;
             jack_transport_start(g_pJackClient);
             g_mSchedule.map.emplace(
@@ -678,6 +770,8 @@ int onJackSampleRateChange(jack_nframes_t nFrames, void* pArgs) {
         return 0;
     g_nSampleRate = nFrames;
     updateClockTiming();
+    if (g_pLink)
+        g_pLink->resetTimeFilter();
     return 0;
 }
 
@@ -689,6 +783,13 @@ int onJackXrun(void* pArgs) {
 
 void end() {
     DPRINTF("zynseq exit\n");
+    // Hide the session from the audio thread before destroying it
+    LinkSync* pLink = g_pLink;
+    g_pLink = NULL;
+    if (pLink) {
+        pLink->enable(false);
+        delete pLink;
+    }
     freeState();
 }
 
@@ -752,6 +853,10 @@ void init(char* name) {
 
     g_nSampleRate = jack_get_sample_rate(g_pJackClient);
     updateClockTiming();
+
+    // Create the Link session (joins the network only when enabled)
+    if (!g_pLink)
+        g_pLink = new LinkSync(g_dTempo);
 
     // Pre-reserve memory to avoid later malloc calls
     g_vTicks.reserve(PPQN_INTERNAL);
@@ -3084,6 +3189,30 @@ bool isSolo(uint8_t scene, uint8_t phrase, uint8_t sequence, uint32_t track) {
     return false;
 }
 
+// ** Ableton Link **
+
+void enableLink(bool enable) {
+    if (g_pLink)
+        g_pLink->enable(enable);
+}
+
+bool isLinkEnabled() {
+    return g_pLink && g_pLink->isEnabled();
+}
+
+void enableLinkStartStopSync(bool enable) {
+    if (g_pLink)
+        g_pLink->enableStartStopSync(enable);
+}
+
+bool isLinkStartStopSyncEnabled() {
+    return g_pLink && g_pLink->isStartStopSyncEnabled();
+}
+
+uint32_t getLinkPeers() {
+    return g_pLink ? (uint32_t)g_pLink->numPeers() : 0;
+}
+
 // ** Transport management **/
 uint8_t getTransportState() {
     return g_nTransportState;
@@ -3093,6 +3222,9 @@ void transportStart(uint8_t id) {
     if (g_nTransportState != PLAYING)
         g_nTransportState = STARTING;
     g_nTransportClients |= (1 << id);
+    // Do not echo a start that the session itself asked for
+    if (g_pLink && id != TRANSPORT_CLIENT_LINK)
+        g_pLink->requestIsPlaying(true);
 }
 
 void transportStop(uint8_t id) {
@@ -3101,8 +3233,16 @@ void transportStop(uint8_t id) {
     else {
         g_nTransportClients &= ~(1 << id);
     }
-    if ((g_nTransportClients == 0) && (g_nTransportState != STOPPED))
-        g_nTransportState = STOPPING;
+    // Link holds a client slot whilst the session is playing. Once every other client
+    // has released the transport, ask the session to stop: it then stops every peer,
+    // including us, which is what releases Link's own slot.
+    if ((g_nTransportClients & ~(1 << TRANSPORT_CLIENT_LINK)) == 0) {
+        // Do not echo a stop that the session itself asked for
+        if (g_pLink && id != TRANSPORT_CLIENT_LINK)
+            g_pLink->requestIsPlaying(false);
+        if ((g_nTransportClients == 0) && (g_nTransportState != STOPPED))
+            g_nTransportState = STOPPING;
+    }
 }
 
 void transportToggle(uint8_t id) {
@@ -3112,14 +3252,24 @@ void transportToggle(uint8_t id) {
         transportStart(id);
 }
 
-void setTempo(double tempo) {
+void setTempoInternal(double tempo, bool bPropagate) {
     if (tempo >= 10.0 && tempo < 500.0) {
+        const bool bChanged = (tempo != g_dTempo);
         g_dTempo = tempo;
         updateClockTiming();
         g_seqMan.setTempo(tempo);
         updateJackPosition();
+        // Only tell the Link session about real changes: the UI writes the tempo
+        // back after reading it, which would otherwise echo the session's own
+        // tempo straight back at it
+        if (bPropagate && bChanged && g_pLink)
+            g_pLink->requestTempo(tempo);
         //DPRINTF("Tempo set to: %f FramesPerClock: %u\n", g_dTempo, g_dFramesPerTick);
     }
+}
+
+void setTempo(double tempo) {
+    setTempoInternal(tempo, true);
 }
 
 double getTempo() {

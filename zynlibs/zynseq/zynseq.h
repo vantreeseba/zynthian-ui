@@ -1021,6 +1021,37 @@ void setRecordCountIn(uint16_t bars);
 */
 void setTempoFromLoop(bool enable);
 
+//-----------------------------------------------------------------------------
+// Ableton Link
+//-----------------------------------------------------------------------------
+
+/** @brief  Enable / disable Ableton Link
+    @param  enable True to join the Link session on the local network
+    @note   Whilst enabled, the session provides tempo and the bar grid is phase
+            locked to it, so external MIDI clock input is ignored
+*/
+void enableLink(bool enable);
+
+/** @brief  Check whether Ableton Link is enabled
+    @retval bool True if enabled
+*/
+bool isLinkEnabled();
+
+/** @brief  Enable / disable sharing of transport start/stop with the Link session
+    @param  enable True to enable
+*/
+void enableLinkStartStopSync(bool enable);
+
+/** @brief  Check whether Link start/stop sync is enabled
+    @retval bool True if enabled
+*/
+bool isLinkStartStopSyncEnabled();
+
+/** @brief  Get quantity of peers in the Link session
+    @retval uint32_t Quantity of peers, not including this device (0 if Link disabled)
+*/
+uint32_t getLinkPeers();
+
 /** @brief  Get the current transport state
     @retval uint8_t Transport state [STOPPED | PLAYING | STARTING | STOPPING]
 */

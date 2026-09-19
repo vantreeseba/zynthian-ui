@@ -108,6 +108,7 @@ class zynthian_signal_manager:
     SS_SEQ_TIMESIG = 6
     SS_SEQ_METRO = 7
     SS_SEQ_BEAT = 8 # Transport beat change (beat)
+    SS_SEQ_LINK = 9 # Ableton Link state change (enabled, peers)
 
     # Mixer
     SS_ZYNMIXER_SET_VALUE = 1
