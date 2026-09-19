@@ -26,6 +26,7 @@
 import ctypes
 import logging
 import traceback
+from copy import deepcopy
 from glob import glob
 from threading import Thread
 from queue import SimpleQueue
@@ -298,9 +299,9 @@ class zynthian_state_manager:
         self.start_busy("reset state")
         self.stop()
         sleep(0.2)
-        self.clear_busy()  # TODO Is this needed?
         self.start()
         self.end_busy("reset state")
+        #self.clear_busy()  # TODO Is this needed?
 
     def clean(self, chains=True, zynseq=True):
         """Remove Chains & Sequences.
@@ -334,7 +335,6 @@ class zynthian_state_manager:
         self.clean(chains=True, zynseq=True)
         self.last_snapshot_fpath = ""
         self.end_busy("clean all")
-        self.busy.clear()  # Sometimes it's needed, why??
 
     def clean_chains(self):
         """Remove ALL chains while keeping sequences."""
@@ -342,7 +342,6 @@ class zynthian_state_manager:
         self.start_busy("clean chains", "cleaning chains...")
         self.clean(chains=True, zynseq=False)
         self.end_busy("clean chains")
-        self.busy.clear()  # Sometimes it's needed, why??
 
     def clean_sequences(self):
         """Remove ALL sequences while keeping chains."""
@@ -350,7 +349,6 @@ class zynthian_state_manager:
         self.start_busy("clean sequences", "cleaning sequences...")
         self.clean(chains=False, zynseq=True)
         self.end_busy("clean sequences")
-        self.busy.clear()  # Sometimes it's needed, why??
 
     def session_reset(self):
         """Reset the session content built up in the pad/session view: stop playback,
@@ -442,8 +440,7 @@ class zynthian_state_manager:
             self.busy_message = message
         if details:
             self.busy_details = details
-
-        # logging.debug(f"Start busy for {clid}. Message: '{message}', Details: '{details}', Current clients: {self.busy})")
+        #logging.debug(f"Start busy for {clid}. Message: '{message}', Details: '{details}', Current clients: {self.busy})")
 
     def end_busy(self, clid):
         """Remove client from list of busy clients
@@ -461,8 +458,7 @@ class zynthian_state_manager:
             self.busy_success = None
             self.busy_details = None
             zynsigman.send(zynsigman.S_STATE_MAN, zynsigman.SS_BUSY, state=False)
-
-        # logging.debug(f"End busy for {clid}. Remaining clients: {self.busy}")
+        #logging.debug(f"End busy for {clid}. Remaining clients: {self.busy}")
 
     def clear_busy(self):
         self.busy.clear()
@@ -722,9 +718,9 @@ class zynthian_state_manager:
 
             sleep(0.2)
 
-    def cb_status_audio_player(self, handle, state):
-        if handle == self.audio_player.handle:
-            self.status_audio_player = state
+    def cb_status_audio_player(self, id, play_state, loop, pos, varispeed):
+        if id == self.audio_player.handle:
+            self.status_audio_player = play_state
 
     def fast_thread_task(self):
         """Perform fast / high priority background tasks"""
@@ -1174,6 +1170,9 @@ class zynthian_state_manager:
             converter = zynthian_legacy_snapshot(self)
             state = converter.convert_state(snapshot)
 
+            if load_sequences:
+                self.clean_sequences()
+
             # Load chains
             if load_chains:
                 # Mute output to avoid unwanted noises
@@ -1318,9 +1317,12 @@ class zynthian_state_manager:
             self.set_busy_error("ERROR: Invalid snapshot", e)
             sleep(2)
 
-        zynautoconnect.request_midi_connect()
+        zynautoconnect.request_midi_connect(True)
         zynautoconnect.request_audio_connect(True)
         self.update_clip_monitors()
+
+        # Init MPE after MIDI connection
+        self.chain_manager.init_MPE()
 
         # Restore mute state
         self.mute(mute, 0)
@@ -1424,6 +1426,32 @@ class zynthian_state_manager:
 
     def set_zs3_title(self, zs3_id, title):
         self.zs3[zs3_id]["title"] = title
+
+    def get_zs3_note(self, zs3_id=None):
+        """Get ZS3 note
+
+        zs3_id : ZS3 ID (default: Use last loaded zs3)
+        Returns : Note as string, empty if the ZS3 has none
+        """
+
+        try:
+            if zs3_id is None:
+                zs3_id = self.last_zs3_id
+            return self.zs3[zs3_id].get("note", "")
+        except:
+            return ""
+
+    def set_zs3_note(self, zs3_id, note):
+        """Set ZS3 note
+
+        zs3_id : ZS3 ID
+        note : Note as string. An empty note removes the key.
+        """
+
+        if note:
+            self.zs3[zs3_id]["note"] = note
+        else:
+            self.zs3[zs3_id].pop("note", None)
 
     def toggle_zs3_restore_flag(self, zs3_id, type, id=None):
         zs3_state = self.zs3[zs3_id]
@@ -1696,6 +1724,7 @@ class zynthian_state_manager:
         omit_processors = []
         omit_chains = []
         restore_midi_learn = False
+        note = ""
         if zs3_id in self.zs3:
             zs3 = self.zs3[zs3_id]
             if "processors" in zs3:
@@ -1707,6 +1736,7 @@ class zynthian_state_manager:
                     if "restore" in chain and not chain["restore"]:
                         omit_chains.append(chain_id)
             restore_midi_learn = zs3.get("restore_midi_learn", False)
+            note = zs3.get("note", "")
 
         # Initialise zs3
         self.zs3[zs3_id] = {
@@ -1716,6 +1746,8 @@ class zynthian_state_manager:
         }
         if restore_midi_learn:
             self.zs3[zs3_id]["restore_midi_learn"] = True
+        if note:
+            self.zs3[zs3_id]["note"] = note
 
         chain_states = {}
         for chain_id, chain in self.chain_manager.chains.items():
@@ -1850,6 +1882,66 @@ class zynthian_state_manager:
         except:
             logging.info("Tried to remove non-existant ZS3")
 
+    def clone_zs3(self, zs3_id, title=None):
+        """Copy a ZS3, placing the copy directly after it
+
+        Saving a new ZS3 stores the *current* state; this copies the state the
+        source ZS3 already holds, so the copy is exact however much has been
+        touched since it was loaded. The copy gets a new 'zs3-N' id and so no
+        program change of its own.
+
+        zs3_id : ZS3 ID to copy
+        title : Title for the copy (Default: autogenerate as for a new ZS3)
+        Returns : ID of the copy, or None if there is nothing to copy
+        """
+
+        if zs3_id == "zs3-0" or zs3_id not in self.zs3:
+            logging.info(f"Can't clone ZS3 '{zs3_id}'")
+            return None
+        index = self.get_next_zs3_index()
+        new_zs3_id = f"zs3-{index}"
+        self.zs3[new_zs3_id] = deepcopy(self.zs3[zs3_id])
+        if not title:
+            title = f"ZS3-{index}"
+        self.zs3[new_zs3_id]["title"] = title
+        self.move_zs3(new_zs3_id, self.get_zs3_ids().index(zs3_id) + 1)
+        return new_zs3_id
+
+    def move_zs3(self, zs3_id, index):
+        """Move a ZS3 within the stepping order
+
+        Stepping and the ZS3 screen both walk the zs3 dictionary in insertion
+        order, so reordering is rebuilding that dictionary with its keys in a
+        new order. 'zs3-0' keeps whatever slot it had: it is not part of the
+        stepping order, and the ZS3 screen lists it apart from the saved ZS3s.
+
+        zs3_id : ZS3 ID to move
+        index : New position, zero-based, among the ZS3s that stepping walks
+        Returns : True if the order changed
+        """
+
+        zs3_ids = self.get_zs3_ids()
+        try:
+            current = zs3_ids.index(zs3_id)
+        except ValueError:
+            logging.info(f"Tried to move non-existent ZS3 '{zs3_id}'")
+            return False
+        index = min(max(index, 0), len(zs3_ids) - 1)
+        if index == current:
+            return False
+        zs3_ids.insert(index, zs3_ids.pop(current))
+
+        moved = iter(zs3_ids)
+        zs3 = {}
+        for key in self.zs3:
+            if key == "zs3-0":
+                zs3[key] = self.zs3[key]
+            else:
+                new_key = next(moved)
+                zs3[new_key] = self.zs3[new_key]
+        self.zs3 = zs3
+        return True
+
     def reset_zs3(self):
         """Remove all ZS3"""
 
@@ -1940,9 +2032,10 @@ class zynthian_state_manager:
 
         return [zs3_id for zs3_id in self.zs3 if zs3_id != "zs3-0"]
 
-    def load_next_zs3(self):
+    def load_next_zs3(self, cycle=False):
         """Restore the next ZS3, or the first if none is loaded
 
+        cycle: Bool. True for cycling zs3s.
         Returns : True on success
         """
 
@@ -1955,12 +2048,16 @@ class zynthian_state_manager:
             # Nothing loaded, or the default state is loaded => start at the first
             index = 0
         if index >= len(zs3_ids):
-            index = 0
+            if cycle:
+                index = 0
+            else:
+                return False
         return self.load_zs3(zs3_ids[index])
 
-    def load_prev_zs3(self):
+    def load_prev_zs3(self, cycle=False):
         """Restore the previous ZS3, or the last if none is loaded
 
+        cycle: Bool. True for cycling zs3s.
         Returns : True on success
         """
 
@@ -1973,7 +2070,10 @@ class zynthian_state_manager:
             # Nothing loaded, or the default state is loaded => start at the last
             index = len(zs3_ids) - 1
         if index < 0:
-            index = len(zs3_ids) - 1
+            if cycle:
+                index = len(zs3_ids) - 1
+            else:
+                return False
         return self.load_zs3(zs3_ids[index])
 
     # ------------------------------------------------------------------
@@ -2353,7 +2453,7 @@ class zynthian_state_manager:
         if (self.audio_player.preset_name and os.path.exists(self.audio_player.preset_info[0])) or zynaudioplayer.get_filename(self.audio_player.handle):
             zynaudioplayer.start_playback(self.audio_player.handle)
         else:
-            self.audio_player.engine.load_latest(self.audio_player)
+            self.audio_player.engine.load_latest()
             zynaudioplayer.start_playback(self.audio_player.handle)
 
     def stop_audio_player(self, reset_pos=False):

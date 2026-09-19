@@ -174,7 +174,6 @@ class zynthian_gui_snapshot(zynthian_gui_selector_info):
         if not self.bankless_mode:
             self.list_data.append((self.sm.snapshot_dir, i, ".."))
             i += 1
-
         if self.is_not_empty_snapshot():
             # TODO: Add better validation of populated state, e.g. sequences
             self.list_data.append(("SAVE", i, "Save as new snapshot", ["Save current state as new snapshot", "snapshot_new.png"]))
@@ -188,7 +187,6 @@ class zynthian_gui_snapshot(zynthian_gui_selector_info):
             if isfile(self.sm.last_state_snapshot_fpath):
                 self.list_data.append((self.sm.last_state_snapshot_fpath, i, "Last State", ["Last state snapshot", "snapshot_default.png"]))
                 i += 1
-
         self.change_index_offset(i)
 
         n_snapshots = 0
@@ -199,7 +197,10 @@ class zynthian_gui_snapshot(zynthian_gui_selector_info):
                 i += 1
                 n_snapshots += 1
                 if fpath == self.sm.last_snapshot_fpath:
-                    self.index = i + 1
+                    if self.bankless_mode:
+                        self.index = i + 1
+                    else:
+                        self.index = i
         if n_snapshots == 0:
             # Same non-selectable row convention as the "> Saved snapshots:"
             # header: action None rows render as labels.
@@ -360,18 +361,21 @@ class zynthian_gui_snapshot(zynthian_gui_selector_info):
         state = self.sm.load_snapshot(fpath)
         if state is None:
             self.zyngui.clean_all()
+        self.zyngui.reset_screen_history()
         self.zyngui.show_screen('root', self.zyngui.SCREEN_HMODE_RESET)
 
     def load_snapshot_chains(self, fpath, merge=False):
         if self.is_not_empty_snapshot() and fpath != self.sm.last_state_snapshot_fpath:
             self.sm.save_last_state_snapshot()
         self.sm.load_snapshot(fpath, load_sequences=False, merge=merge)
-        self.zyngui.show_screen('root', self.zyngui.SCREEN_HMODE_RESET)
+        self.zyngui.reset_screen_history()
+        self.zyngui.show_screen('mixer', self.zyngui.SCREEN_HMODE_RESET)
 
     def load_snapshot_sequences(self, fpath):
         if self.is_not_empty_snapshot() and fpath != self.sm.last_state_snapshot_fpath:
             self.sm.save_last_state_snapshot()
         self.sm.load_snapshot(fpath, load_chains=False)
+        self.zyngui.reset_screen_history()
         self.zyngui.show_screen('launcher', hmode=self.zyngui.SCREEN_HMODE_RESET)
 
     def restore_backup_cb(self, fname, fpath):

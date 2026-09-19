@@ -40,8 +40,7 @@ from zyngui import zynthian_gui_config
 
 class zynthian_gui_help(HtmlFrame):
 
-    ui_dir = os.environ.get('ZYNTHIAN_UI_DIR', "/zynthian/zynthian-ui")
-
+    help_dir = os.environ.get('ZYNTHIAN_HELP_DIR', "/zynthian/zynthian-help")
 
     # Scale for touch swipe action after-roll
     touch_swipe_roll_scale = [1, 0, 1, 1, 2, 2, 2, 4, 4, 4, 4, 4]  # 1, 0, 1, 0, 1, 0, 1, 0,
@@ -60,7 +59,7 @@ class zynthian_gui_help(HtmlFrame):
         self.link = None
         self.links = []
         self.link_timer = None
-        self.path = self.ui_dir + "/help"
+        self.path = self.help_dir
         self.history = []
 
         # Main Frame
@@ -97,6 +96,50 @@ class zynthian_gui_help(HtmlFrame):
         if self.zyngui.tts:
             self.tts_info()
 
+    @classmethod
+    def get_index(self):
+        def get_data(files):
+            items = []
+            for file in files:
+                with open(file, "r", encoding="utf-8") as f:
+                    soup = BeautifulSoup(f, "html.parser")
+                    # Try <title> first
+                    title_tag = soup.find("title")
+                    title = title_tag.get_text(strip=True) if title_tag else None
+                    # Fallback to <h1>
+                    if not title:
+                        h1 = soup.find("h1")
+                        title = h1.get_text(strip=True) if h1 else file.stem
+                    items.append((title, file.name))
+            return items
+
+        files = list(Path(f"{self.help_dir}/common").glob("*.html")) + \
+                list(Path(f"{self.help_dir}/{zynthian_gui_config.layout['name']}").glob("*.html"))
+        files.sort(key=lambda f: f.name)
+
+        # Build index HTML
+        html_output = f"""
+<!DOCTYPE html>
+<html>
+ <head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="{self.help_dir}/style.css">
+ </head>
+ <body class="help_ui">
+  <h1>Help Index</h1>
+   <ul class="index">
+"""
+
+        for title, filename in get_data(files):
+            html_output += f'    <li><a href="{filename}">{title}</a></li>\n'
+        html_output += """
+
+   </ul>
+  </body>
+</html>
+"""
+        return html_output
+
     def load_file(self, fpath):
         try:
             if fpath == "index:":
@@ -117,13 +160,12 @@ class zynthian_gui_help(HtmlFrame):
                         pass
                 for tag in self.soup.find_all("div", attrs={"w3-include-html": True}):
                     try:
-                        with open(f"{self.ui_dir}/help/include/{tag['w3-include-html']}") as f:
+                        with open(f"{self.help_dir}/include/{tag['w3-include-html']}") as f:
                             include_html = f.read()
                         tag.replace_with(BeautifulSoup(include_html, "html.parser"))
                     except:
                         pass
-                with open(f"{self.ui_dir}/help/header.html") as f:
-                    header_html = f.read()
+                header_html = "<header class='global_header no_tts'><a href='index:'>index</a></header>"
                 self.soup.body.insert(0, BeautifulSoup(header_html, "html.parser"))
                 html = str(self.soup)
 
@@ -147,7 +189,7 @@ class zynthian_gui_help(HtmlFrame):
 
     def set_html(self, html):
         self.loading_overlay.place(relwidth=1, relheight=1) # Avoid showing until fully rendered
-        self.path = f"{self.ui_dir}/help"
+        self.path = self.help_dir
         self.load_html(html, base_url=f"file://{self.path}/")
         self.history = []
         self.links = []
@@ -206,10 +248,15 @@ class zynthian_gui_help(HtmlFrame):
             return True
 
     def cuia_v5_zynpot_switch(self, params):
-        return self.switch(*params)
+        if params[0] >= 2:
+            return self.switch(*params)
+        return False
 
     def switch(self, i, t):
-        if self.zyngui.tts and i == 2:
+        if i == 1 and t == 'B':
+            self.zyngui.close_screen()
+            return True
+        elif self.zyngui.tts and i == 2:
                 if t =='S':
                     self.zyngui.cuia_tts_toggle_pause()
                     return True
@@ -221,9 +268,6 @@ class zynthian_gui_help(HtmlFrame):
                 self.select_link(0)
             else:
                 self.zyngui.show_help(self.links[self.link][0])
-            return True
-        elif i == 1 and t == 'B':
-            self.zyngui.close_screen()
             return True
 
     def back_action(self):
@@ -238,7 +282,7 @@ class zynthian_gui_help(HtmlFrame):
             self.link = None
             self.link_text.place_forget()
             if self.zyngui.tts:
-                self.zyngui.tts.announce("Link selection closed.")
+                self.zyngui.tts.announce("Link selection closed")
             return True
 
     def refresh_loading(self):
@@ -326,7 +370,7 @@ class zynthian_gui_help(HtmlFrame):
     # --------------------------------------------------------------------------
 
     def tts_info(self):
-        self.zyngui.tts.announce(f"Help page.")
+        self.zyngui.tts.announce(f"Help page")
         try:
             # Parse knob info
             if not self.soup.head.find("div", class_="tts_parsed"):
@@ -379,58 +423,5 @@ class zynthian_gui_help(HtmlFrame):
         self.zyngui.tts.announce("Knob actions.")
         for tts in self.tts_knobs:
             self.zyngui.tts.announce(tts, False, False, False)
-
-
-    @classmethod
-    def get_index(self):
-        ui_dir = zynthian_gui_help.ui_dir
-        def get_data(files):
-            items = []
-            for file in files:
-                with open(file, "r", encoding="utf-8") as f:
-                    soup = BeautifulSoup(f, "html.parser")
-                    # Try <title> first
-                    title_tag = soup.find("title")
-                    title = title_tag.get_text(strip=True) if title_tag else None
-                    # Fallback to <h1>
-                    if not title:
-                        h1 = soup.find("h1")
-                        title = h1.get_text(strip=True) if h1 else file.stem
-                    items.append((title, file._str))
-            return items
-
-        files = list(Path(f"{ui_dir}/help/core").glob("*.html")) + \
-                list(Path(f"{ui_dir}/help/{zynthian_gui_config.layout['name']}").glob("*.html"))
-        files.sort(key=lambda f: f.name)
-        widgets = list(Path(f"{ui_dir}/help/widgets").glob("*.html"))
-
-        # Build index HTML
-        html_output = f"""
-<!DOCTYPE html>
-<html>
- <head>
-  <meta charset="utf-8">
-  <link rel="stylesheet" href="{ui_dir}/help/style.css">
- </head>
- <body class="help_ui">
-  <h1>Help Index</h1>
-   <ul class="index">
-"""
-
-        for title, filename in get_data(files):
-            html_output += f'    <li><a href="{filename}">{title}</a></li>\n'
-        html_output += """
-  </ul>
-  <h2>Control GUI Widgets</h2>
-  <ul class="index">
-"""
-        for title, filename in get_data(widgets):
-            html_output += f'    <li><a href="{filename}">{title}</a></li>\n'
-        html_output += """
-   </ul>
-  </body>
-</html>
-"""
-        return html_output
 
 # -------------------------------------------------------------------------------

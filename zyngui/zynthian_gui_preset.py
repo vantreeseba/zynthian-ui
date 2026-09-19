@@ -27,6 +27,7 @@ import copy
 import logging
 
 # Zynthian specific modules
+import zynautoconnect
 from zyngui import zynthian_gui_config
 from zyngui.zynthian_gui_selector_info import zynthian_gui_selector_info
 from zyngui.zynthian_gui_save_preset import zynthian_gui_save_preset
@@ -42,12 +43,24 @@ class zynthian_gui_preset(zynthian_gui_selector_info, zynthian_gui_save_preset):
         self.preload_timer_id = None
         self.preload_timer_ms = 300
         self.processor = None
-        zynthian_gui_selector_info.__init__(self, 'Preset', default_icon="preset.png", zsel_hidden=False)
+        zynthian_gui_selector_info.__init__(self, 'Preset',
+                                            default_icon="preset.png",
+                                            zsel_hidden=False)
 
     def fill_list(self):
         if not self.processor:
             logging.error("Can't fill preset list for None processor!")
             return
+        # Configure default info text
+        if self.allow_preset_preload:
+            if self.processor.engine.allow_timer_preload(None):
+                self.default_info = "Preload enabled."
+            else:
+                self.default_info = "Preload on note."
+        else:
+            self.default_info = "Preload disabled."
+        self.default_info += "\nBold to show options."
+        # Load preset list
         self.processor.load_preset_list()
         self.list_data = self.processor.preset_list
         if not self.list_data:
@@ -102,16 +115,10 @@ class zynthian_gui_preset(zynthian_gui_selector_info, zynthian_gui_save_preset):
 
     def select_action(self, i, t='S'):
         if t == 'S':
-            # Allow animation
-            self.info_canvas.grid_remove()
-            self.grid_loading_canvas()
-            self.zyngui.state_manager.start_busy("set preset")
             # Set preset
+            self.start_busy("set preset")
             result = self.zyngui.get_current_processor().set_preset(i)
-            self.zyngui.state_manager.end_busy("set preset")
-            # Stop animation and restore icon canvas
-            self.loading_canvas.grid_remove()
-            self.grid_info_canvas()
+            self.end_busy("set preset")
             # If result is None (still browsing) => refresh preset list
             if result is None:
                 self.set_select_path()
@@ -144,10 +151,12 @@ class zynthian_gui_preset(zynthian_gui_selector_info, zynthian_gui_save_preset):
             else:
                 options["\u2610 Favourite"] = [preset, ["Add to favorites list", "favorite_add.png"]]
             if engine.is_preset_user(preset):
+                if hasattr(engine, "save_preset"):
+                    options["Save"] = [preset, ["Save overwriting", "file_save.png"]]
                 if hasattr(engine, "rename_preset"):
-                    options["Rename"] = [preset, ["Rename preset", "rename.png"]]
+                    options["Rename"] = [preset, ["Rename", "rename.png"]]
                 if hasattr(engine, "delete_preset"):
-                    options["Delete"] = [preset, ["Delete preset", "file_delete.png"]]
+                    options["Delete"] = [preset, ["Delete", "file_delete.png"]]
 
         global_options = {}
         if hasattr(engine, "save_preset"):
@@ -187,6 +196,8 @@ class zynthian_gui_preset(zynthian_gui_selector_info, zynthian_gui_save_preset):
             self.processor.toggle_preset_fav(preset)
             self.processor.load_preset_list()
             self.show_preset_options()
+        elif option == "Save":
+            super().save_preset_overwrite(preset[2])
         elif option == "Rename":
             self.zyngui.show_keyboard(self.rename_preset, preset[2])
         elif option == "Delete":
@@ -258,19 +269,48 @@ class zynthian_gui_preset(zynthian_gui_selector_info, zynthian_gui_save_preset):
 
     def select_listbox(self, index, see=True):
         super().select_listbox(index, see=True)
-        if zynthian_gui_config.preset_preload:
+        self.timer_preload()
+
+    def allow_preset_preload(self):
+        try:
+            if zynthian_gui_config.preset_preload and self.processor.engine.allow_preset_preload:
+                return True
+            else:
+                return False
+        except:
+            return False
+
+    def allow_timer_preload(self):
+        try:
+            preset_data = self.list_data[self.index]
+            return self.processor.engine.allow_timer_preload(preset_data)
+        except:
+            return False
+
+    def timer_preload(self):
+        if self.allow_preset_preload():
             try:
                 zynthian_gui_config.top.after_cancel(self.preload_timer_id)
             except:
                 pass
-            self.preload_timer_id = zynthian_gui_config.top.after(self.preload_timer_ms, self.preload_action)
+            if self.allow_timer_preload():
+                self.preload_timer_id = zynthian_gui_config.top.after(self.preload_timer_ms, self.preload_action, self.index)
 
-    def preload_action(self):
+    def midi_note_on(self, izmip, chan):
+        if self.allow_preset_preload():
+            if zynautoconnect.get_midi_in_dev_mode(izmip) or chan == self.processor.midi_chan:
+                # TODO Check the device is routed to this chain
+                if not self.allow_timer_preload():
+                    self.preload_action()
+
+    def preload_action(self, index=None):
         self.preload_timer_id = None
-        if self.list_data and self.index < len(self.list_data):
-            self.zyngui.state_manager.start_busy("preload preset", tts=False)
-            self.processor.preload_preset(self.index)
-            self.zyngui.state_manager.end_busy("preload preset")
+        if index is None:
+            index = self.index
+        if self.processor.preload_preset(index, dryrun=True):
+            self.start_busy("preload preset", tts=False)
+            self.processor.preload_preset(index)
+            self.end_busy("preload preset")
 
     def restore_preset(self):
         return self.processor.restore_preset()
@@ -281,5 +321,6 @@ class zynthian_gui_preset(zynthian_gui_selector_info, zynthian_gui_save_preset):
                 self.select_path.set(self.processor.get_basepath() + " > Favorites")
             else:
                 self.select_path.set(self.processor.get_bankpath())
+
 
 # ------------------------------------------------------------------------------

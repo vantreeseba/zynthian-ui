@@ -24,15 +24,13 @@
  */
 
 #include <math.h>    //provides fabs isinf
-#include <pthread.h> //provides multithreading
 #include <stdio.h>   //provides printf
 #include <stdlib.h>  //provides exit
 #include <string.h>  // provides memset
 #include <unistd.h>  // provides sleep
+#include <pthread.h> // multi-threading
 
 #include "mixer.h"
-
-#include "tinyosc.h" // provides OSC
 #include <arpa/inet.h> // provides inet_pton
 
 // #define DEBUG
@@ -40,30 +38,28 @@
 #ifndef MAX_CHANNELS
 #define MAX_CHANNELS 99
 #endif
-#define MAX_OSC_CLIENTS 5
 
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-char g_oscbuffer[1024];    // Used to send OSC messages
-char g_oscpath[64];        //!@todo Ensure path length is sufficient for all paths, e.g. /mixer/channel/xx/fader
-int g_oscfd = -1;          // File descriptor for OSC socket
-int g_bOsc  = 0;           // True if OSC client subscribed
-pthread_t g_eventThread;   // ID of low priority event thread
-int g_sendEvents = 1;      // Set to 0 to exit event thread
+
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
+uint8_t g_running   = 1;   // True when running
 uint8_t g_sendCount = 0;   // Quantity of effect sends
 uint8_t g_lastStrip = 1;   // Highest index of any strips (one-based)
 uint8_t g_lastSend  = 1;   // Highest index of any send (one-based)
 uint8_t g_solo      = 0;   // Quantity of channels with solo asserted
 uint8_t g_pfl       = 0;   // Quantity of channels with PFL asserted
-#ifndef MIXBUS
+#ifdef MIXBUS
+const char* g_jackname = "zynmixer_bus";
+jack_port_t* g_pflInPortA;  // Pointer to PFL trunk port A
+jack_port_t* g_pflInPortB;  // Pointer to PFL trunk port B
+float g_pflLevel     = 1.0; // PFL volumne level
+#else
+const char* g_jackname = "zynmixer_chan";
 double g_xfader      = 0.0; // Global crossfader phase / angle value for AB mixing
 float g_xf_gain_A    = 0.0; // Crossfade A gain
 float g_reqxf_gain_A = 1.0; // Requested crossfade A gain
 float g_xf_gain_B    = 1.0; // Crossfade B gain
 float g_reqxf_gain_B = 0.0; // Requested crossfade B gain
-#else
-jack_port_t* g_pflInPortA;  // Pointer to PFL trunk port A
-jack_port_t* g_pflInPortB;  // Pointer to PFL trunk port B
-float g_pflLevel     = 1.0; // PFL volumne level
 #endif
 jack_port_t* g_soloPortA;  // Pointer to solo trunk port A
 jack_port_t* g_soloPortB;  // Pointer to solo trunk port B
@@ -116,15 +112,16 @@ struct fx_send {
 
 jack_client_t* g_jackClient;
 struct channel_strip* g_channelStrips[MAX_CHANNELS];
+int g_stripToDelete = -1;
 #ifndef MIXBUS
 struct fx_send* g_fxSends[MAX_CHANNELS];
+int g_sendToDelete = -1;
 #endif
 unsigned int g_nDampingCount  = 0;
 unsigned int g_nDampingPeriod = 10; // Quantity of cycles between applying DPM damping decay
 unsigned int g_nHoldCount     = 0;
 float g_fDpmDecay             = 0.9;             // Factor to scale for DPM decay - defines resolution of DPM decay
-struct sockaddr_in g_oscClient[MAX_OSC_CLIENTS]; // Array of registered OSC clients
-char g_oscdpm[20];
+
 jack_nframes_t g_samplerate                     = 48000; // Jack samplerate used to calculate damping factor
 jack_nframes_t g_buffersize                     = 1024;  // Jack buffer size used to calculate damping factor
 jack_default_audio_sample_t* g_soloBufferA    = NULL;  // Ponter to buffer used for solo bus
@@ -146,66 +143,13 @@ static float convertToDBFS(float raw) {
     return fValue;
 }
 
-void sendOscFloat(const char* path, float value) {
-    if (g_oscfd == -1)
-        return;
-    for (int i = 0; i < MAX_OSC_CLIENTS; ++i) {
-        if (g_oscClient[i].sin_addr.s_addr == 0)
-            continue;
-        int len = tosc_writeMessage(g_oscbuffer, sizeof(g_oscbuffer), path, "f", value);
-        sendto(g_oscfd, g_oscbuffer, len, MSG_CONFIRM | MSG_DONTWAIT, (const struct sockaddr*)&g_oscClient[i], sizeof(g_oscClient[i]));
-    }
-}
-
-void sendOscInt(const char* path, int value) {
-    if (g_oscfd == -1)
-        return;
-    for (int i = 0; i < MAX_OSC_CLIENTS; ++i) {
-        if (g_oscClient[i].sin_addr.s_addr == 0)
-            continue;
-        int len = tosc_writeMessage(g_oscbuffer, sizeof(g_oscbuffer), path, "i", value);
-        sendto(g_oscfd, g_oscbuffer, len, MSG_CONFIRM | MSG_DONTWAIT, (const struct sockaddr*)&g_oscClient[i], sizeof(g_oscClient[i]));
-    }
-}
-
-void* eventThreadFn(void* param) {
-    while (g_sendEvents) {
-        if (g_bOsc) {
-            for (unsigned int chan = 0; chan < MAX_CHANNELS; ++chan) {
-                if (g_channelStrips[chan]) {
-                    if ((int)(100000 * g_channelStrips[chan]->dpmAlast) != (int)(100000 * g_channelStrips[chan]->dpmA)) {
-                        sprintf(g_oscdpm, "/mixer/channel/%d/dpma", chan);
-                        sendOscFloat(g_oscdpm, convertToDBFS(g_channelStrips[chan]->dpmA));
-                        g_channelStrips[chan]->dpmAlast = g_channelStrips[chan]->dpmA;
-                    }
-                    if ((int)(100000 * g_channelStrips[chan]->dpmBlast) != (int)(100000 * g_channelStrips[chan]->dpmB)) {
-                        sprintf(g_oscdpm, "/mixer/channel/%d/dpmb", chan);
-                        sendOscFloat(g_oscdpm, convertToDBFS(g_channelStrips[chan]->dpmB));
-                        g_channelStrips[chan]->dpmBlast = g_channelStrips[chan]->dpmB;
-                    }
-                    if ((int)(100000 * g_channelStrips[chan]->holdAlast) != (int)(100000 * g_channelStrips[chan]->holdA)) {
-                        sprintf(g_oscdpm, "/mixer/channel/%d/holda", chan);
-                        sendOscFloat(g_oscdpm, convertToDBFS(g_channelStrips[chan]->holdA));
-                        g_channelStrips[chan]->holdAlast = g_channelStrips[chan]->holdA;
-                    }
-                    if ((int)(100000 * g_channelStrips[chan]->holdBlast) != (int)(100000 * g_channelStrips[chan]->holdB)) {
-                        sprintf(g_oscdpm, "/mixer/channel/%d/holdb", chan);
-                        sendOscFloat(g_oscdpm, convertToDBFS(g_channelStrips[chan]->holdB));
-                        g_channelStrips[chan]->holdBlast = g_channelStrips[chan]->holdB;
-                    }
-                }
-            }
-        }
-        usleep(10000);
-    }
-}
 
 static int onJackProcess(jack_nframes_t frames, void* args) {
+    if (!g_running)
+        return 0;
     jack_default_audio_sample_t *pPflInA, *pPflInB, *pPflOutA, *pPflOutB, *pSoloA, *pSoloB, *pInA, *pInB, *pChanOutA, *pChanOutB;
     unsigned int frame;
     float curLevelA, curLevelB, reqLevelA, reqLevelB, fDeltaA, fDeltaB, fSampleA, fSampleB, fSampleM, fpreFaderSampleA, fpreFaderSampleB;
-
-    pthread_mutex_lock(&mutex);
 
 /*  Solo / PFL
     The chain mixer has a pair of buffers (A/B) that are cleared at start of period, then populated with samples of any inputs that are solo.
@@ -416,7 +360,7 @@ static int onJackProcess(jack_nframes_t frames, void* args) {
                 }
 #else
                 // Add fx send output frames only for input channels
-                for (uint8_t send = 0; send < g_lastSend; ++send) {
+                for (uint8_t send = 0; send < g_lastSend; send++) {
                     if (g_fxSends[send]) {
                         if (strip->sendMode[send] == 0) {
                             g_fxSends[send]->bufferA[frame] += fSampleA * strip->send[send] * g_fxSends[send]->level;
@@ -486,13 +430,39 @@ static int onJackProcess(jack_nframes_t frames, void* args) {
     if (g_nDampingCount == 0)
         g_nDampingCount = g_nDampingPeriod;
     else
-        --g_nDampingCount;
+        g_nDampingCount--;
     if (g_nHoldCount == 0)
         g_nHoldCount = g_nDampingPeriod * 20;
     else
-        --g_nHoldCount;
+        g_nHoldCount--;
 
-    pthread_mutex_unlock(&mutex);
+    // Mark as deleted the pending-to-delete channel/send
+    if (g_stripToDelete >= 0) {
+        g_channelStrips[g_stripToDelete] = NULL;
+        // Update g_lastStrip value
+        uint8_t ls;
+        for (ls = MAX_CHANNELS; ls > 1; ls--) {
+            if (g_channelStrips[ls - 1])
+                break;
+        }
+        g_lastStrip = ls;
+        g_stripToDelete = -1;
+    }
+#ifndef MIXBUS
+    if (g_sendToDelete >= 0) {
+        g_fxSends[g_sendToDelete] = NULL;
+        g_sendCount--;
+        // Update lastSend value
+        uint8_t ls;
+        for (ls = MAX_CHANNELS; ls > 1; ls--) {
+            if (g_fxSends[ls - 1])
+                break;
+        }
+        g_lastSend = ls;
+        g_sendToDelete = -1;
+    }
+#endif
+
     return 0;
 }
 
@@ -512,7 +482,9 @@ void print_dpm_info(uint8_t chan) {
 }
 
 void onJackConnect(jack_port_id_t source, jack_port_id_t dest, int connect, void* args) {
-    pthread_mutex_lock(&mutex);
+    if (!g_running)
+        return;
+    pthread_mutex_lock(&lock);
     for (uint8_t chan = 0; chan < MAX_CHANNELS; chan++) {
         if (g_channelStrips[chan] == NULL)
             continue;
@@ -525,7 +497,7 @@ void onJackConnect(jack_port_id_t source, jack_port_id_t dest, int connect, void
         else
             g_channelStrips[chan]->outRouted = 0;
     }
-    pthread_mutex_unlock(&mutex);
+    pthread_mutex_unlock(&lock);
 }
 
 int onJackSamplerate(jack_nframes_t nSamplerate, void* arg) {
@@ -536,12 +508,14 @@ int onJackSamplerate(jack_nframes_t nSamplerate, void* arg) {
     return 0;
 }
 
+// WARNING This implementation, without any mutex, probably will cause segmentation fault,
+// but jack's buffersize never changes on-the-fly on zynthian
 int onJackBuffersize(jack_nframes_t nBuffersize, void* arg) {
     if (nBuffersize == 0)
         return 0;
+
     g_buffersize     = nBuffersize;
     g_nDampingPeriod = g_fDpmDecay * g_samplerate / g_buffersize / 15;
-    pthread_mutex_lock(&mutex);
     free(g_soloBufferA);
     free(g_soloBufferB);
     g_soloBufferA = malloc(sizeof(jack_nframes_t) * g_buffersize);
@@ -560,7 +534,6 @@ int onJackBuffersize(jack_nframes_t nBuffersize, void* arg) {
         }
     }
 #endif
-    pthread_mutex_unlock(&mutex);
     return 0;
 }
 
@@ -572,25 +545,11 @@ int init() {
 #endif
     }
 
-    // Initialsize OSC
-    g_oscfd = socket(AF_INET, SOCK_DGRAM, 0);
-    for (uint8_t i = 0; i < MAX_OSC_CLIENTS; ++i) {
-        memset(g_oscClient[i].sin_zero, '\0', sizeof g_oscClient[i].sin_zero);
-        g_oscClient[i].sin_family      = AF_INET;
-        g_oscClient[i].sin_port        = htons(1370);
-        g_oscClient[i].sin_addr.s_addr = 0;
-    }
-
     // Register with Jack server
     char* sServerName = NULL;
     jack_status_t nStatus;
     jack_options_t nOptions = JackNoStartServer;
-    #ifdef MIXBUS
-    const char* jackname = "zynmixer_bus";
-    #else
-    const char* jackname = "zynmixer_chan";
-    #endif
-    if ((g_jackClient = jack_client_open(jackname, nOptions, &nStatus, sServerName)) == 0) {
+    if ((g_jackClient = jack_client_open(g_jackname, nOptions, &nStatus, sServerName)) == 0) {
         fprintf(stderr, "libzynmixer: Failed to start channel jack client: %d\n", nStatus);
         exit(1);
     }
@@ -650,7 +609,7 @@ int init() {
         return -1;
     }
 
-    #ifdef MIXBUS
+#ifdef MIXBUS
     int8_t id = addStrip(); // Main mixbus
     id = addStrip(); // Aux mixbus
     setLevel(id, 1.0); // Default unity gain for aux bus
@@ -682,27 +641,19 @@ int init() {
     fprintf(stderr, "libzynmixer: Activated client\n");
 #endif
 
-    // Configure and start event thread
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-    if (pthread_create(&g_eventThread, &attr, eventThreadFn, NULL)) {
-        fprintf(stderr, "zynmixer error: failed to create event thread\n");
-        return 0;
-    }
-
-    fprintf(stderr, "Started %s\n", jackname);
+    fprintf(stderr, "Started %s\n", g_jackname);
     return 1;
 }
 
 void end() {
-    g_sendEvents = 0;
-    void* status;
-    pthread_join(g_eventThread, &status);
-
+#ifdef MIXBUS
     //Soft mute output
+    jack_nframes_t next_period = jack_frame_time(g_jackClient) + g_buffersize;
     setLevel(0, 0.0);
-    usleep(100000);
+    while (jack_frame_time(g_jackClient) < next_period)
+        usleep(1000);
+#endif
+    g_running = 0;
 
     // Close links with jack server
     if (g_jackClient) {
@@ -723,15 +674,13 @@ void end() {
         free(g_fxSends[chan]);
 #endif
     }
-    fprintf(stderr, "zynmixer ended\n");
+fprintf(stderr, "%s mixbuses ended\n", g_jackname);
 }
 
 void setGain(uint8_t channel, float gain) {
     if (channel >= MAX_CHANNELS || g_channelStrips[channel] == NULL || gain < 0.0f)
         return;
     g_channelStrips[channel]->gain = gain;
-    sprintf(g_oscpath, "/mixer/channel/%d/gain", channel);
-    sendOscFloat(g_oscpath, gain);
 }
 
 float getGain(uint8_t channel) {
@@ -744,8 +693,6 @@ void setLevel(uint8_t channel, float level) {
     if (channel >= MAX_CHANNELS || g_channelStrips[channel] == NULL)
         return;
     g_channelStrips[channel]->reqlevel = level;
-    sprintf(g_oscpath, "/mixer/channel/%d/fader", channel);
-    sendOscFloat(g_oscpath, level);
 }
 
 float getLevel(uint8_t channel) {
@@ -760,8 +707,6 @@ void setBalance(uint8_t channel, float balance) {
     if (fabs(balance) > 1)
         return;
     g_channelStrips[channel]->reqbalance = balance;
-    sprintf(g_oscpath, "/mixer/channel/%d/balance", channel);
-    sendOscFloat(g_oscpath, balance);
 }
 
 float getBalance(uint8_t channel) {
@@ -774,8 +719,6 @@ void setMute(uint8_t channel, uint8_t mute) {
     if (channel >= MAX_CHANNELS || g_channelStrips[channel] == NULL)
         return;
     g_channelStrips[channel]->mute = mute;
-    sprintf(g_oscpath, "/mixer/channel/%d/mute", channel);
-    sendOscInt(g_oscpath, mute);
 }
 
 uint8_t getMute(uint8_t channel) {
@@ -806,8 +749,6 @@ void setSolo(uint8_t channel, uint8_t solo) {
         ++g_solo;
     else
         --g_solo;
-    sprintf(g_oscpath, "/mixer/channel/%d/solo", channel);
-    sendOscInt(g_oscpath, solo);
 }
 
 uint8_t getSolo(uint8_t channel) {
@@ -850,8 +791,6 @@ void setPfl(uint8_t channel, uint8_t pfl) {
         ++g_pfl;
     else
         --g_pfl;
-    sprintf(g_oscpath, "/mixer/channel/%d/pfl", channel);
-    sendOscInt(g_oscpath, pfl);
 }
 
 uint8_t getPfl(uint8_t channel) {
@@ -930,8 +869,6 @@ void setPhase(uint8_t channel, uint8_t phase) {
     if (channel >= MAX_CHANNELS || g_channelStrips[channel] == NULL)
         return;
     g_channelStrips[channel]->phase = phase;
-    sprintf(g_oscpath, "/mixer/channel/%d/phase", channel);
-    sendOscInt(g_oscpath, phase);
 }
 
 uint8_t getPhase(uint8_t channel) {
@@ -944,8 +881,6 @@ void setSendMode(uint8_t channel, uint8_t send, uint8_t mode) {
     if (channel >= MAX_CHANNELS || send >= MAX_CHANNELS || g_channelStrips[channel] == NULL || mode > 1)
         return;
     g_channelStrips[channel]->sendMode[send] = mode;
-    sprintf(g_oscpath, "/mixer/channel/%d/sendmode_%d", channel, send);
-    sendOscInt(g_oscpath, mode);
 }
 
 uint8_t getSendMode(uint8_t channel, uint8_t send) {
@@ -967,8 +902,6 @@ void setSend(uint8_t channel, uint8_t send, float level) {
     if (channel >= MAX_CHANNELS || g_channelStrips[channel] == NULL || send >= MAX_CHANNELS)
         return;
     g_channelStrips[channel]->send[send] = level;
-    sprintf(g_oscpath, "/mixer/channel/%d/send_%d", channel, send);
-    sendOscFloat(g_oscpath, level);
 }
 
 float getSend(uint8_t channel, uint8_t send) {
@@ -985,8 +918,6 @@ void setNormalise(uint8_t channel, uint8_t enable) {
     if (channel == 0 || channel >= MAX_CHANNELS || g_channelStrips[channel] == NULL)
         return;
     g_channelStrips[channel]->normalise = enable;
-    sprintf(g_oscpath, "/mixer/channel/%d/normalise", channel);
-    sendOscInt(g_oscpath, enable);
 }
 
 uint8_t getNormalise(uint8_t channel) {
@@ -1003,8 +934,6 @@ void setMono(uint8_t channel, uint8_t mono) {
     if (channel >= MAX_CHANNELS || g_channelStrips[channel] == NULL)
         return;
     g_channelStrips[channel]->mono = (mono != 0);
-    sprintf(g_oscpath, "/mixer/channel/%d/mono", channel);
-    sendOscInt(g_oscpath, mono);
 }
 
 uint8_t getMono(uint8_t channel) {
@@ -1026,8 +955,6 @@ void setMS(uint8_t channel, uint8_t enable) {
     if (channel >= MAX_CHANNELS || g_channelStrips[channel] == NULL)
         return;
     g_channelStrips[channel]->ms = enable != 0;
-    sprintf(g_oscpath, "/mixer/channel/%d/ms", channel);
-    sendOscInt(g_oscpath, enable);
 }
 
 uint8_t getMS(uint8_t channel) {
@@ -1182,10 +1109,7 @@ int8_t addStrip() {
         strip->dpmBlast  = 100.0f;
         strip->holdAlast = 100.0f;
         strip->holdBlast = 100.0f;
-        pthread_mutex_lock(&mutex);
         g_channelStrips[chan] = strip;
-        pthread_mutex_unlock(&mutex);
-
         if (chan >= g_lastStrip)
             g_lastStrip = chan + 1;
         return chan;
@@ -1202,19 +1126,24 @@ int8_t removeStrip(uint8_t chan) {
 #endif
     if (chan >= MAX_CHANNELS || g_channelStrips[chan] == NULL)
         return -1;
+
+    pthread_mutex_lock(&lock);
+
     struct channel_strip* pstrip = g_channelStrips[chan];
-    pthread_mutex_lock(&mutex);
-    g_channelStrips[chan] = NULL;
-    pthread_mutex_unlock(&mutex);
+    // Flag strip to be marked as deleted at the end of this period
+    g_stripToDelete = chan;
+    // Wait until jack process has marked the strip as deleted
+    while (g_channelStrips[chan]) usleep(1000);
+
+    pthread_mutex_unlock(&lock);
+
+    // Unregister ports and free memory
     jack_port_unregister(g_jackClient, pstrip->inPortA);
     jack_port_unregister(g_jackClient, pstrip->inPortB);
     jack_port_unregister(g_jackClient, pstrip->outPortA);
     jack_port_unregister(g_jackClient, pstrip->outPortB);
     free(pstrip);
-    for (uint8_t g_lastStrip = MAX_CHANNELS - 1; g_lastStrip > 0; --g_lastStrip) {
-        if (g_channelStrips[g_lastStrip])
-            break;
-    }
+
     return chan;
 }
 
@@ -1248,10 +1177,8 @@ int8_t addSend() {
             psend->bufferA = jack_port_get_buffer(psend->outPortA, g_buffersize);
             psend->bufferB = jack_port_get_buffer(psend->outPortB, g_buffersize);
             psend->level = 1.0;
-            pthread_mutex_lock(&mutex);
             g_fxSends[send] = psend;
-            ++g_sendCount;
-            pthread_mutex_unlock(&mutex);
+            g_sendCount++;
             if (send >= g_lastSend)
                 g_lastSend = send + 1;
             return send + 1;
@@ -1270,79 +1197,28 @@ uint8_t removeSend(uint8_t send) {
     send -= 2; // We expose sends at 2-based so need to decrement to access array
     if (send >= MAX_CHANNELS || g_fxSends[send] == NULL)
         return 1;
+
+    pthread_mutex_lock(&lock);
+
     struct fx_send* pstrip = g_fxSends[send];
-    pthread_mutex_lock(&mutex);
-    g_fxSends[send] = NULL;
-    --g_sendCount;
-    pthread_mutex_unlock(&mutex);
+    // Flag send to be marked as deleted at the end of this period
+    g_sendToDelete = send;
+    // Wait until jack process has marked the send as deleted
+    while (g_fxSends[send]) usleep(1000);
+
+    pthread_mutex_unlock(&lock);
+
+    // Unregister ports and free memory
     jack_port_unregister(g_jackClient, pstrip->outPortA);
     jack_port_unregister(g_jackClient, pstrip->outPortB);
     free(pstrip);
-    for (g_lastSend = MAX_CHANNELS - 1; g_lastSend > 0; --g_lastSend) {
-        if (g_fxSends[g_lastSend])
-            break;
-    }
     return 0;
 #endif
 }
 
-
-uint8_t getSendCount() {
-    return g_sendCount;
-}
+uint8_t getSendCount() { return g_sendCount; }
 
 uint8_t getMaxChannels() { return MAX_CHANNELS; }
 
 uint8_t getLastChannel() { return g_lastStrip; }
 
-int addOscClient(const char* client) {
-    for (uint8_t i = 0; i < MAX_OSC_CLIENTS; ++i) {
-        if (g_oscClient[i].sin_addr.s_addr != 0)
-            continue;
-        if (inet_pton(AF_INET, client, &(g_oscClient[i].sin_addr)) != 1) {
-            g_oscClient[i].sin_addr.s_addr = 0;
-            fprintf(stderr, "libzynmixer: Failed to register client %s\n", client);
-            return -1;
-        }
-        fprintf(stderr, "libzynmixer: Added OSC client %d: %s\n", i, client);
-        for (int chan = 0; chan < MAX_CHANNELS; ++chan) {
-            setBalance(chan, getBalance(chan));
-            setGain(chan, getGain(chan));
-            setLevel(chan, getLevel(chan));
-            setMono(chan, getMono(chan));
-            setMute(chan, getMute(chan));
-            setPhase(chan, getPhase(chan));
-#ifndef MIXBUS
-            for (uint8_t send = 0; send < MAX_CHANNELS; ++send) {
-                if (g_fxSends[send]) {
-                    setSend(chan, send, getSend(chan, send));
-                    setSendMode(chan, send, getSendMode(chan, send));
-                }
-            }
-#endif
-            g_channelStrips[chan]->dpmAlast  = 100.0f;
-            g_channelStrips[chan]->dpmBlast  = 100.0f;
-            g_channelStrips[chan]->holdAlast = 100.0f;
-            g_channelStrips[chan]->holdBlast = 100.0f;
-        }
-        g_bOsc = 1;
-        return i;
-    }
-    fprintf(stderr, "libzynmixer: Not adding OSC client %s - Maximum client count reached [%d]\n", client, MAX_OSC_CLIENTS);
-    return -1;
-}
-
-void removeOscClient(const char* client) {
-    char pClient[sizeof(struct in_addr)];
-    if (inet_pton(AF_INET, client, pClient) != 1)
-        return;
-    g_bOsc = 0;
-    for (uint8_t i = 0; i < MAX_OSC_CLIENTS; ++i) {
-        if (memcmp(pClient, &g_oscClient[i].sin_addr.s_addr, 4) == 0) {
-            g_oscClient[i].sin_addr.s_addr = 0;
-            fprintf(stderr, "libzynmixer: Removed OSC client %d: %s\n", i, client);
-        }
-        if (g_oscClient[i].sin_addr.s_addr != 0)
-            g_bOsc = 1;
-    }
-}

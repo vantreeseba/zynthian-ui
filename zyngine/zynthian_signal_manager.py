@@ -82,6 +82,7 @@ class zynthian_signal_manager:
     SS_GUI_LAUNCHER_MODE = 6
     SS_GUI_VIEW_POS = 7
 
+    # MIDI events
     SS_MIDI_ALL = 0
     SS_MIDI_CC = 1
     SS_MIDI_PC = 2
@@ -162,12 +163,14 @@ class zynthian_signal_manager:
     def register(self, signal, subsignal, callback, queued=False):
         if 0 <= signal <= self.last_signal and 0 <= subsignal <= self.last_subsignal:
             # logging.debug(f"Registering callback '{callback.__name__}()' for signal({signal},{subsignal})")
+            for k, rdata in enumerate(self.signal_register[signal][subsignal]):
+                if rdata[0] == callback:
+                    self.signal_register[signal][subsignal][k] = (callback, queued)
+                    return
             self.signal_register[signal][subsignal].append((callback, queued))
 
     def register_queued(self, signal, subsignal, callback):
-        if 0 <= signal <= self.last_signal and 0 <= subsignal <= self.last_subsignal:
-            # logging.debug(f"Registering queued callback '{callback.__name__}()' for signal({signal},{subsignal})")
-            self.signal_register[signal][subsignal].append((callback, True))
+        self.register(signal, subsignal, callback, True)
 
     def unregister(self, signal, subsignal, callback):
         if 0 <= signal <= self.last_signal and 0 <= subsignal <= self.last_subsignal:
@@ -196,15 +199,13 @@ class zynthian_signal_manager:
             # logging.debug(f"Signal({signal},{subsignal}): {kwargs}")
             for rdata in self.signal_register[signal][subsignal]:
                 if force_queued == 1 or rdata[1]:
-                    self.queue.put_nowait(
-                        (signal, subsignal, rdata[0], kwargs))
+                    self.queue.put_nowait((signal, subsignal, rdata[0], kwargs))
                 else:
                     try:
-                        # logging.debug(f"  => calling {rdata[0].__name__}(...)")
+                        #logging.debug(f"  => calling {rdata[0].__name__}(...)")
                         rdata[0](**kwargs)
                     except Exception as e:
-                        logging.error(
-                            f"Callback '{rdata[0].__name__}(...)' for signal({signal},{subsignal}): {e}")
+                        logging.error(f"Callback '{rdata[0].__name__}(...)' for signal({signal},{subsignal}): {e}")
                         logging.exception(traceback.format_exc())
 
     def send(self, signal, subsignal, **kwargs):
@@ -237,8 +238,7 @@ class zynthian_signal_manager:
                 # logging.debug(f"  => calling {data[2].__name__}(...)")
                 data[2](**data[3])
             except Exception as e:
-                logging.error(
-                    f"Queued callback '{data[2].__name__}(...)' for signal({data[0]},{data[1]}): {e}")
+                logging.error(f"Queued callback '{data[2].__name__}(...)' for signal({data[0]},{data[1]}): {e}")
                 logging.exception(traceback.format_exc())
 
 # ---------------------------------------------------------------------------

@@ -121,7 +121,7 @@ STUT_FREQ_OPTIONS = (
 )
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-NOTE_PORNOUNCE = ["C", "C Sharp", "D", "D Sharp", "E", "F", "F Sharp", "G", "G Sharp", "A", "A Sharp", "B"]
+NOTE_PRONOUNCE = ["C", "C Sharp", "D", "D Sharp", "E", "F", "F Sharp", "G", "G Sharp", "A", "A Sharp", "B"]
 SCALES = {
     "major": [0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23],
     "minor": [0, 2, 3, 5, 7, 8, 10, 12, 14, 15, 17, 19, 20, 22]
@@ -1290,26 +1290,32 @@ class zynthian_gui_pated_notes(zynthian_gui_pated_base):
             radius=zynthian_gui_config.corner_radius, fill="", outline=SELECT_BORDER,
             width=self.select_thickness, tags="selected_cell")
         self.grid_canvas.tag_raise(self.rect_selected_cell)
-        if step_changed:
-            tts_step = f"Step {step + 1}"
-        else:
-            tts_step = ""
-        if note_changed:
-            try:
-                tts_name = f"{NOTE_PORNOUNCE[note%12]}{note//12-1}"
-                tts_name = self.keymap[row]["name"]
-            except:
-                pass
-        else:
-            tts_name = ""
+
         if self.zyngui.tts:
-            self.zyngui.tts.announce(f"{tts_step} {tts_name}")
+            if step_changed:
+                tts_step = f"Step {step + 1}"
+            else:
+                tts_step = ""
+            if note_changed:
+                try:
+                    tts_name = f"{NOTE_PRONOUNCE[note%12]}{note//12-1}"
+                    tts_name = self.keymap[row]["name"]
+                except:
+                    pass
+            else:
+                tts_name = ""
+            if evdata:
+                dur = f"{duration:.2f}".rstrip("0").rstrip(".")
+                note_info = f"duration {dur} velocity {velocity}"
+            else:
+                note_info = ""
+            self.zyngui.tts.announce(f"{tts_step} {tts_name} {note_info}")
 
     # ---------------------------------------------------------------
     # Block edit functionality => Copy/paste block
     # ---------------------------------------------------------------
 
-    def move_cell(self, cell, dstep, drow):
+    def _move_cell(self, cell, dstep, drow):
         inrange = True
         if dstep:
             cell[0] += dstep

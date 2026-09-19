@@ -38,7 +38,7 @@ from zyngui.zynthian_gui_selector import zynthian_gui_selector
 
 class zynthian_gui_selector_info(zynthian_gui_selector):
 
-    def __init__(self, selcap='Select', default_icon="zynthian_logo.png", loading_anim=True, tiny_ctrls=True, zsel_hidden=True, parent=None, topbar=None):
+    def __init__(self, selcap='Select', default_icon="zynthian_logo.png", default_info=None, loading_anim=True, tiny_ctrls=True, zsel_hidden=True, parent=None, topbar=None):
         # Custom layout for GUI selector info
         self.layout = {
             'name': 'gui_selector_info',
@@ -56,9 +56,18 @@ class zynthian_gui_selector_info(zynthian_gui_selector):
             'ctrl_width': 0.25
         }
         self.zsel_hidden = zsel_hidden
+        self.info_canvas = None
         self.info_text = None
         self.default_icon = default_icon
+        self.default_info = default_info
         self.icons = {}
+
+        if self.zsel_hidden:
+            self.info_canvas_relh = 1.0
+            self.info_canvas_rowspan = 4
+        else:
+            self.info_canvas_relh = 0.73
+            self.info_canvas_rowspan = 3
 
         super().__init__(selcap, wide=True, loading_anim=loading_anim, tiny_ctrls=tiny_ctrls, parent=parent, topbar=topbar)
 
@@ -67,35 +76,50 @@ class zynthian_gui_selector_info(zynthian_gui_selector):
             bd=0,
             highlightthickness=0,
             bg=zynthian_gui_config.color_bg)
-        self.grid_info_canvas()
+        self.info_icon = self.info_canvas.create_image(0, 0, anchor=tkinter.NW)
         self.info_text = self.info_canvas.create_text(
             0, 0,
             anchor=tkinter.NW,
             justify=tkinter.LEFT,
             fill=zynthian_gui_config.color_panel_tx
         )
-        self.info_icon = self.info_canvas.create_image(0, 0, anchor=tkinter.NW)
+        self.grid_info_canvas()
 
     def grid_info_canvas(self):
-        if self.zsel_hidden:
-            rowspan = 4
-        else:
-            rowspan = 3
-        self.info_canvas.grid(row=0, column=self.layout['list_pos'][1] + 1, rowspan=rowspan, sticky="news", padx=(2,2), pady=(2,2))
+        self.info_canvas.grid(row=0, column=self.layout['list_pos'][1] + 1, rowspan=self.info_canvas_rowspan, sticky="news", padx=(2,2), pady=(2,2))
 
     def update_layout(self):
         super().update_layout()
+        if self.loading_canvas:
+            self.loading_canvas.configure(height=int(self.info_canvas_relh * self.height))
+        if self.info_canvas:
+            self.info_canvas.configure(height=int(self.info_canvas_relh * self.height))
         if self.info_text:
             self.update_info()
+
+    def start_busy(self, clid, message=None, details=None, tts=True):
+        # Allow animation => Replace info canvas by animated logo
+        self.info_canvas.grid_remove()
+        self.grid_loading_canvas()
+        # Call start busy to start animation
+        self.zyngui.state_manager.start_busy(clid, message, details, tts)
+
+    def end_busy(self, clid):
+        # Call end busy to stop animation
+        self.zyngui.state_manager.end_busy(clid)
+        # Restore info canvas
+        self.loading_canvas.grid_remove()
+        self.grid_info_canvas()
 
     def get_info(self):
         try:
             info = self.list_data[self.index][-1]
         except:
             return None
-
         if isinstance(info, list):
             return info
+        elif self.default_info:
+            return [self.default_info, ""]
         else:
             return ["", ""]
 

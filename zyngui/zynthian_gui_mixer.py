@@ -25,6 +25,7 @@
 # ******************************************************************************
 
 
+import copy
 import tkinter
 import tkinter.font
 import logging
@@ -32,9 +33,9 @@ import logging
 from time import sleep
 from math import log10
 from threading import Timer
-from PIL import Image, ImageTk, ImageDraw, ImageFont
 from os import environ
 from os.path import basename, splitext
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 
 # Zynthian specific modules
 from zyncoder.zyncore import lib_zyncore
@@ -87,6 +88,7 @@ class zynthian_gui_launcher_pad():
         self.flash_dim = None
         self.playing = False  # True while playing/recording => progress sweep shown
         self.progress_shown = False  # Mirrors progress_line visibility to skip no-op canvas calls
+        self.last_state = None  # Last drawn sequence state, so draw() can skip no-op redraws
 
         chain_id = self.chain.chain_id
         if chain_id == 0:
@@ -94,8 +96,10 @@ class zynthian_gui_launcher_pad():
             # than the rest; stretch its pads across the full track so their
             # edges line up with the fader and button chips above. The loop
             # markers draw over the pad's left edge when visible.
-            loop_info_width = int(LOOP_INFO_WIDTH * self.width)
-            self.width += loop_info_width
+            self.loop_info_width = int(LOOP_INFO_WIDTH * self.width)
+            self.width += self.loop_info_width
+        else:
+            self.loop_info_width = 0
 
         self.x = x
         self.y = y
@@ -119,7 +123,7 @@ class zynthian_gui_launcher_pad():
             state=tkinter.HIDDEN,
             tags=("launcher", "launcher_progress", f"strip_{chain_id}", f"launcher_{chain_id}_{phrase}"))
         if chain_id == 0:
-            line_width = int(0.3 * loop_info_width)
+            line_width = int(0.3 * self.loop_info_width)
             # Loop indicators
             self.loop1_top = self.canvas.create_rectangle(x, self.y, x + line_width, self.y + self.height // 2,
                                                     width=0,
@@ -137,7 +141,7 @@ class zynthian_gui_launcher_pad():
                                                     font=self.gui_mixer.font_clip_state,
                                                     tags=("launcher",),
                                                     state=tkinter.HIDDEN)
-            x += loop_info_width // 2
+            x += self.loop_info_width // 2
             self.loop2_top = self.canvas.create_rectangle(x, self.y, x + line_width, self.y + self.height // 2,
                                                     width=0,
                                                     fill=zynthian_gui_config.color_hl,
@@ -193,6 +197,30 @@ class zynthian_gui_launcher_pad():
         # per-bind Tcl command
         self.gui_mixer.track_launcher_bind(
             self.canvas, f"launcher_{chain_id}_{phrase}", '<ButtonRelease-1>', self.on_clip_release)
+
+    def move(self, dx=None, dy=None):
+        # Re-calculate geometry
+        if dx != 0:
+            self.x += dx
+        elif dy != 0:
+            self.y += dy
+        else:
+            return
+        # Move canvas objects to new coordinates
+        self.canvas.move(self.pad, dx, dy)
+        if self.chain.chain_id == 0:
+            self.canvas.move(self.loop1_top, dx, dy)
+            self.canvas.move(self.loop1_bottom, dx, dy)
+            self.canvas.move(self.loop1_text, dx, dy)
+            self.canvas.move(self.loop2_top, dx, dy)
+            self.canvas.move(self.loop2_bottom, dx, dy)
+            self.canvas.move(self.loop2_text, dx, dy)
+        self.canvas.move(self.play_state, dx, dy)
+        self.canvas.move(self.title, dx, dy)
+        self.canvas.move(self.mode_icon, dx, dy)
+        self.canvas.move(self.mode_text, dx, dy)
+        self.canvas.move(self.timesig, dx, dy)
+        self.canvas.move(self.tempo, dx, dy)
 
     def highlight(self):
         """ Show selection cursor highlight"""
@@ -257,14 +285,12 @@ class zynthian_gui_launcher_pad():
             else:
                 self.canvas.itemconfig(self.pad, fill=self.flash_dim)
 
-    def draw(self):
+    def draw(self, force=False):
         """ Update the launcher button elements"""
 
         mode_text = ""
         timesig_text = ""
         tempo_text = ""
-        self.flashing = False
-        self.playing = False
         color_mode = self.gui_mixer.legend_txt_color
         color_text = self.gui_mixer.legend_txt_color
         try:
@@ -272,9 +298,20 @@ class zynthian_gui_launcher_pad():
             if self.chain.chain_id == 0:
                 state_seq = state_phrase
             elif self.chain.midi_chan is None or self.chain.midi_chan > 31:
-                state_seq = None  # This will raise an exception later and draw empty block
+                state_seq = False  # This will raise an exception later and draw empty block
             else:
                 state_seq = state_phrase["sequences"][self.chain.midi_chan]
+
+            # Don't draw if state didn't change
+            if not force and self.last_state is not None and self.last_state == state_seq:
+                return
+
+            self.last_state = copy.copy(state_seq)      # NOTE: Better deepcopy?
+
+            # Cleared only once we know we are redrawing; the early return above
+            # leaves a flashing or playing pad to carry on as it is
+            self.flashing = False
+            self.playing = False
 
             name = state_seq["name"]
             # If not asigned name => generate default name on-the-fly
@@ -307,11 +344,13 @@ class zynthian_gui_launcher_pad():
                 # Zynstep pattern
                 if state_seq["group"] < 16:
                     try:
-                        pattern = state_seq["tracks"][0]["patns"]["0"]
-                        n_beats = self.gui_mixer.zynseq.libseq.getBeatsInPattern(pattern)
+                        #pattern = state_seq["tracks"][0]["patns"]["0"]
+                        #n_beats = self.gui_mixer.zynseq.libseq.getBeatsInPattern(pattern)
+                        n_beats = state_seq["nBeats"]
                         timesig_text = self.get_pattern_length(n_beats, state_phrase["bpb"])
                         try:
-                            empty = len(self.gui_mixer.zynseq.state["patns"][str(pattern)]["events"]) == 0
+                            #empty = len(self.gui_mixer.zynseq.state["patns"][str(pattern)]["events"]) == 0
+                            empty = (state_seq["nEvents"] == 0)
                         except:
                             empty = True
                     except Exception as e:
@@ -657,7 +696,7 @@ class zynthian_gui_mixer_strip():
         # chips above, so adjacent strips share the same gap everywhere.
         self.fader_width = self.width - self.dpm_width * 2 - self.dpm_scale_width - 2
         if self.chain.chain_id == 0:
-            self.fader_width -= parent.loop_info_width
+            self.fader_width -= self.gui_mixer.loop_info_width
         self.dpm_b_x0 = x + self.width - self.dpm_width - 1
         self.dpm_scale_x0 = self.dpm_b_x0 - self.dpm_scale_width
         self.dpm_a_x0 = self.dpm_scale_x0 - self.dpm_width
@@ -710,7 +749,7 @@ class zynthian_gui_mixer_strip():
 
             self.dpm_scale = self.canvas.create_image(self.dpm_scale_x0, self.dpm_y0, anchor="nw", image=self.get_bg_img("dpm", self.dpm_scale_width, self.dpm_length), state=dpm_xstate)
             if self.chain.chain_id == 0:
-                self.dpm_labels = self.canvas.create_image(self.dpm_a_x0, self.dpm_y0, anchor="ne", image=self.get_bg_img("dpm_lbl", parent.loop_info_width, self.dpm_length), state=dpm_xstate)
+                self.dpm_labels = self.canvas.create_image(self.dpm_a_x0, self.dpm_y0, anchor="ne", image=self.get_bg_img("dpm_lbl", self.gui_mixer.loop_info_width, self.dpm_length), state=dpm_xstate)
         else:
             # MIDI-only chain: there is no fader, mute or meter to draw. Keep
             # the well at the normal panel color (dimming it made it vanish
@@ -812,8 +851,6 @@ class zynthian_gui_mixer_strip():
                 self.canvas.itemconfig(self.dpm_scale, state=tkinter.HIDDEN)
                 if self.chain.chain_id == 0:
                     self.canvas.itemconfig(self.dpm_labels, state=tkinter.HIDDEN)
-                #self.canvas.coords(self.toggle, self.x, self.toggle_y, self.dpm_a_x0, self.mute_y)
-                #self.canvas.coords(self.mute, self.x, self.mute_y, self.dpm_a_x0, self.balance_y)
             else:
                 self.canvas.coords(self.dpm_bg, self.dpm_a_x0, self.dpm_y0, self.x + self.width - 1, self.dpm_y0 + self.dpm_length)
                 self.dpm_a.move(self.dpm_a_x0, self.dpm_y0, self.dpm_width, self.dpm_length)
@@ -821,13 +858,45 @@ class zynthian_gui_mixer_strip():
                 self.canvas.itemconfig(self.dpm_scale, state=tkinter.NORMAL)
                 if self.chain.chain_id == 0:
                     self.canvas.itemconfig(self.dpm_labels, state=tkinter.NORMAL)
-                #self.canvas.coords(self.toggle, self.x, self.toggle_y, self.x + self.width, self.mute_y)
-                #self.canvas.coords(self.mute, self.x, self.mute_y, self.x + self.width, self.balance_y)
                 if self.pending_draw_fader_text:
                     self.pending_draw_fader_text = False
                     self.draw_fader_text()
         except:
             pass # meters not yet created?
+
+    def move(self, dx):
+        # Re-calculate geometry variables
+        self.x += dx
+        self.centre_x = self.x + int(self.width * 0.5)
+        self.dpm_b_x0 = self.x + self.width - self.dpm_width
+        self.dpm_scale_x0 = self.dpm_b_x0 - self.dpm_scale_width
+        self.dpm_a_x0 = self.dpm_scale_x0 - self.dpm_width
+
+        # Move canvas objects to new coordinates
+        self.canvas.move(self.audio_bg, dx, 0)
+        self.canvas.move(self.fader_bg, dx, 0)
+        if self.chain.zynmixer_proc:
+            self.canvas.move(self.toggle, dx, 0)
+            self.canvas.move(self.toggle_text, dx, 0)
+            self.canvas.move(self.mute, dx, 0)
+            self.canvas.move(self.mute_text, dx, 0)
+            self.canvas.move(self.balance_bg, dx, 0)
+            self.draw_level()
+            self.draw_balance()
+            self.set_launcher_mode(self.launcher_mode)
+        self.canvas.move(self.fader_text, dx, 0)
+        self.canvas.move(self.legend_strip_bg, dx, 0)
+        self.canvas.move(self.legend_strip_txt, dx, 0)
+        self.canvas.move(self.legend_strip_midi_bg, dx, 0)
+        for col in range(4):
+            self.canvas.move(self.pedals[col], dx, 0)
+        self.canvas.move(self.midi_indicator, dx, 0)
+        self.canvas.move(self.clip_progress, dx, 0)
+        self.canvas.move(self.record_indicator, dx, 0)
+        self.canvas.move(self.play_indicator, dx, 0)
+
+        for pad in self.launchers:
+            pad.move(dx, 0)
 
     def get_bg_img(self, id, width, height):
         """ Get the tri-colour background image
@@ -856,26 +925,27 @@ class zynthian_gui_mixer_strip():
         c_zero = zynthian_gui_config.hex_rgb(zynthian_gui_config.color_tx_off)
         c_mid = zynthian_gui_config.hex_rgb(zynthian_gui_config.color_meter_high)
         c_high = zynthian_gui_config.hex_rgb(zynthian_gui_config.color_meter_over)
-        try:
-            # PIL needs a filename, not a Tk family name: "Exo 2" -> "Exo2-Regular.ttf"
-            font_file = "".join(zynthian_gui_config.font_family.split()) + "-Regular.ttf"
-            font = ImageFont.truetype(font_file, int(width * 0.6))
-        except OSError:
-            font = ImageFont.truetype("DejaVuSans.ttf", int(width * 0.6))
-        for db in (-40, -30, -20, -16, -13, -10, -7, -4, -1):
-            y = min(height - 1, height - int(db_to_norm(db) * height))
-            c = c_zero if db == -10 else c_high if db >=-3 else c_mid if db >= -10 else c_low
-            if id == "dpm":
-                if db != -10:
-                    for x in range(width):
-                        pixels[x, y] = c
-            elif id == "dpm_lbl":
-                fill = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
-                draw = ImageDraw.Draw(img)
-                if db == -10:
-                    draw.text((width, y), "0", fill=fill, font=font, anchor="rm")
-                else:
-                    draw.text((width - 1, y), f"{db+10:+}", fill=fill, font=font, anchor="rm")
+        if width > 7:
+            try:
+                # PIL needs a filename, not a Tk family name: "Exo 2" -> "Exo2-Regular.ttf"
+                font_file = "".join(zynthian_gui_config.font_family.split()) + "-Regular.ttf"
+                font = ImageFont.truetype(font_file, int(width * 0.6))
+            except OSError:
+                font = ImageFont.truetype("DejaVuSans.ttf", int(width * 0.6))
+            for db in (-40, -30, -20, -16, -13, -10, -7, -4, -1):
+                y = min(height - 1, height - int(db_to_norm(db) * height))
+                c = c_zero if db == -10 else c_high if db >=-3 else c_mid if db >= -10 else c_low
+                if id == "dpm":
+                    if db != -10:
+                        for x in range(width):
+                            pixels[x, y] = c
+                elif id == "dpm_lbl":
+                    fill = f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
+                    draw = ImageDraw.Draw(img)
+                    if db == -10:
+                        draw.text((width, y), "0", fill=fill, font=font, anchor="rm")
+                    else:
+                        draw.text((width - 1, y), f"{db+10:+}", fill=fill, font=font, anchor="rm")
 
         self.bg_images[key] = ImageTk.PhotoImage(img)
         return self.bg_images[key]
@@ -1024,6 +1094,7 @@ class zynthian_gui_mixer_strip():
                     strip_txt = ""
                     # procs = self.chain.get_processor_count() - 1
             self.canvas.itemconfig(self.legend_strip_txt, text=strip_txt, font=self.gui_mixer.font)
+
             if not self.launcher_mode:
                 self.draw_fader_text()
             else:
@@ -1291,7 +1362,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
 
         self.alt_mode = False
         self.launcher_mode = False
-        self.pending_build_launchers = False
+        self._touching_launchers = False
 
         self.chan2strip = {} # Map of audio strips, indexed by [is_mixbus, mixer_channel]
         self.highlighted_strip = None  # Highligted mixer strip object
@@ -1348,19 +1419,29 @@ class zynthian_gui_mixer(zynthian_gui_base):
 
         # Configure ALT mode layout depending on hardware
         self.pated = None
-        self.clipboard = 8 * [None]      # Pattern clipboard: Array of pattern indexes to copy/paste, shared by all pated instances.
-        if zynthian_gui_config.check_wiring_layout(["V5", "TOUCH_ONLY"]):
+        self.clipboard = 4 * [None]      # Clipboard: Array of copied cells (patterns / audio clips)
+        if zynthian_gui_config.check_wiring_layout(["V5"]) or zynthian_gui_config.touch_navigation:
             self.switch_i_clipboard = [11, 15]
             self.wsleds_i_clipboard = [10, 11]
+            self.switch_i_add_chain = 19
+            self.wsled_i_add_chain = 12
         elif zynthian_gui_config.check_wiring_layout(["Z2"]):
             self.switch_i_clipboard = [10, 11]
             self.wsleds_i_clipboard = [10, 11]
+            self.switch_i_add_chain = 12
+            self.wsled_i_add_chain = 12
         elif zynthian_gui_config.check_wiring_layout(["MCP23017"]):
-            self.switch_i_clipboard = None
+            self.switch_i_clipboard = [4, 5]
             self.wsleds_i_clipboard = None
+            self.switch_i_add_chain = 6
+            self.wsled_i_add_chain = None
+            # Auto-enable ALT-mode to get alt. functions for S1-S4 buttons
+            self.alt_mode = True
         else:
             self.switch_i_clipboard = None
             self.wsleds_i_clipboard = None
+            self.switch_i_add_chain = None
+            self.wsled_i_add_chain = None
 
         self.update_layout()
         self.tts_title = "Mixer"
@@ -1549,12 +1630,11 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 font=self.font, justify="center",
                 fill=zynthian_gui_config.color_scale(zynthian_gui_config.color_tx_off, 0.6))
 
-        #self.build_launchers()
-        self.pending_build_launchers=True
         self.state_changed = False
         self.left_canvas.configure(scrollregion=(0, 0, self.chain_manager.get_pinned_pos() * self.strip_width, self.height))
-        #self.refresh_launchers()
         self.refresh_mixer_controls()
+        self.build_launchers()
+        #self.refresh_launchers()
         self.set_launcher_mode()
 
     def build_launchers(self):
@@ -1574,19 +1654,15 @@ class zynthian_gui_mixer(zynthian_gui_base):
             for idx in range(self.zynseq.phrases):
                 strip.launchers.append(zynthian_gui_launcher_pad(self, canvas, strip.x, y, self.strip_width, self.launcher_height, strip.chain, idx))
                 y += self.launcher_height
-        self.refresh_launchers()
+        self.refresh_launchers(force=True)
 
-    def refresh_launchers(self):
+    def refresh_launchers(self, force=False):
         # Avoid refreshing controls whilst rebuilding state
         if self.state_changed or not self.launcher_mode:
             return
-        if self.pending_build_launchers:
-            self.pending_build_launchers=False
-            self.build_launchers()
-            return
         for strip in self.chain_strips:
             for launcher in strip.launchers:
-                launcher.draw()
+                launcher.draw(force)
         self.right_canvas.tag_lower("launcher")
         self.highlight_launcher()
 
@@ -1848,7 +1924,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         for strip in self.chain_strips:
             self.pending_refresh_queue.add((strip, "record"))
 
-    def update_control_play(self, handle, state):
+    def update_control_play(self, id, play_state, loop, pos, varispeed):
         """ Function to handle audio play status
         """
         for strip in self.chain_strips:
@@ -2029,6 +2105,9 @@ class zynthian_gui_mixer(zynthian_gui_base):
         except:
             pass
 
+        self.scroll_to_chain_index(active_index)
+
+    def scroll_to_chain_index(self, active_index):
         # Scroll to ensure chain is visible
         if active_index >= self.chain_manager.get_pinned_pos():
             return
@@ -2074,34 +2153,35 @@ class zynthian_gui_mixer(zynthian_gui_base):
         def step(i=0):
             if gen != self._scroll_gen:
                 return # new scroll job started superceeding this job
-            if i >= steps:
-                # Ensure exact final position
-                send_sig = False
+            if not self._touching_launchers:
+                if i >= steps:
+                    # Ensure exact final position
+                    send_sig = False
+                    if target_x is not None:
+                        self.left_canvas.xview_moveto(target_x)
+                        left_chain = min(self.scrollable_strips - self.visible_chains, max(0, int(target_x * self.scrollable_strips + 0.4)))
+                        if self._left_chain != left_chain:
+                            self._left_chain = left_chain
+                            send_sig = True
+                    if target_y is not None:
+                        dy0 = self._scroll_y - target_y
+                        self.left_canvas.move("launcher", 0, dy0)
+                        self.right_canvas.move("launcher", 0, dy0)
+                        self._scroll_y = target_y
+                        # Calculate top left chain/phrase
+                        top_phrase = int(target_y / self.launcher_height + 0.4)
+                        if self._top_phrase != top_phrase:
+                            self._top_phrase = top_phrase
+                            send_sig = True
+                    if send_sig:
+                        zynsigman.send(zynsigman.S_GUI, zynsigman.SS_GUI_VIEW_POS, left_chain=self._left_chain, top_phrase=self._top_phrase)
+                    return
                 if target_x is not None:
-                    self.left_canvas.xview_moveto(target_x)
-                    left_chain = min(self.scrollable_strips - self.visible_chains, max(0, int(target_x * self.scrollable_strips + 0.4)))
-                    if self._left_chain != left_chain:
-                        self._left_chain = left_chain
-                        send_sig = True
+                    self.left_canvas.xview_moveto(start_x + dx * (i + 1))
                 if target_y is not None:
-                    dy0 = self._scroll_y - target_y
-                    self.left_canvas.move("launcher", 0, dy0)
-                    self.right_canvas.move("launcher", 0, dy0)
-                    self._scroll_y = target_y
-                    # Calculate top left chain/phrase
-                    top_phrase = int(target_y / self.launcher_height + 0.4)
-                    if self._top_phrase != top_phrase:
-                        self._top_phrase = top_phrase
-                        send_sig = True
-                if send_sig:
-                    zynsigman.send(zynsigman.S_GUI, zynsigman.SS_GUI_VIEW_POS, left_chain=self._left_chain, top_phrase=self._top_phrase)
-                return
-            if target_x is not None:
-                self.left_canvas.xview_moveto(start_x + dx * (i + 1))
-            if target_y is not None:
-                self.left_canvas.move("launcher", 0, dy)
-                self.right_canvas.move("launcher", 0, dy)
-                self._scroll_y -= dy
+                    self.left_canvas.move("launcher", 0, dy)
+                    self.right_canvas.move("launcher", 0, dy)
+                    self._scroll_y -= dy
             self.right_canvas.after(delay, step, i + 1)
 
         if target_x is not None:
@@ -2205,7 +2285,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
             self.launcher_mode = launcher_mode
 
         if self.launcher_mode:
-            self.refresh_launchers()
+            self.refresh_launchers(force=True)
             self.left_canvas.itemconfig("fader", state=tkinter.HIDDEN)
             self.right_canvas.itemconfig("fader", state=tkinter.HIDDEN)
             self.left_canvas.itemconfig("fader_horizontal", state=tkinter.NORMAL)
@@ -2331,7 +2411,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
             options[f"Rename ({name})"] = name
         else:
             options[f"Rename"] = ""
-        options["> EDIT"] = None
+        options["> MANAGE"] = None
         options["Insert phrase"] = phrase
         options["Clone phrase"] = phrase
         if self.zynseq.phrases > 1:
@@ -2433,8 +2513,8 @@ class zynthian_gui_mixer(zynthian_gui_base):
             self.zynseq.phrase += 1
             self.build_launchers()
             self.moving_phrase = True
+            self.zyngui.purge_screen_history("option")
             self.state_manager.end_busy("clone_phrase")
-            self.zyngui.show_screen("launcher")
         elif option.startswith("Delete phrase"):
             self.zyngui.show_confirm(f"Remove phrase {params + 1}?", self.remove_phrase, params)
         elif option.startswith("Move phrase"):
@@ -2539,9 +2619,11 @@ class zynthian_gui_mixer(zynthian_gui_base):
         self.phrase_menu_cb("  Loops to play", flags)
 
     def remove_phrase(self, phrase):
+        self.state_manager.start_busy("remove_phrase", "Deleting phrase...")
         self.zynseq.remove_phrase(self.zynseq.scene, phrase)
         self.build_launchers()
-        self.zyngui.show_screen("launcher")
+        self.zyngui.purge_screen_history("option")
+        self.state_manager.end_busy("remove_phrase")
 
     def clear_clip_confirmed(self, params):
         phrase, delete_file = params
@@ -2897,18 +2979,23 @@ class zynthian_gui_mixer(zynthian_gui_base):
             case 3:
                 return self.switch_select(t)
 
-        # ALT mode => Use F1-F2 as copy/paste buttons
-        if self.launcher_mode and self.alt_mode\
-           and self.switch_i_clipboard and swi in self.switch_i_clipboard:
-            index = self.switch_i_clipboard.index(swi)
-            if t == "S":
-                self.paste_from_clipboard(index)
-                self.zynseq.refresh_state()
-                self.refresh_launchers()
-                return True
-            elif t == "B":
-                self.copy_to_clipboard(index)
-                return True
+        # ALT mode + Launcher mode
+        if self.alt_mode and self.launcher_mode:
+            # Use F1-F2 as copy/paste buttons
+            if self.switch_i_clipboard and swi in self.switch_i_clipboard:
+                index = self.switch_i_clipboard.index(swi)
+                if t == "S":
+                    self.paste_from_clipboard(index)
+                    self.zynseq.refresh_state()
+                    self.refresh_launchers(force=False)
+                    return True
+                elif t == "B":
+                    self.copy_to_clipboard(index)
+                    return True
+            # Use F3 for adding/moving chains
+            if self.switch_i_add_chain and swi == self.switch_i_add_chain:
+                return self.cuia_v5_zynpot_switch([2, t])
+
         return False
 
     def cuia_v5_zynpot_switch(self, params):
@@ -2935,7 +3022,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
                     return True
                 elif t == 'B':
                     self.moving_chain = True
-                    self.build_mixer()
+                    self.highlighted_strip.draw_control()
             case 3:
                 self.switch_select(t)
                 return True
@@ -3247,8 +3334,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         # Knob#4 moves chain selection
         elif i == 3:
             if self.moving_chain:
-                self.zyngui.chain_manager.nudge_chain(dval)
-                self.build_mixer()
+                self.move_chain(dval)
             elif self.launcher_mode and self.moving_phrase:
                 if dval < 0:
                     self.arrow_up(-dval)
@@ -3261,8 +3347,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         """ Function to handle CUIA ARROW_LEFT
         """
         if self.moving_chain:
-            self.zyngui.chain_manager.nudge_chain(-1)
-            self.build_mixer()
+            self.move_chain(-1)
         else:
             self.zyngui.chain_manager.previous_chain()
 
@@ -3270,10 +3355,35 @@ class zynthian_gui_mixer(zynthian_gui_base):
         """ Function to handle CUIA ARROW_RIGHT
         """
         if self.moving_chain:
-            self.zyngui.chain_manager.nudge_chain(1)
-            self.build_mixer()
+            self.move_chain(1)
         else:
             self.zyngui.chain_manager.next_chain()
+
+    def move_chain(self, d):
+        try:
+            strip1 = self.highlighted_strip
+            i1 = self.chain_strips.index(strip1)
+            i2 = i1 + d
+            if i2 < 0 or i2 >= len(self.chain_strips):
+                return
+            strip2 = self.chain_strips[i2]
+        except:
+            return
+        # If strip in the same canvas, swap positions:
+        if strip1.canvas == strip2.canvas:
+            # Don't swap position with main chain!
+            if strip2.chain.chain_id == 0:
+                return
+            dx = strip2.x - strip1.x
+            strip1.move(dx)
+            strip2.move(-dx)
+            self.chain_strips[i1] = strip2
+            self.chain_strips[i2] = strip1
+            self.zyngui.chain_manager.nudge_chain(d)
+            self.scroll_to_chain_index(i2)
+        else:
+            self.zyngui.chain_manager.nudge_chain(d)
+            self.build_mixer()
 
     def arrow_up(self, nudge=1):
         """ Function to handle CUIA ARROW_UP
@@ -3284,9 +3394,7 @@ class zynthian_gui_mixer(zynthian_gui_base):
         if self.launcher_mode:
             if self.zynseq.phrase > 0:
                 if self.moving_phrase:
-                    self.zynseq.nudge_phrase(self.zynseq.scene, self.zynseq.phrase, False)
-                    self.build_launchers()
-                    self.highlight_launcher()
+                    self.move_phrase(-1)
                 else:
                     self.select_launcher(self.zynseq.phrase - nudge)
         else:
@@ -3302,15 +3410,20 @@ class zynthian_gui_mixer(zynthian_gui_base):
         if self.launcher_mode:
             if self.zynseq.phrase < self.zynseq.phrases:
                 if self.moving_phrase:
-                    if self.zynseq.phrase < self.zynseq.phrases - 1:
-                        self.zynseq.nudge_phrase(self.zynseq.scene, self.zynseq.phrase, True)
-                        self.build_launchers()
-                        self.highlight_launcher()
+                    self.move_phrase(1)
                 else:
                     self.select_launcher(self.zynseq.phrase - nudge)
         else:
             if self.highlighted_strip is not None:
                 self.highlighted_strip.nudge_volume(nudge)
+
+    def move_phrase(self, d):
+        if d == 0:
+            return
+        pos_from = self.zynseq.phrase
+        pos_to = self.zynseq.phrase + d
+        if 0 <= pos_to < self.zynseq.phrases:
+            self.zynseq.nudge_phrase(self.zynseq.scene, self.zynseq.phrase, (d > 0))
 
     def backbutton_short_touch_action(self):
         if not self.back_action():
@@ -3336,12 +3449,15 @@ class zynthian_gui_mixer(zynthian_gui_base):
     def end_moving_chain(self):
         self.moving_chain = False
         self.strip_drag_start = None
-        self.build_mixer()
+        self.highlighted_strip.draw_control()
 
     def end_moving_phrase(self):
         self.moving_phrase = False
         self.strip_drag_start = None
-        self.refresh_launchers()
+        # Force selected phrase refresh
+        for strip in self.chain_strips:
+            strip.launchers[self.zynseq.phrase].last_state = None
+        self.refresh_launchers(force=False)
 
     # CUIA and alt mode management
 
@@ -3357,31 +3473,34 @@ class zynthian_gui_mixer(zynthian_gui_base):
         return True
 
     def update_wsleds(self, leds):
-        # ALT mode only!
+        # ALT mode
         if not self.alt_mode:
             return
 
         wsl = self.zyngui.wsleds
 
-        # ALT button
-        wsl.set_led(leds[0], wsl.wscolor_active2)
-
         # CTRL button
         wsl.set_led(leds[15], wsl.wscolor_active2)
 
-        # Copy/paste buttons
-        if self.launcher_mode and self.wsleds_i_clipboard:
-            for i, wsli in enumerate(self.wsleds_i_clipboard):
-                if self.clipboard[i] is None:
-                    wsl.set_led(leds[wsli], wsl.wscolor_active2)
-                else:
-                    cpfc = self.can_paste_from_clipboard(i)
-                    if cpfc is None:
-                        wsl.blink(leds[wsli], wsl.wscolor_red)
-                    elif cpfc == False:
-                        wsl.blink(leds[wsli], wsl.wscolor_active2)
-                    elif cpfc == True:
-                        wsl.blink(leds[wsli], wsl.wscolor_active)
+        # Only in launcher mode =>
+        if self.launcher_mode:
+            # Copy/paste buttons (F1/F2 in V5)
+            if self.wsleds_i_clipboard:
+                for i, wsli in enumerate(self.wsleds_i_clipboard):
+                    if self.clipboard[i] is None:
+                        wsl.set_led(leds[wsli], wsl.wscolor_active2)
+                    else:
+                        cpfc = self.can_paste_from_clipboard(i)
+                        if cpfc is None:
+                            wsl.blink(leds[wsli], wsl.wscolor_red)
+                        elif cpfc == False:
+                            wsl.blink(leds[wsli], wsl.wscolor_active2)
+                        elif cpfc == True:
+                            wsl.blink(leds[wsli], wsl.wscolor_active)
+
+            # Add chain button (F3 in V5)
+            if self.wsled_i_add_chain is not None:
+                wsl.set_led(leds[self.wsled_i_add_chain], wsl.wscolor_active2)
 
     def tts_info(self, params=None):
         if not self.zyngui.tts:

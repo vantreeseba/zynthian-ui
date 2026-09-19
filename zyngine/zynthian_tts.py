@@ -33,6 +33,7 @@ import alsaaudio
 import threading
 import subprocess
 from time import sleep
+import pyliblo3 as liblo
 
 import zynconf
 import zynautoconnect
@@ -61,6 +62,7 @@ TTS_DICT_DEFER = {
 for i in range(2, 8):
     char = chr(0x2672 + i)
     TTS_DICT_DEFER[char] = f". Shared by {i} chains"
+ALT_MODE_TXT = ["off","on"]
 
 ALL_KEYS = list(TTS_DICT) + list(TTS_DICT_DEFER)
 
@@ -86,6 +88,9 @@ class zynthian_tts:
         self._process = None
         self._lock = threading.Lock() # Process locking mutex
         self.playing = False
+        self.alt_mode = False
+        self.osc_path = "/tts"
+        self.osc_uri = None
         self.translate_pattern = re.compile("|".join(map(re.escape, sorted(ALL_KEYS, key=len, reverse=True))))
 
         self.clear_queue()
@@ -94,6 +99,21 @@ class zynthian_tts:
         self._thread.start()
         self.set_volume()
         self.append("ZynVoice enabled")
+
+    def register_osc(self, params=None):
+        """ Request TTS announcement text be sent to a remote host via OSC
+        Args:
+            uri: Remote host OSC URI as [ip, port, optional path] or None to disable sending to OSC
+        """
+
+        if len(params) < 2:
+            self.osc_uri == None
+        elif len(params) < 3:
+            self.osc_uri = tuple(params)
+            self.osc_path = "/tts"
+        else:
+            self.osc_uri = tuple(params[:2])
+            self.osc_path = params[2]
 
     def close(self):
         """ Stop background services and cleanup """
@@ -216,10 +236,18 @@ class zynthian_tts:
         if not self._stop_event or self.busy:
             return
         text = text.strip()
+        try:
+            alt_mode = zynthian_gui_config.zyngui.get_alt_mode()
+            if alt_mode != self.alt_mode:
+                self.alt_mode = alt_mode
+                text += f". Alt mode {ALT_MODE_TXT[alt_mode]}."
+        except:
+            pass # Can fail if zyngui not yet initialised
         if text:
             text = self.translate(text)
             if replace:
                 self.clear_queue()
+
             with self._cond:
                 if urgent:
                     if self.line:
@@ -315,6 +343,7 @@ class zynthian_tts:
 
     def _do_beep(self, cfg):
         try:
+            #logging.warning(f"ZynVoice: Beep {cfg}")
             duration, frequency, amplitude = cfg
             # Try to open soundcard with low resource parameters
             pcm = alsaaudio.PCM(
@@ -348,7 +377,7 @@ class zynthian_tts:
             # Send waveform to soundcard
             pcm.write(samples)
         except Exception as e:
-            logging.warning(f"TTS failed to send tone to soundcard - {e}")
+            logging.debug(f"TTS failed to send tone to soundcard - {e}")
         self.pending_beep = None
 
     def _worker(self):
@@ -384,8 +413,14 @@ class zynthian_tts:
                         self.playing = False
 
                 try:
+                    #logging.warning(f"ZynVoice: {text}")
                     with self._lock:
-                        self._process = subprocess.Popen(self._build_command(text), env={"ALSA_CARD": self.soundcard})
+                        self._process = subprocess.Popen(self._build_command(text), env={"ALSA_CARD": self.soundcard}, stderr=subprocess.DEVNULL)
+                        if self.osc_uri:
+                            try:
+                                liblo.send(self.osc_uri, self.osc_path, text)
+                            except:
+                                pass # Silently ignore bad osc targer uri
                     self._process.wait()
                 except Exception as e:
                     logging.debug(e)
@@ -397,7 +432,7 @@ class zynthian_tts:
         if self.announce_disable:
             try:
                 with self._lock:
-                    self._process = subprocess.Popen(self._build_command("ZynVoice disabled"), env={"ALSA_CARD": self.soundcard})
+                    self._process = subprocess.Popen(self._build_command("ZynVoice disabled"), env={"ALSA_CARD": self.soundcard}, stderr=subprocess.DEVNULL)
                 self._process.wait()
             except Exception as e:
                 logging.debug(e)

@@ -384,12 +384,12 @@ class zynthian_gui_pated_base(zynthian_gui_base):
                                               tags="velocityIndicator")
         self.velocity_canvas.grid(column=0, row=1)
 
-        # Configure ALT mode layout depending on hardware
+        # Configure custom switches depending on hardware
         # Clipboard imported from launcher (see build_view())
         self.launcher = None
         self.switch_i_clipboard = None
         self.wsleds_i_clipboard = None
-        if zynthian_gui_config.check_wiring_layout(["V5", "TOUCH_ONLY"]):
+        if zynthian_gui_config.check_wiring_layout(["V5"]) or zynthian_gui_config.touch_navigation:
             self.switch_i_block = 19
             self.switch_i_cc_editor = 23
             self.wsled_i_block = 12
@@ -404,9 +404,11 @@ class zynthian_gui_pated_base(zynthian_gui_base):
             self.switch_i_cc_editor = 7
             self.wsled_i_block = None
             self.wsled_i_cc_editor = None
+            # Auto-enable ALT-mode to get alt. functions on S1-S4 buttons
+            self.alt_mode = True
         else:
             self.switch_i_block = None
-            self.wsled_i_block = None
+            self.switch_i_cc_editor = None
             self.wsled_i_block = None
             self.wsled_i_cc_editor = None
 
@@ -1678,12 +1680,16 @@ class zynthian_gui_pated_base(zynthian_gui_base):
         self.block_cell_start = copy.copy(self.selected_cell)
         self.block_cell_end = copy.copy(self.selected_cell)
         self.select_block(0, 0)
+        if self.zyngui.tts:
+            self.zyngui.tts.announce("Start block selection")
 
     def end_select_block(self):
         self.clean_selected_events()
         self.block_copied = None
         self.set_edit_mode(EDIT_MODE_NONE)
         self.select_cell()
+        if self.zyngui.tts:
+            self.zyngui.tts.announce(f"Block deselected")
 
     def select_block(self, dstep, drow):
         # Move end position
@@ -1694,6 +1700,8 @@ class zynthian_gui_pated_base(zynthian_gui_base):
         self.select_cell(self.block_cell_end[0], self.block_cell_end[1])
         # Plot
         self.plot_select_block()
+        if self.zyngui.tts:
+            self.zyngui.tts.announce(f"Step {self.block_cell_end[0]+1}, row {self.block_cell_end[1]}")
 
     def select_block_all(self):
         # Get all events indexed by "step/note"" key
@@ -1771,6 +1779,12 @@ class zynthian_gui_pated_base(zynthian_gui_base):
         # Redraw pattern notes
         if cut:
             self.redraw_pending = 3
+        if self.zyngui.tts:
+            if cut:
+                self.zyngui.tts.announce(f"Cut block of {n} events")
+            else:
+                self.zyngui.tts.announce(f"Copied block of {n} events")
+
 
     def select_block_events(self):
         self._end_block_selection()
@@ -1794,6 +1808,8 @@ class zynthian_gui_pated_base(zynthian_gui_base):
         # Get all events indexed by "step/note"" key
         self.selected_events = self.zynseq.get_pattern_selection(self.pattern, 0, self.n_steps, 0, 127)
         self.redraw_pending = 3
+        if self.zyngui.tts:
+            self.zyngui.tts.announce("Selected all events")
 
     def move_block(self, dstep, drow):
         # Calculate new position
@@ -1827,6 +1843,8 @@ class zynthian_gui_pated_base(zynthian_gui_base):
             else:
                 row = self.block_cell_start[1] + 1
             self.select_cell(step, row)
+            if self.zyngui.tts:
+                self.zyngui.tts.announce(f"Block moved to step {pos1[0]+1}, row {pos1[1]}")
 
     def paste_block(self):
         # Save snapshot
@@ -1835,6 +1853,8 @@ class zynthian_gui_pated_base(zynthian_gui_base):
         self.zynseq.libseq.pastePatternBuffer(self.pattern, self.block_dstep, 0.0, self.block_drow, False)  # truncate=False to use horizontal circular overflow
         self.changed = True
         self.redraw_pending = 3
+        if self.zyngui.tts:
+            self.zyngui.tts.announce("Block pasted")
 
     # -------------------------------------------------------------------------
     # Event management
@@ -1979,23 +1999,25 @@ class zynthian_gui_pated_base(zynthian_gui_base):
             elif st == "P":
                 return False
 
-        # Configured F button for block selection workflow
-        elif i == self.switch_i_cc_editor:
-            return self.cuia_v5_zynpot_switch([0, st])
+        if self.alt_mode:
+            # If TTS disabled => F4 toggles CC/Note editor
+            if not self.zyngui.tts and self.switch_i_cc_editor and self.switch_i_cc_editor == i:
+                return self.cuia_v5_zynpot_switch([0, st])
 
-        # Configured F button for block selection workflow
-        elif i == self.switch_i_block:
-            return self.cuia_v5_zynpot_switch([2, st])
+            # F3 starts block selection workflow
+            elif self.switch_i_block and self.switch_i_block == i:
+                return self.cuia_v5_zynpot_switch([2, st])
 
-        # ALT mode => Use configured F buttons as copy/paste buttons
-        elif self.alt_mode and self.switch_i_clipboard is not None and i in self.switch_i_clipboard:
-            index = self.switch_i_clipboard.index(i)
-            if st == "S":
-                self.paste_pattern(index)
-                return True
-            elif st == "B":
-                self.copy_pattern(index)
-                return True
+            # F1/F2 copy/paste buffers
+            elif self.switch_i_clipboard is not None and i in self.switch_i_clipboard:
+                index = self.switch_i_clipboard.index(i)
+                if st == "S":
+                    self.paste_pattern(index)
+                    return True
+                elif st == "B":
+                    self.copy_pattern(index)
+                    return True
+
         return False
 
     def cuia_v5_zynpot_switch(self, params):
@@ -2133,11 +2155,8 @@ class zynthian_gui_pated_base(zynthian_gui_base):
     def update_wsleds(self, leds):
         wsl = self.zyngui.wsleds
 
-        # ALT mode
         if self.alt_mode:
-            # ALT button
-            wsl.set_led(leds[0], wsl.wscolor_active2)
-
+            # Copy/Paste buttons
             if self.wsleds_i_clipboard:
                 # Copy/paste buttons
                 for i, wsli in enumerate(self.wsleds_i_clipboard):
@@ -2152,19 +2171,19 @@ class zynthian_gui_pated_base(zynthian_gui_base):
                         elif cpfc == True:
                             wsl.blink(leds[wsli], wsl.wscolor_active)
 
-        # Block Selection  (F3 in V5, S3 in V4)
-        if self.wsled_i_block is not None:
-            if self.edit_mode == EDIT_MODE_BLOCK:
-                if self.block_copied:
-                    wsl.blink(leds[self.wsled_i_block], wsl.wscolor_active)
+            # Block Selection (F3 in V5)
+            if self.wsled_i_block is not None:
+                if self.edit_mode == EDIT_MODE_BLOCK:
+                    if self.block_copied:
+                        wsl.blink(leds[self.wsled_i_block], wsl.wscolor_active)
+                    else:
+                        wsl.blink(leds[self.wsled_i_block], wsl.wscolor_active2)
                 else:
-                    wsl.blink(leds[self.wsled_i_block], wsl.wscolor_active2)
-            else:
-                wsl.set_led(leds[self.wsled_i_block], wsl.wscolor_active2)
+                    wsl.set_led(leds[self.wsled_i_block], wsl.wscolor_active2)
 
-        # Block Selection (F4 in V5, S4 in V4)
-        if self.wsled_i_cc_editor is not None:
-            wsl.set_led(leds[self.wsled_i_cc_editor], wsl.wscolor_active2)
+            # If TTS is disabled => CC/Note editor toggle (F4 in V5)
+            if not self.zyngui.tts and self.wsled_i_cc_editor is not None:
+                wsl.set_led(leds[self.wsled_i_cc_editor], wsl.wscolor_active2)
 
         # REC button:
         if self.zynseq.libseq.isMidiRecord():

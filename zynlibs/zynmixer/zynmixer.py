@@ -249,6 +249,7 @@ class ZynMixer():
         if channel is None:
             return
         gain = self.db_to_norm(gain)
+
         self.lib_zynmixer.setGain(channel, ctypes.c_float(gain))
         zynsigman.send(zynsigman.S_MIXER, zynsigman.SS_ZYNMIXER_SET_VALUE,
                        chan=channel, symbol="gain", value=gain, mixbus=self.mixbus)

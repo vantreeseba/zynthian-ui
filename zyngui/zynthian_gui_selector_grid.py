@@ -52,10 +52,11 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
         self.BLOCK_WIDTH = 120  # Width of each processor block in pixels
         self.BLOCK_HEIGHT = 40  # Height of each processor block in pixels
         self.SPACING = 10  # Horizontal spacing between processor blocks in pixels
-        self.font = (zynthian_gui_config.font_family, int(0.06 * self.BLOCK_WIDTH))
+        self.font = (zynthian_gui_config.font_family, int(0.065 * self.BLOCK_WIDTH))
         self.icon_size = (8, 8)
 
-        self.config = []  # List of dictionaries, each describing a button
+        self.get_config = None  # Function to get the config
+        self.config = []        # List of dictionaries, each describing a button
         self.selected_node = 0  # Selected node id
 
         # Canvas for drawing the graph
@@ -91,6 +92,8 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
         self.icon_size = (icon_h, icon_h)
 
     def build_view(self):
+        if self.get_config:
+            self.config = self.get_config()
         self._draw_nodes()
         self.set_select_path()
         return True
@@ -117,8 +120,20 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
         self.update_geometry()
         self.title = self.tts_title = title
         self.set_title(self.title)
-        self.config = config
+        if callable(config):
+            self.get_config = config
+            self.config = None
+        else:
+            self.get_config = None
+            self.config = config
         self.selected_node = select
+
+    def update_node(self, idx, node):
+        try:
+            self.config[idx] = node
+            self._update_node(idx, node)
+        except:
+            logging.error(f"Can't update node '{idx}'")
 
     def get_icon(self, icon_fname=None):
         if not icon_fname:
@@ -135,42 +150,49 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
         else:
             return self.icons[icon_fname]
 
+    def _draw_node(self, idx, node, x, y):
+        fill = zynthian_gui_config.color_panel_hl if node["action"] else zynthian_gui_config.color_panel_bg
+        zynthian_gui_config.create_round_rect(self.canvas, x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
+            radius=2 * zynthian_gui_config.corner_radius,
+            fill=fill,
+            outline=fill,
+            tags=("node", f"node_{idx}", "rect"))
+        if "icon" in node:
+            img = self.get_icon(node["icon"])
+            if img:
+                self.canvas.create_image(x, y + self.BLOCK_HEIGHT // 2,
+                    image=img,
+                    anchor="w",
+                    tags=("node", f"node_{idx}", "img"))
+        fill = zynthian_gui_config.color_tx if node["action"] else zynthian_gui_config.color_tx_off
+        self.canvas.create_text(
+            x + 2 * self.BLOCK_WIDTH // 3, y + self.BLOCK_HEIGHT // 2,
+            text=node["title"],
+            fill=fill,
+            font=self.font,
+            width=self.BLOCK_WIDTH // 2,
+            justify=tkinter.CENTER,
+            tags=("node", f"node_{idx}", "text"))
+
+    def _update_node(self, idx, node):
+        node_idx = f"node_{idx}"
+        if "icon" in node:
+            img = self.get_icon(node["icon"])
+            if img:
+                self.canvas.itemconfig(f"{node_idx} && img", image=img)
+        if "title" in node:
+            self.canvas.itemconfig(f"{node_idx} && text", text=node["title"])
+
     def _draw_nodes(self):
         if self.width == 1:
             return # Not yet resized
         self.canvas.delete("all")
         self.icons = {}
-        if not any(self.config):
-            # Empty grid: say so instead of presenting a blank canvas.
-            self.canvas.create_text(
-                self.width // 2, self.height // 2,
-                text="Nothing to show here",
-                fill=zynthian_gui_config.color_scale(zynthian_gui_config.color_tx_off, 0.6),
-                font=self.font, justify=tkinter.CENTER)
-            return
         x = self.SPACING
         y = self.SPACING
         for idx, node in enumerate(self.config):
             if node:
-                fill = zynthian_gui_config.color_panel_hl if node["action"] else zynthian_gui_config.color_panel_bg
-                zynthian_gui_config.create_round_rect(self.canvas, x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
-                    radius=2 * zynthian_gui_config.corner_radius,
-                    fill=fill,
-                    outline=fill,
-                    tags=("node", f"node_{idx}"))
-                if "icon" in node:
-                    img = self.get_icon(node["icon"])
-                    if img:
-                        self.canvas.create_image(x, y + self.BLOCK_HEIGHT // 2, image=img, anchor="w")
-                fill = zynthian_gui_config.color_tx if node["action"] else zynthian_gui_config.color_tx_off
-                self.canvas.create_text(
-                    x + 2 * self.BLOCK_WIDTH // 3, y + self.BLOCK_HEIGHT // 2,
-                    text=node["title"],
-                    fill=fill,
-                    font=self.font,
-                    width=self.BLOCK_WIDTH // 2,
-                    justify=tkinter.CENTER
-                )
+                self._draw_node(idx, node, x, y)
             x += self.BLOCK_WIDTH + self.SPACING
             if x + self.BLOCK_WIDTH + self.SPACING > self.width:
                 x = self.SPACING
@@ -182,22 +204,21 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
             self.canvas.configure(scrollregion=(bbox[0] - self.SPACING, bbox[1] - self.SPACING, bbox[2] + self.SPACING, bbox[3] + self.SPACING))
         else:
             self.canvas.configure(scrollregion=(0, 0, 100, 100))
-
         self._draw_selection()
 
     def _draw_selection(self):
         """
         Draw selection cursor.
         """
-        self.canvas.itemconfig("node", outline="")
-        node_tag = f"node_{self.selected_node}"
-        self.canvas.itemconfig(node_tag, outline=zynthian_gui_config.color_select, width=2)
+        self.canvas.itemconfig("node && rect", outline="")
+        node_tags = f"node_{self.selected_node} && rect"
+        self.canvas.itemconfig(node_tags, outline=zynthian_gui_config.color_select, width=2)
         if self.shown and self.zyngui.tts:
             self.zyngui.tts.announce(self.config[self.selected_node]["title"])
 
         #Scroll the canvas to ensure the selected node is visible.
         # Get node's coords
-        ncoords = self.canvas.bbox(node_tag)
+        ncoords = self.canvas.bbox(node_tags)
         bcoords = self.canvas.bbox("all")
         if not ncoords or not bcoords:
             return
@@ -248,6 +269,17 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
         if super().arrow_down():
             return
         self.select_offset(self.columns)
+
+    def select(self, i):
+        idx = i
+        # Skip empty items
+        while 0 < idx < len(self.config) and self.config[idx] is None:
+            idx += 1
+        idx = min(len(self.config) - 1, max(0, idx))
+        if self.config[idx] is None:
+            return
+        self.selected_node = idx
+        self._draw_selection()
 
     def select_offset(self, dval):
         idx = self.selected_node + dval

@@ -634,6 +634,9 @@ class zynthian_gui_base(tkinter.Frame):
 
     def cuia_toggle_alt_mode(self, params=None):
         self.alt_mode = not self.alt_mode
+        if self.zyngui.tts:
+            self.zyngui.tts.announce("")
+
         return True
 
     def arrow_up(self, nudge=1):
@@ -650,7 +653,7 @@ class zynthian_gui_base(tkinter.Frame):
             self.zynpot_cb(zynthian_gui_config.layout['ctrl_order'][3], nudge)
             return True
 
-    def zynpot_cb(self, i, val):
+    def zynpot_abs(self, i, val):
         if self.param_editor_zctrl:
             ctrl_order = zynthian_gui_config.layout['ctrl_order']
             if i == ctrl_order[3]:

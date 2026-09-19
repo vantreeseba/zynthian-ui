@@ -333,10 +333,10 @@ class zynthian_ctrldev_akai_apc_40_mk2(zynthian_ctrldev_zynpad, zynthian_ctrldev
         lib_zyncore.dev_send_note_on(self.idev_out, 0, LED_RECORD, state)
         # TODO manage pattern editor record !!
 
-    def on_audio_play(self, handle, state):
+    def on_audio_play(self, id, play_state, loop, pos, varispeed):
         try:
-            if handle == self.state_manager.audio_player.handle:
-                lib_zyncore.dev_send_note_on(self.idev_out, 0, LED_PLAY, int(state))
+            if id == self.state_manager.audio_player.handle:
+                lib_zyncore.dev_send_note_on(self.idev_out, 0, LED_PLAY, int(play_state))
         except:
             pass
 
@@ -350,7 +350,11 @@ class zynthian_ctrldev_akai_apc_40_mk2(zynthian_ctrldev_zynpad, zynthian_ctrldev
 
     def update_mode_leds(self, screen=None):
         if screen is None:
-           screen = zynthian_gui_config.zyngui.current_screen
+            try:
+               # zyngui may not yet be configured
+               screen = zynthian_gui_config.zyngui.current_screen
+            except:
+                pass
         lib_zyncore.dev_send_note_on(self.idev_out, 0, LED_PAN, self.enc_mode == ENC_MODE_PAN)
         lib_zyncore.dev_send_note_on(self.idev_out, 0, LED_SENDS, self.enc_mode == ENC_MODE_SENDS)
         lib_zyncore.dev_send_note_on(self.idev_out, 0, LED_USER, self.enc_mode == ENC_MODE_USER)

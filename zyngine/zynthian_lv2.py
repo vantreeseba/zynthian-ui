@@ -163,12 +163,12 @@ standalone_engine_info = {
     "ZY": ["ZynAddSubFX", "ZynAddSubFX", "MIDI Synth", "Synth", True],
     "FS": ["FluidSynth", "FluidSynth: SF2, SF3", "MIDI Synth", "Sampler", True],
     "SF": ["Sfizz", "Sfizz: SFZ", "MIDI Synth", "Sampler", True],
-    "LS": ["LinuxSampler", "LinuxSampler: SFZ, GIG", "MIDI Synth", "Sampler", True],
+    "LS": ["LinuxSampler", "LinuxSampler: GIG", "MIDI Synth", "Sampler", True],
     "CL": ["Clippy", "Clip launcher", "Audio Generator", "Other", True],
     "BF": ["setBfree", "setBfree - Hammond Emulator", "MIDI Synth", "Organ", True],
     "AE": ["Aeolus", "Aeolus - Pipe Organ Emulator", "MIDI Synth", "Organ", True],
     "PT": ['Pianoteq', "Pianoteq", "MIDI Synth", "Piano", True],
-    "AP": ["ZynSampler", "ZynSampler", "MIDI Synth", "Sampler", True],
+    "AP": ["AudioPlayer", "Audio Player", "Audio Generator", "Other", True],
     "SL": ["SooperLooper", "SooperLooper", "Audio Effect", "Delay", True],
     'SX': ["SysEx", "SysEx Manager", "MIDI Tool", "Other", True],
     'MC': ["MIDI Control", "MIDI Control External", "MIDI Tool", "Other", True],
@@ -1314,10 +1314,9 @@ if __name__ == '__main__':
 
         elif sys.argv[1] == "presets":
             generate_presets_cache_workaround()
-
             if len(sys.argv) > 2:
-                plugin_url = sys.argv[2]
-                generate_plugin_presets_cache(plugin_url, False)
+                for plugin_url in sys.argv[2:]:
+                    generate_plugin_presets_cache(plugin_url, False)
             else:
                 generate_all_presets_cache(False)
 

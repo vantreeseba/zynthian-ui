@@ -48,21 +48,22 @@ function load_config_env() {
 }
 
 function rotate_display() {
-	xrandr --output DSI-1 --rotate inverted
-}
-
-function rotate_display_wayland() {
-	wlr-randr --output DSI-1 --transform 180
+	if [[ -n "$WAYLAND_DISPLAY" ]]; then
+		wlr-randr --output DSI-1 --transform 180
+	else
+		display_name=$(xrandr --query | grep -oP '^\S+(?= connected)')
+		echo "Rotating Display $display_name ..."
+		xrandr --output $display_name --rotate inverted
+	fi
 }
 
 function hide_cursor() {
-	# This is done from zynthian UI
-	:
-}
-
-function hide_cursor_wayland() {
-	# TODO
-	:
+	if [[ -n "$WAYLAND_DISPLAY" ]]; then
+		:
+	else
+		# This is done from zynthian UI
+		:
+	fi
 }
 
 #------------------------------------------------------------------------------
@@ -73,7 +74,8 @@ function hide_cursor_wayland() {
 load_config_env
 
 # Rotate display
-if [[ "$RBPI_VERSION_NUMBER" = "5" &&  "$DISPLAY_ROTATION" = "Inverted" && "$DISPLAY_NAME" = *"DSI"* ]]; then
+#if [[ "$RBPI_VERSION_NUMBER" == "5" &&  "$DISPLAY_ROTATION" == "Inverted" && "$DISPLAY_NAME" == *"DSI"* ]]; then
+if [[ "$RBPI_VERSION_NUMBER" == "5" &&  "$DISPLAY_ROTATION" == "Inverted" ]]; then
 	rotate_display
 fi
 
@@ -82,29 +84,35 @@ if [[ "$ZYNTHIAN_UI_ENABLE_CURSOR" != "1" ]]; then
 	hide_cursor
 fi
 
+# This will unleash the MESA library refresh so it's not
+# synced to the display vertical refresh
+#export vblank_mode=0
+
 #------------------------------------------------------------------------------
 # Functions to manage splash images
 #------------------------------------------------------------------------------
 
-function load_splash() {
-	xloadimage -fullscreen -onroot "$1"
-}
+if [[ -n "$WAYLAND_DISPLAY" ]]; then
+	function load_splash() {
+		# 1. Store the process ID of the current background
+		OLD_BG_PID=$(pidof swaybg)
 
-function load_splash_wayland() {
-	# 1. Store the process ID of the current background
-	OLD_BG_PID=$(pidof swaybg)
+		# 2. Fire up the new wallpaper seamlessly right on top of it
+		swaybg -i "$1" -m fill &
 
-	# 2. Fire up the new wallpaper seamlessly right on top of it
-	swaybg -i "$1" -m fill &
+		# 3. Give the GPU a quick split-second to map the texture
+		sleep 0.15
 
-	# 3. Give the GPU a quick split-second to map the texture
-	sleep 0.15
-
-	# 4. Safely terminate the old instance (preventing resource leaks)
-	if [ ! -z "$OLD_BG_PID" ]; then
-		kill $OLD_BG_PID
-	fi
-}
+		# 4. Safely terminate the old instance (preventing resource leaks)
+		if [ ! -z "$OLD_BG_PID" ]; then
+			kill $OLD_BG_PID
+		fi
+	}
+else
+	function load_splash() {
+		xloadimage -fullscreen -onroot "$1"
+	}
+fi
 
 function splash_zynthian() {
 	load_splash $ZYNTHIAN_CONFIG_DIR/img/fb_zynthian_boot.jpg
