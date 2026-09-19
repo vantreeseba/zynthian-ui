@@ -1046,10 +1046,34 @@ void enableLinkStartStopSync(bool enable);
 */
 bool isLinkStartStopSyncEnabled();
 
+/** @brief  Enable / disable broadcasting this device's audio to the Link session
+    @param  enable True to announce an audio channel to the Link session
+    @note   Audio presented at the link_send_a / link_send_b JACK input ports is sent
+            to any peer listening. Nothing is transmitted unless a peer is listening.
+*/
+void enableLinkAudio(bool enable);
+
+/** @brief  Check whether broadcasting audio to the Link session is enabled
+    @retval bool True if enabled
+*/
+bool isLinkAudioEnabled();
+
 /** @brief  Get quantity of peers in the Link session
     @retval uint32_t Quantity of peers, not including this device (0 if Link disabled)
 */
 uint32_t getLinkPeers();
+
+/** @brief  Set the Ableton Link launch quantum
+    @param  bars Quantity of bars to wait for before starting the transport [1..MAX_LINK_QUANTUM_BARS]
+    @note   Tempo and bar phase always lock to the bar. The quantum only sets how long
+            a pending transport start waits for the session to come round to it.
+*/
+void setLinkQuantum(uint8_t bars);
+
+/** @brief  Get the Ableton Link launch quantum
+    @retval uint8_t Quantity of bars in the launch quantum
+*/
+uint8_t getLinkQuantum();
 
 /** @brief  Get the current transport state
     @retval uint8_t Transport state [STOPPED | PLAYING | STARTING | STOPPING]

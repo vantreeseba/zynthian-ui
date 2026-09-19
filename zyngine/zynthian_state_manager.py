@@ -163,7 +163,11 @@ class zynthian_state_manager:
         self.apply_record_quantize()
         self.zynseq.libseq.setRecordCountIn(self.record_count_in)
         # Restore the Ableton Link settings saved from the admin menu
+        self.zynseq.set_link_quantum(zynthian_gui_config.link_quantum)
         self.zynseq.enable_link_start_stop_sync(zynthian_gui_config.link_start_stop_sync)
+        # Set before joining: Link switches audio off with itself, so the session must
+        # know our setting by the time it comes up
+        self.zynseq.enable_link_audio(zynthian_gui_config.link_audio)
         self.zynseq.enable_link(zynthian_gui_config.link_enabled)
         self.midi_record_pad = None  # (phrase, midi_chan) of launcher pad capturing MIDI input, None when idle
         self.record_metronome_depth = 0  # Count of in-flight recordings forcing the metronome on

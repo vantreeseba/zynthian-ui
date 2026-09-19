@@ -258,6 +258,10 @@ class zynseq(zynthian_engine):
             self.libseq.enableLinkStartStopSync.argtypes = [ctypes.c_bool]
             self.libseq.isLinkStartStopSyncEnabled.restype = ctypes.c_bool
             self.libseq.getLinkPeers.restype = ctypes.c_uint32
+            self.libseq.setLinkQuantum.argtypes = [ctypes.c_uint8]
+            self.libseq.getLinkQuantum.restype = ctypes.c_uint8
+            self.libseq.enableLinkAudio.argtypes = [ctypes.c_bool]
+            self.libseq.isLinkAudioEnabled.restype = ctypes.c_bool
 
             # Pattern functions
             self.libseq.getPattern.restype = ctypes.c_uint32
@@ -294,7 +298,7 @@ class zynseq(zynthian_engine):
             'name': 'BPM',
             'is_integer': False,
             'value_min': 10.0,
-            'value_max': 420.0,
+            'value_max': 500.0,
             'value': self.libseq.getTempo(),
             'nudge_factor': 1.0
         })
@@ -665,6 +669,28 @@ class zynseq(zynthian_engine):
     def is_link_start_stop_sync_enabled(self):
         if self.libseq:
             return self.libseq.isLinkStartStopSyncEnabled()
+        return False
+
+    # Set the Link launch quantum, in bars
+    def set_link_quantum(self, bars):
+        if self.libseq:
+            self.libseq.setLinkQuantum(int(bars))
+
+    # Get the Link launch quantum, in bars
+    def get_link_quantum(self):
+        if self.libseq:
+            return self.libseq.getLinkQuantum()
+        return 1
+
+    # Broadcast audio presented at the link_send_a/b ports to the Link session
+    def enable_link_audio(self, enable):
+        if self.libseq and self.is_link_audio_enabled() != bool(enable):
+            self.libseq.enableLinkAudio(bool(enable))
+
+    # Check whether audio is broadcast to the Link session
+    def is_link_audio_enabled(self):
+        if self.libseq:
+            return self.libseq.isLinkAudioEnabled()
         return False
 
     # Get quantity of other peers in the Link session

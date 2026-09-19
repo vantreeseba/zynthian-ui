@@ -62,6 +62,7 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         self.wifi_status = "???"
         self.filling_list = False
         self.link_peers = 0
+        self.link_quantum_bars = [1, 2, 4, 8, 16]
 
         super().__init__('Action')
 
@@ -184,6 +185,15 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
             else:
                 self.list_data.append((self.toggle_link_start_stop_sync, 0, "\u2610 Link Start/Stop Sync",
                                        ["Transport start/stop is local: Link shares tempo and phase only.", "midi_settings.png"]))
+            if zynseq.is_link_audio_enabled():
+                self.list_data.append((self.toggle_link_audio, 0, "\u2612 Link Audio",
+                                       ["Broadcasting audio to the Link session.\n\nConnect what peers should hear to the zynseq link_send_a / link_send_b JACK ports. Nothing is sent unless a peer is listening.", "midi_settings.png"]))
+            else:
+                self.list_data.append((self.toggle_link_audio, 0, "\u2610 Link Audio",
+                                       ["Stream this device's audio to Ableton Live and other Link Audio peers on the local network.", "midi_settings.png"]))
+            bars = zynseq.get_link_quantum()
+            self.list_data.append((self.link_quantum, 0, f"Link Launch Quantum ({self.link_quantum_label(bars)})",
+                                   ["Starting the transport waits for the session to come round to this many bars.\n\nTempo and bar phase always follow the session.", "midi_settings.png"]))
         else:
             self.list_data.append((self.toggle_link, 0, "\u2610 Ableton Link",
                                    ["Share tempo and bar phase with Ableton Live and other Link apps on the local network.", "midi_settings.png"]))
@@ -624,6 +634,42 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         zynthian_gui_config.link_start_stop_sync = enable
         zynconf.save_config({
             "ZYNTHIAN_LINK_START_STOP_SYNC": str(int(enable))
+        })
+        self.update_list()
+
+    def toggle_link_audio(self):
+        zynseq = self.state_manager.zynseq
+        enable = not zynseq.is_link_audio_enabled()
+        zynseq.enable_link_audio(enable)
+        logging.info(f"Link Audio => {enable}")
+        zynthian_gui_config.link_audio = enable
+        zynconf.save_config({
+            "ZYNTHIAN_LINK_AUDIO": str(int(enable))
+        })
+        self.update_list()
+
+    @staticmethod
+    def link_quantum_label(bars):
+        return "1 bar" if bars == 1 else f"{bars} bars"
+
+    def link_quantum(self):
+        bars = self.state_manager.zynseq.get_link_quantum()
+        try:
+            value = self.link_quantum_bars.index(bars)
+        except ValueError:
+            value = 0
+        labels = [self.link_quantum_label(b) for b in self.link_quantum_bars]
+        self.enable_param_editor(self, "Link Launch Quantum",
+                                 {'labels': labels, 'value': value},
+                                 self.link_quantum_cb)
+
+    def link_quantum_cb(self, value):
+        bars = self.link_quantum_bars[value]
+        self.state_manager.zynseq.set_link_quantum(bars)
+        logging.info(f"Link Launch Quantum => {bars} bars")
+        zynthian_gui_config.link_quantum = bars
+        zynconf.save_config({
+            "ZYNTHIAN_LINK_QUANTUM": str(bars)
         })
         self.update_list()
 

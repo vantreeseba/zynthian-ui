@@ -760,6 +760,9 @@ clip_record_latency = get_env_int('ZYNTHIAN_CLIP_RECORD_LATENCY', 0)
 link_enabled = get_env_int('ZYNTHIAN_LINK_ENABLED', 0)
 # Share transport start/stop with the Link session as well as tempo and phase
 link_start_stop_sync = get_env_int('ZYNTHIAN_LINK_START_STOP_SYNC', 0)
+link_audio = get_env_int('ZYNTHIAN_LINK_AUDIO', 0)
+# Quantity of bars a pending transport start waits for the Link session to come round to
+link_quantum = get_env_int('ZYNTHIAN_LINK_QUANTUM', 1)
 
 # ------------------------------------------------------------------------------
 # Text To Speech Options

@@ -37,6 +37,7 @@
 #include <stdlib.h>         // provides exit
 #include <thread>           // provides thread for timer
 #include <cmath>            // provides sqrt
+#include <unistd.h>         // provides gethostname
 #include <nlohmann/json.hpp>// provides json
 
 #include "metronome.h"       // metronome wav data
@@ -67,6 +68,8 @@ jack_port_t* g_pOutputPort;           // Pointer to the JACK MIDI output port
 jack_port_t* g_pClockOutputPort;      // Pointer to the JACK MIDI clock output port
 jack_port_t* g_pClippyOutputPort;     // Pointer to the JACK MIDI output port feeding clippy
 jack_port_t* g_pMetronomePort;        // Pointer to the JACK metronome audio output port
+jack_port_t* g_pLinkSendPortL;        // Pointer to the JACK audio input port sent to the Link session (left)
+jack_port_t* g_pLinkSendPortR;        // Pointer to the JACK audio input port sent to the Link session (right)
 jack_client_t* g_pJackClient = NULL;  // Pointer to the JACK client
 jack_nframes_t g_nSampleRate = 48000; // Quantity of samples per second
 uint32_t g_nXruns = 0;
@@ -117,7 +120,8 @@ uint32_t g_nBarStartTick              = 0;         // Quantity of ticks from sta
 uint32_t g_nExtClockPPQN              = PPQN_MIDI; // Quantity of PPQN of the external clock
 
 // Ableton Link
-LinkSync* g_pLink = NULL; // Pointer to the Link session (NULL until init())
+LinkSync* g_pLink = NULL;      // Pointer to the Link session (NULL until init())
+uint8_t g_nLinkQuantumBars = 1; // Quantity of bars in the Link launch quantum
 // Phase error (in beats) beyond which the bar grid is snapped rather than steered
 #define LINK_SNAP_BEATS 0.125
 // Proportion of the phase error corrected in each period whilst steering
@@ -152,6 +156,9 @@ void enableDebug(bool bEnable) {
 // Set tempo, optionally propagating the change to the Link session
 void setTempoInternal(double tempo, bool bPropagate);
 
+// Set tempo whilst restoring state
+void setTempoFromState(double tempo);
+
 // Convert tempo to frames per clock
 void updateClockTiming() {
     g_dFramesPerTick = 60.0 * g_nSampleRate / (g_dTempo * PPQN_INTERNAL);
@@ -176,6 +183,17 @@ void onJackTimebase(jack_transport_state_t /*nState*/, jack_nframes_t /*nFramesI
     pPosition->beats_per_bar = g_nBeatsPerBar;
     pPosition->ticks_per_beat = PPQN_INTERNAL;
     pPosition->valid = JackPositionBBT;
+}
+
+// Handle audio latency change
+void onJackLatency(jack_latency_callback_mode_t nMode, void* /*pArgs*/) {
+    // Link aligns the moment our audio leaves the hardware with the session, so it
+    // needs to know how long after this period that happens
+    if (nMode != JackPlaybackLatency || !g_pLink || !g_nSampleRate)
+        return;
+    jack_latency_range_t range;
+    jack_port_get_latency_range(g_pMetronomePort, JackPlaybackLatency, &range);
+    g_pLink->setOutputLatency((int64_t)llround(1.0e6 * range.max / g_nSampleRate));
 }
 
 void updateJackPosition() {
@@ -299,10 +317,16 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
     // Sample the session once per period and steer the internal clock towards it. The
     // tick period used for this period may be trimmed slightly to correct phase error.
     double dFramesPerTick = g_dFramesPerTick;
-    bool bLinkHoldStart = false; // True to hold a pending transport start until the session downbeat
-    static double dPrevLinkPhase = 0.0;
+    // Ticks into this period at which to release a pending transport start. Negative
+    // to start straight away, beyond the ticks in this period to hold until a later one.
+    int64_t nLinkStartTick = -1;
     LinkState linkState;
-    const bool bLinkActive = g_pLink && g_pLink->audioUpdate(nFrames, g_nSampleRate, g_nBeatsPerBar, &linkState);
+    LinkAudioOut linkOut;
+    linkOut.pLeft = (const float*)jack_port_get_buffer(g_pLinkSendPortL, nFrames);
+    linkOut.pRight = (const float*)jack_port_get_buffer(g_pLinkSendPortR, nFrames);
+    linkOut.sampleRate = g_nSampleRate;
+    const double dLinkQuantum = (double)g_nBeatsPerBar * g_nLinkQuantumBars;
+    const bool bLinkActive = g_pLink && g_pLink->audioUpdate(nFrames, dLinkQuantum, g_nBeatsPerBar, &linkState, &linkOut);
     if (bLinkActive) {
         // Follow the session tempo (without echoing it back to the session)
         if (fabs(linkState.tempo - g_dTempo) > 0.0001) {
@@ -310,14 +334,19 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
             dFramesPerTick = g_dFramesPerTick;
         }
 
-        // Share transport start/stop with the session
+        // Share transport start/stop with the session. Only a change made by the
+        // session acts upon our transport, so joining a session that is already
+        // playing leaves us stopped until it next starts.
         if (g_pLink->isStartStopSyncEnabled()) {
-            if (linkState.isPlaying && g_nTransportState == STOPPED) {
-                transportStart(TRANSPORT_CLIENT_LINK);
-            } else if (!linkState.isPlaying && g_nTransportState != STOPPED && g_nTransportState != STOPPING) {
-                // The session stops every peer, whoever started our transport locally
-                g_nTransportClients = 0;
-                transportStop(TRANSPORT_CLIENT_LINK);
+            if (linkState.isPlayingChanged) {
+                if (linkState.isPlaying) {
+                    if (g_nTransportState == STOPPED)
+                        transportStart(TRANSPORT_CLIENT_LINK);
+                } else if (g_nTransportState != STOPPED && g_nTransportState != STOPPING) {
+                    // The session stops every peer, whoever started our transport locally
+                    g_nTransportClients = 0;
+                    transportStop(TRANSPORT_CLIENT_LINK);
+                }
             }
         } else if (g_nTransportClients & (1 << TRANSPORT_CLIENT_LINK)) {
             // Start/stop sync was turned off => release the slot Link was holding
@@ -331,21 +360,22 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
                 nTicksToBeat = 0;
             else if (nTicksToBeat > PPQN_INTERNAL)
                 nTicksToBeat = PPQN_INTERNAL;
-            const double dQuantum = g_nBeatsPerBar;
-            double dSeqPhase = fmod((double)g_nBeat - (double)nTicksToBeat / PPQN_INTERNAL, dQuantum);
+            // Tempo and phase lock to the bar, whatever the launch quantum
+            const double dBar = g_nBeatsPerBar;
+            double dSeqPhase = fmod((double)g_nBeat - (double)nTicksToBeat / PPQN_INTERNAL, dBar);
             if (dSeqPhase < 0.0)
-                dSeqPhase += dQuantum;
+                dSeqPhase += dBar;
             // Phase error, wrapped to the shortest way round the bar
-            double dError = linkState.phase - dSeqPhase;
-            while (dError < -dQuantum / 2)
-                dError += dQuantum;
-            while (dError >= dQuantum / 2)
-                dError -= dQuantum;
+            double dError = linkState.barPhase - dSeqPhase;
+            while (dError < -dBar / 2)
+                dError += dBar;
+            while (dError >= dBar / 2)
+                dError -= dBar;
             if (fabs(dError) > LINK_SNAP_BEATS) {
                 // Too far out to steer (just joined, tempo jump, xrun) => snap the grid
-                const double dBeatInBar = floor(linkState.phase);
+                const double dBeatInBar = floor(linkState.barPhase);
                 g_nBeat = (uint32_t)dBeatInBar + 1;
-                nNextBeatTime = nTickTime + (uint32_t)lround((1.0 - (linkState.phase - dBeatInBar)) * PPQN_INTERNAL);
+                nNextBeatTime = nTickTime + (uint32_t)lround((1.0 - (linkState.barPhase - dBeatInBar)) * PPQN_INTERNAL);
             } else if (dError != 0.0) {
                 // Steer by trimming the tick period. A positive error means the session
                 // is ahead of us, so we need shorter ticks to catch up.
@@ -357,10 +387,13 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
                 dFramesPerTick *= dTrim;
             }
         } else if (g_nTransportState == STARTING) {
-            // Launch on the session downbeat, i.e. the period in which the phase wraps
-            bLinkHoldStart = !(linkState.phase < dPrevLinkPhase);
+            // Launch on the next downbeat of the session's launch quantum, at the tick
+            // it falls upon rather than at the period boundary that follows it
+            double dBeatsToLaunch = dLinkQuantum - linkState.phase;
+            if (dBeatsToLaunch >= dLinkQuantum)
+                dBeatsToLaunch = 0.0; // Already on the downbeat
+            nLinkStartTick = llround(dBeatsToLaunch * PPQN_INTERNAL);
         }
-        dPrevLinkPhase = linkState.phase;
     }
 
     // Populate remaining ticks in this period, at current tempo
@@ -552,6 +585,7 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
     // Process clock ticks in this period
     jack_nframes_t nMetronomeFrame = 0; // Position within this period of next metronome sample
     uint32_t nPeriodStartTick = nTickTime; // Store the first tick of this period
+    int64_t nTicksDone = 0; // Quantity of ticks processed so far in this period
     for (const auto& nFrame: g_vTicks) {
         // Iterate clocks within this jack period to prepare MIDI output schedule events
 
@@ -564,15 +598,17 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
         bool bSync = false; // True if at start of bar
 
         // Update local (internal) transport
-        if (g_nTransportState == STARTING && !bLinkHoldStart) {
+        if (g_nTransportState == STARTING && (nLinkStartTick < 0 || nTicksDone >= nLinkStartTick)) {
             g_nTransportState = PLAYING;
-            if (bLinkActive) {
-                // Align the bar grid with the session phase
-                const double dBeatInBar = floor(linkState.phase);
+            if (bLinkActive && nLinkStartTick < 0) {
+                // Started without waiting for a launch point (the transport was released
+                // part way through this period) so align the bar grid with the session
+                const double dBeatInBar = floor(linkState.barPhase);
                 g_nBeat = (uint32_t)dBeatInBar + 1;
-                nNextBeatTime = nTickTime + (uint32_t)lround((1.0 - (linkState.phase - dBeatInBar)) * PPQN_INTERNAL);
+                nNextBeatTime = nTickTime + (uint32_t)lround((1.0 - (linkState.barPhase - dBeatInBar)) * PPQN_INTERNAL);
                 bSync = (g_nBeat == 1);
             } else {
+                // On the downbeat, either of the session's launch quantum or our own
                 nNextBeatTime = nTickTime + PPQN_INTERNAL;
                 g_nBeat = 1;
                 bSync = true;
@@ -682,6 +718,7 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
         }
 
         ++nTickTime;
+        ++nTicksDone;
     }
 
     // Play metronome sound
@@ -774,6 +811,9 @@ int onJackSampleRateChange(jack_nframes_t nFrames, void* /*pArgs*/) {
 int onJackXrun(void* /*pArgs*/) {
     DPRINTF("zynseq detected XRUN %u\n", ++g_nXruns);
     // g_bTimebaseChanged = true; // Discontinuity so need to recalculate timebase parameters
+    // The audio stream stalled, so the sample time to host time mapping is no longer valid
+    if (g_pLink)
+        g_pLink->resetTimeFilter();
     return 0;
 }
 
@@ -847,12 +887,29 @@ void init(char* name) {
         return;
     }
 
+    // Create the audio input ports broadcast to the Link session. These are inputs to us:
+    // connect whatever should be heard by peers, usually the main mix, to them.
+    if (!(g_pLinkSendPortL = jack_port_register(g_pJackClient, "link_send_a", JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0))) {
+        fprintf(stderr, "libzynseq cannot register link_send_a port\n");
+        return;
+    }
+    if (!(g_pLinkSendPortR = jack_port_register(g_pJackClient, "link_send_b", JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0))) {
+        fprintf(stderr, "libzynseq cannot register link_send_b port\n");
+        return;
+    }
+
     g_nSampleRate = jack_get_sample_rate(g_pJackClient);
     updateClockTiming();
 
-    // Create the Link session (joins the network only when enabled)
-    if (!g_pLink)
-        g_pLink = new LinkSync(g_dTempo);
+    // Create the Link session (joins the network only when enabled). Peers identify us by
+    // hostname, which is what distinguishes one zynthian from another on the network.
+    if (!g_pLink) {
+        char sHostname[256];
+        if (gethostname(sHostname, sizeof(sHostname)))
+            snprintf(sHostname, sizeof(sHostname), "%s", name);
+        sHostname[sizeof(sHostname) - 1] = '\0';
+        g_pLink = new LinkSync(g_dTempo, sHostname);
+    }
 
     // Pre-reserve memory to avoid later malloc calls
     g_vTicks.reserve(PPQN_INTERNAL);
@@ -861,7 +918,8 @@ void init(char* name) {
     jack_set_process_callback(g_pJackClient, onJackProcess, 0);
     jack_set_sample_rate_callback(g_pJackClient, onJackSampleRateChange, 0);
     jack_set_port_connect_callback(g_pJackClient, onJackConnect, 0);
-    //jack_set_xrun_callback(g_pJackClient, onJackXrun, 0);
+    jack_set_latency_callback(g_pJackClient, onJackLatency, 0);
+    jack_set_xrun_callback(g_pJackClient, onJackXrun, 0);
 
     if (jack_activate(g_pJackClient)) {
         fprintf(stderr, "libzynseq cannot activate client\n");
@@ -1362,7 +1420,7 @@ bool setState(const char* state) {
 
         g_seqMan.init();
 
-        setTempo(j.value("tempo", g_dTempo)); //!@todo Do we want to reset tempo to default or use previous if not in state?
+        setTempoFromState(j.value("tempo", g_dTempo)); //!@todo Do we want to reset tempo to default or use previous if not in state?
         setDefaultBpb(j.value("bpb", DEFAULT_BPB));
         //fprintf(stderr, "Default Timesig = %d\n", j.value("bpb", DEFAULT_BPB));
 
@@ -3209,8 +3267,29 @@ bool isLinkStartStopSyncEnabled() {
     return g_pLink && g_pLink->isStartStopSyncEnabled();
 }
 
+void enableLinkAudio(bool enable) {
+    if (g_pLink)
+        g_pLink->enableAudio(enable);
+}
+
+bool isLinkAudioEnabled() {
+    return g_pLink && g_pLink->isAudioEnabled();
+}
+
 uint32_t getLinkPeers() {
     return g_pLink ? (uint32_t)g_pLink->numPeers() : 0;
+}
+
+void setLinkQuantum(uint8_t bars) {
+    if (bars < 1)
+        bars = 1;
+    else if (bars > MAX_LINK_QUANTUM_BARS)
+        bars = MAX_LINK_QUANTUM_BARS;
+    g_nLinkQuantumBars = bars;
+}
+
+uint8_t getLinkQuantum() {
+    return g_nLinkQuantumBars;
 }
 
 // ** Transport management **/
@@ -3253,7 +3332,7 @@ void transportToggle(uint8_t id) {
 }
 
 void setTempoInternal(double tempo, bool bPropagate) {
-    if (tempo >= 10.0 && tempo < 500.0) {
+    if (tempo >= LINK_TEMPO_MIN && tempo < LINK_TEMPO_MAX) {
         const bool bChanged = (tempo != g_dTempo);
         g_dTempo = tempo;
         updateClockTiming();
@@ -3270,6 +3349,12 @@ void setTempoInternal(double tempo, bool bPropagate) {
 
 void setTempo(double tempo) {
     setTempoInternal(tempo, true);
+}
+
+void setTempoFromState(double tempo) {
+    // Whilst Link is enabled the session owns the tempo, so a loaded snapshot must not
+    // change it. Whilst it is disabled the session timeline tracks us, so it must.
+    setTempoInternal(tempo, !isLinkEnabled());
 }
 
 double getTempo() {

@@ -22,16 +22,35 @@
 #include <cstddef>
 #include <cstdint>
 
+// Range of tempo the sequencer can run at. A session outside this range is followed
+// at a power-of-two multiple of its tempo so that we stay musically in time with it.
+#define LINK_TEMPO_MIN 10.0
+#define LINK_TEMPO_MAX 500.0
+
 /** Snapshot of the Link session, sampled once per JACK period.
 
-    All values describe the state at the start of the period that was passed to
-    LinkSync::audioUpdate().
+    All values describe the state at the moment the audio for the period that was
+    passed to LinkSync::audioUpdate() reaches the output, i.e. the start of the
+    period plus the audio output latency.
 */
 struct LinkState {
-    double tempo;     // Session tempo in beats per minute
-    double beat;      // Beat magnitude on the session timeline (local to this peer)
-    double phase;     // Phase within the quantum, in beats, range [0, quantum)
-    bool isPlaying;   // Session start/stop state (only meaningful with start/stop sync enabled)
+    double tempo;          // Tempo in beats per minute, scaled into the supported range
+    double beat;           // Beat magnitude on the session timeline (local to this peer)
+    double phase;          // Phase within the launch quantum, in beats, range [0, quantum)
+    double barPhase;       // Phase within the bar, in beats, range [0, beatsPerBar)
+    bool isPlaying;        // Session start/stop state
+    bool isPlayingChanged; // True if the session (not this peer) just changed isPlaying
+};
+
+/** Audio to publish to the Link session for the current period.
+
+    Samples are the usual JACK float format and are converted to the 16 bit integer
+    format Link Audio transmits. Left alone, nothing is published.
+*/
+struct LinkAudioOut {
+    const float* pLeft;       // Left channel samples, or NULL to publish nothing
+    const float* pRight;      // Right channel samples, or NULL to publish mono
+    std::uint32_t sampleRate; // Sample rate of the samples, in Hz
 };
 
 /** LinkSync class wraps an Ableton Link instance.
@@ -44,6 +63,11 @@ struct LinkState {
     - The audio (JACK process) thread samples the session and applies pending
       requests in audioUpdate(), using Link's realtime-safe audio session state API.
 
+    Requests are applied whether or not Link is enabled, so the session timeline
+    always mirrors the local tempo and transport state. Link stamps changes made
+    whilst disabled as old, so joining a session adopts the session's tempo rather
+    than imposing ours upon it.
+
     The only exceptions are enable()/enableStartStopSync()/numPeers(), which are
     thread-safe but NOT realtime-safe, so they must not be called from the audio
     thread.
@@ -52,8 +76,9 @@ class LinkSync {
   public:
     /** @brief  Construct Link session (disabled until enable(true) is called)
         @param  tempo Initial session tempo in beats per minute
+        @param  name Name identifying this peer to the session, e.g. the hostname
     */
-    LinkSync(double tempo);
+    LinkSync(double tempo, const char* name);
 
     /** @brief  Destruction called when object destroyed
     */
@@ -90,6 +115,26 @@ class LinkSync {
     */
     std::size_t numPeers() const;
 
+    /** @brief  Enable / disable publishing this device's audio to the Link session
+        @param  enable True to announce an audio channel to the session
+        @note   Not realtime-safe - do not call from the audio thread
+        @note   Has no effect until Link itself is enabled
+    */
+    void enableAudio(bool enable);
+
+    /** @brief  Check whether publishing audio to the Link session is enabled
+        @retval bool True if enabled
+    */
+    bool isAudioEnabled() const;
+
+    /** @brief  Set the audio output latency, which is compensated for when placing
+                the session timeline against the audio stream
+        @param  micros Latency between the audio thread writing a sample and that
+                sample leaving the hardware, in microseconds
+        @note   Thread-safe. Call from the JACK latency callback
+    */
+    void setOutputLatency(std::int64_t micros);
+
     /** @brief  Request a session tempo change
         @param  tempo Tempo in beats per minute
         @note   Thread-safe. The change is applied by the audio thread on its next period
@@ -104,16 +149,19 @@ class LinkSync {
 
     /** @brief  Sample the session and apply pending requests
         @param  frames Quantity of frames in this JACK period
-        @param  sampleRate Sample rate in frames per second
-        @param  quantum Quantity of beats in the sync grid (beats per bar)
+        @param  quantum Quantity of beats in the launch grid (a whole quantity of bars)
+        @param  beatsPerBar Quantity of beats in each bar
         @param  pState Pointer to structure populated with the sampled session state
+        @param  pOut Pointer to the audio to publish to the session, or NULL to publish
+                nothing this period
         @retval bool True if state was sampled (false if Link is disabled)
         @note   Realtime-safe. Must only be called from the audio thread
     */
-    bool audioUpdate(std::uint32_t frames, std::uint32_t sampleRate, double quantum, LinkState* pState);
+    bool audioUpdate(std::uint32_t frames, double quantum, double beatsPerBar, LinkState* pState,
+                     const LinkAudioOut* pOut);
 
     /** @brief  Reset the sample-time to host-time mapping
-        @note   Call when the audio stream is interrupted, e.g. on sample rate change
+        @note   Call when the audio stream is interrupted, e.g. on xrun or sample rate change
     */
     void resetTimeFilter();
 

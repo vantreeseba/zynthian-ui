@@ -107,6 +107,9 @@ enum JTRANS_MODES {
 #define TRANSPORT_CLIENT_METRO    2
 #define TRANSPORT_CLIENT_LINK     3
 
+// Largest Ableton Link launch quantum, in bars
+#define MAX_LINK_QUANTUM_BARS     16
+
 // Follow action
 enum FOLLOW_ACTION {
     FOLLOW_ACTION_NONE,
