@@ -157,9 +157,12 @@ float g_fPlayChance = 1.0;  // Probability for playing notes (0 = Notes are not 
 size_t g_nMetronomePtr = -1;   // Position within metronome click wav data (-1 if not playing, e.g. between beats)
 float g_fMetronomeLevel = 1.0; // Factor to scale metronome level (volume)
 uint8_t g_nMetronomeMode = 0;  // Metonome play mode
-struct metro_wav_t g_metro_pip;
-struct metro_wav_t g_metro_peep;
-struct metro_wav_t* g_pMetro = &g_metro_pip; // Pointer to the current metronome sound (pip/peep)
+// Which click is sounding, resolved to a read-only table when it is played. Held as
+// a selection rather than a pointer to the sample data: a pointer clobbered by a
+// stray write is played as whatever memory it lands on, and nothing would ever put
+// it back, so the metronome would be noise until the process was restarted.
+enum METRO_CLICK { METRO_CLICK_PIP, METRO_CLICK_PEEP };
+uint8_t g_nMetronomeClick = METRO_CLICK_PIP;
 
 char* g_pState = nullptr; // Pointer used for temporary transfer of state string
 
@@ -249,6 +252,27 @@ void updateJackPosition() {
 
     Schedule holds events, indexed by their scheduled execution time in frames since jack epoch.
 */
+
+/*  @brief  Play the click in progress into a run of the metronome output buffer
+    @param  pOut Pointer to the metronome output buffer
+    @param  nStart First frame of the run to fill
+    @param  nEnd One past the last frame of the run to fill
+    @note   Called from the process thread, which owns the playback position
+*/
+static void playMetronome(jack_default_audio_sample_t* pOut, jack_nframes_t nStart, jack_nframes_t nEnd) {
+    const bool bPeep      = (g_nMetronomeClick == METRO_CLICK_PEEP);
+    const float* pClick   = bPeep ? metronome_peep : metronome_pip;
+    const size_t nSize    = (bPeep ? sizeof(metronome_peep) : sizeof(metronome_pip)) / sizeof(float);
+    // NaN fails both comparisons, so a level that has gone bad silences the click
+    // rather than playing it at whatever amplitude the bad value holds
+    float fLevel = g_fMetronomeLevel;
+    if (!(fLevel >= 0.0f && fLevel <= 1.0f))
+        fLevel = 0.0f;
+    for (jack_nframes_t n = nStart; n < nEnd && g_nMetronomePtr < nSize; ++n)
+        pOut[n] = pClick[g_nMetronomePtr++] * fLevel;
+    if (g_nMetronomePtr >= nSize)
+        g_nMetronomePtr = -1; // Click finished (or was not playing) => between beats
+}
 
 int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
     // Transport & Clock
@@ -619,7 +643,8 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
     //!@todo Interpolate events across frame, e.g. CC variations
 
     // Process clock ticks in this period
-    jack_nframes_t nMetronomeFrame = 0; // Position within this period of next metronome sample
+    int64_t nMetronomeStart = -1;       // Position within this period at which a click starts (-1 if none)
+    uint8_t nMetronomeClick = METRO_CLICK_PIP; // Click to start at that position
     uint32_t nPeriodStartTick = nTickTime; // Store the first tick of this period
     int64_t nTicksDone = 0; // Quantity of ticks processed so far in this period
     for (const auto& nFrame: g_vTicks) {
@@ -672,7 +697,6 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
             if (nTickTime >= nNextBeatTime) {
                 // Beat
                 nNextBeatTime = nTickTime + PPQN_INTERNAL;
-                nMetronomeFrame = nFrame;
                 bBeat = true;
                 DPRINTF("Beat at tick %d, frame %u (%lu)\n", nTickTime, nFrame, nNow + nFrame);
                 if (++g_nBeat > nBeatsPerBar) {
@@ -748,11 +772,11 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
             (g_nMetronomeMode == METRO_MODE_TRANSPORT && (g_nTransportState == PLAYING || g_bTransportRolling)) ||
             (g_nMetronomeMode == METRO_MODE_INTRO && !(g_nPlayingSequences & 1))) {
                 // Start metronome
-                g_nMetronomePtr = 0;
-                g_pMetro = bSync ? &g_metro_peep : &g_metro_pip;
+                nMetronomeStart = nFrame;
+                nMetronomeClick = bSync ? METRO_CLICK_PEEP : METRO_CLICK_PIP;
             } else if (g_nMetronomeMode == METRO_MODE_NO_PEEP) {
-                g_nMetronomePtr = 0;
-                g_pMetro = &g_metro_pip;
+                nMetronomeStart = nFrame;
+                nMetronomeClick = METRO_CLICK_PIP;
             }
         }
 
@@ -760,14 +784,16 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
         ++nTicksDone;
     }
 
-    // Play metronome sound
-    for (jack_nframes_t n = nMetronomeFrame; n < nFrames; ++n) {
-        if (g_nMetronomePtr < g_pMetro->size) {
-            pOutMetronome[n] = g_pMetro->data[g_nMetronomePtr++] * g_fMetronomeLevel;
-        } else {
-            g_nMetronomePtr = -1;
-            break;
-        }
+    // Play metronome sound. A click runs on past the end of the period that starts it,
+    // so the run before a beat is the tail of the previous one: play it out rather than
+    // cutting the waveform where the beat happens to fall.
+    if (nMetronomeStart < 0) {
+        playMetronome(pOutMetronome, 0, nFrames);
+    } else {
+        playMetronome(pOutMetronome, 0, (jack_nframes_t)nMetronomeStart);
+        g_nMetronomePtr = 0;
+        g_nMetronomeClick = nMetronomeClick;
+        playMetronome(pOutMetronome, (jack_nframes_t)nMetronomeStart, nFrames);
     }
 
     // Process events scheduled to be sent to MIDI output
@@ -872,11 +898,6 @@ __attribute__((constructor)) void zynseq(void) { fprintf(stderr, "Started libzyn
 
 void init(char* name) {
     //!@todo Invalid name triggers seg fault
-
-    g_metro_pip.data = metronome_pip;
-    g_metro_pip.size = sizeof(metronome_pip) / sizeof(float);
-    g_metro_peep.data = metronome_peep;
-    g_metro_peep.size = sizeof(metronome_peep) / sizeof(float);
 
     // Register with Jack server
     // fprintf(stderr, "**zynseq initialising as %s**\n", name);
