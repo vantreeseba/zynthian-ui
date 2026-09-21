@@ -2679,10 +2679,13 @@ class zynthian_state_manager:
         if self.record_metronome_depth == 1:
             mode = self.zynseq.libseq.getMetronomeMode()
             # Modes OFF(0), INTRO(3) and SILENT(5) produce no click while the
-            # transport rolls => switch to AUTO(1) for the duration of the recording
+            # transport rolls => make it audible for the duration of the recording.
+            # INTRO and SILENT keep the transport running, so they switch to ON(2)
+            # which does too: dropping to AUTO(1) would let go of the transport,
+            # restarting the bar grid under whatever is already playing.
             if mode in (0, 3, 5):
                 self.saved_metronome_mode = mode
-                self.zynseq.libseq.setMetronomeMode(1)
+                self.zynseq.libseq.setMetronomeMode(2 if mode else 1)
 
     def stop_record_metronome(self):
         """Restore the metronome mode configured before recording started"""

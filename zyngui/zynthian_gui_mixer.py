@@ -508,24 +508,43 @@ class zynthian_gui_launcher_pad():
                         color_text = zynthian_gui_config.PAD_COLOUR_STATE_DISABLED
                         color_state = zynthian_gui_config.PAD_COLOUR_STATE_DISABLED
                         state_text = "?"
-                if self.gui_mixer.state_manager.midi_record_pad == (self.phrase, self.chain.midi_chan):
+                st = state_seq["state"]
+                midi_recording = self.gui_mixer.state_manager.midi_record_pad == (self.phrase, self.chain.midi_chan)
+                if midi_recording:
                     # Live MIDI capture into this pad's pattern
-                    color_state = zynthian_gui_config.PAD_COLOUR_RECORDING
                     state_text = "⏺"
 
                 # Progress sweep (update_progress) only shows on pads
                 # actively sounding, not queued or child-playing ones.
-                self.playing = state_seq["state"] in (
-                    zynseq.SEQ_PLAYING, zynseq.SEQ_RECORDING) and not empty
+                self.playing = (st == zynseq.SEQ_PLAYING and not empty) or st == zynseq.SEQ_RECORDING
 
                 # Brightness codes activity (dim = has content but idle,
                 # bright = playing); queued pads pulse on the beat via
                 # flash_tick(). Phrase pads (main chain) keep their colour.
-                if self.chain.chain_id and not empty:
-                    st = state_seq["state"]
-                    if st in (zynseq.SEQ_STARTING, zynseq.SEQ_STARTING_RECORD,
+                if midi_recording or st in (zynseq.SEQ_RECORDING, zynseq.SEQ_STARTING_RECORD,
+                                            zynseq.SEQ_STOPPING_RECORD):
+                    # A take is the one thing that must never be mistaken for a pad
+                    # that is merely playing, so it takes over the whole pad, empty
+                    # or not: solid whilst recording, pulsing whilst waiting to
+                    # punch in or out
+                    color = zynthian_gui_config.PAD_COLOUR_RECORDING
+                    color_state = color_text
+                    if st == zynseq.SEQ_STARTING_RECORD:
+                        title = "ARMED"
+                    elif st == zynseq.SEQ_STOPPING_RECORD:
+                        title = "ENDING"
+                    else:
+                        title = "REC"
+                    if st in (zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD):
+                        self.flashing = True
+                        self.flash_bright = color
+                        self.flash_dim = zynthian_gui_config.color_scale(color, 0.45)
+                        if not self.gui_mixer.flash_on:
+                            color = self.flash_dim
+                elif self.chain.chain_id and not empty:
+                    if st in (zynseq.SEQ_STARTING,
                               zynseq.SEQ_STOPPING, zynseq.SEQ_STOPPING_SYNC,
-                              zynseq.SEQ_STOPPING_RECORD, zynseq.SEQ_CHILD_STOPPING):
+                              zynseq.SEQ_CHILD_STOPPING):
                         self.flashing = True
                         self.flash_bright = color
                         self.flash_dim = zynthian_gui_config.color_scale(color, 0.45)

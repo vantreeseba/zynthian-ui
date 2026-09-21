@@ -55,6 +55,9 @@ std::int16_t floatToPcm(float sample) {
     return (std::int16_t)lrintf(sample * 32767.0f);
 }
 
+// Furthest the filtered host time may stray from the clock before the filter is reset
+const std::chrono::microseconds LINK_FILTER_MAX_DRIFT{100000};
+
 } // namespace
 
 struct LinkSync::Impl {
@@ -66,8 +69,11 @@ struct LinkSync::Impl {
     // Announced for the lifetime of the session. Link only transmits whilst a peer is
     // listening, so an idle sink costs nothing but its announcement.
     ableton::LinkAudioSink sink;
+    // Only ever touched by the audio thread. Other threads ask for a reset.
     ableton::link::HostTimeFilter<ableton::link::platform::Clock> timeFilter;
-    double sampleTime = 0.0;
+    std::atomic<bool> filterReset{false};
+    // Host time of the start of the period last passed to audioUpdate()
+    std::chrono::microseconds periodHostTime{0};
 
     // Mirrors of the Link flags so the audio thread never has to ask Link
     std::atomic<bool> enabled{false};
@@ -99,11 +105,6 @@ LinkSync::~LinkSync() {
 void LinkSync::enable(bool enable) {
     if (enable == m_pImpl->enabled.load(std::memory_order_relaxed))
         return;
-    if (enable) {
-        // Start from a clean sample-time to host-time mapping: the audio stream may
-        // have been running (or not) for an arbitrary time before we joined
-        m_pImpl->timeFilter.reset();
-    }
     // Take a fresh start/stop baseline either way, so that neither joining a playing
     // session nor leaving one is mistaken for the session starting or stopping
     m_pImpl->playValid.store(false, std::memory_order_release);
@@ -163,18 +164,41 @@ void LinkSync::requestIsPlaying(bool playing) {
 }
 
 void LinkSync::resetTimeFilter() {
-    m_pImpl->timeFilter.reset();
+    m_pImpl->filterReset.store(true, std::memory_order_release);
 }
 
-bool LinkSync::audioUpdate(std::uint32_t frames, double quantum, double beatsPerBar, LinkState* pState,
-                           const LinkAudioOut* pOut) {
+void LinkSync::alignDownbeat(std::uint32_t frameOffset, std::uint32_t sampleRate, double quantum) {
+    if (!sampleRate)
+        return;
+    const auto time = m_pImpl->periodHostTime
+                      + std::chrono::microseconds(llround(1.0e6 * frameOffset / sampleRate));
+    auto state = m_pImpl->link.captureAudioSessionState();
+    state.requestBeatAtTime(0.0, time, quantum / tempoScale(state.tempo()));
+    m_pImpl->link.commitAudioSessionState(state);
+}
+
+bool LinkSync::audioUpdate(std::uint64_t sampleTime, std::uint32_t frames, double quantum, double beatsPerBar,
+                           LinkState* pState, const LinkAudioOut* pOut) {
     // The mapping is kept warm even while disabled so that enabling Link does not
-    // have to wait for the filter to converge. Latency compensation places the
-    // timeline at the moment this period's audio leaves the hardware, which is what
-    // has to line up between peers - not the moment we compute it.
-    const auto hostTime = m_pImpl->timeFilter.sampleTimeToHostTime(m_pImpl->sampleTime)
+    // have to wait for the filter to converge. It is fed the audio server's frame
+    // clock rather than a count of the frames we were given, so that periods lost to
+    // an xrun do not shift the mapping.
+    if (m_pImpl->filterReset.exchange(false, std::memory_order_acquire))
+        m_pImpl->timeFilter.reset();
+    auto filteredTime = m_pImpl->timeFilter.sampleTimeToHostTime((double)sampleTime);
+    // The filter smooths out callback jitter, so it can only ever be a period or so
+    // away from the clock. Any further means the frame clock jumped => start again.
+    const auto drift = filteredTime - m_pImpl->link.clock().micros();
+    if (drift > LINK_FILTER_MAX_DRIFT || drift < -LINK_FILTER_MAX_DRIFT) {
+        m_pImpl->timeFilter.reset();
+        filteredTime = m_pImpl->timeFilter.sampleTimeToHostTime((double)sampleTime);
+    }
+    // Latency compensation places the timeline at the moment this period's audio
+    // leaves the hardware, which is what has to line up between peers - not the
+    // moment we compute it.
+    const auto hostTime = filteredTime
                           + std::chrono::microseconds(m_pImpl->outputLatency.load(std::memory_order_relaxed));
-    m_pImpl->sampleTime += frames;
+    m_pImpl->periodHostTime = hostTime;
 
     // Requests are applied whether or not we are enabled, so that the session
     // timeline always reflects the local tempo and transport state. Link stamps

@@ -755,7 +755,10 @@ class zynseq(zynthian_engine):
             zynsigman.send(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_BEAT, beat=beat)
         tempo = self.libseq.getTempo()
         if tempo != self.zctrl_tempo.value:
-            self.zctrl_tempo.set_value(tempo)
+            # Read from the sequencer (Link, MIDI clock, pattern) so never written back:
+            # by now it may have moved on, and an old tempo would be news to Link
+            self.zctrl_tempo.set_value(tempo, False)
+            zynsigman.send(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TEMPO, tempo=tempo)
         if self.link_enabled:
             peers = self.get_link_peers()
             if peers != self.link_peers:

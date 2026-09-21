@@ -33,7 +33,7 @@ from queue import Empty
 from pathlib import Path
 from time import monotonic
 from datetime import datetime
-from threading import Thread, Lock, Event
+from threading import Thread, Lock, Event, get_native_id
 
 # Zynthian specific modules
 import zynconf
@@ -2738,6 +2738,14 @@ class zynthian_gui:
         self.status_thread.start()
 
     def status_thread_task(self):
+        # Meters, playheads and LEDs are the bulk of the UI's idle work and none of it
+        # is worth a late audio buffer, so everything that makes or feeds sound (disk
+        # streaming, Link, MIDI routing) runs ahead of this thread. On Linux a thread
+        # id given as a process id sets the priority of that thread alone.
+        try:
+            os.setpriority(os.PRIO_PROCESS, get_native_id(), 10)
+        except Exception as e:
+            logging.debug(f"Can't lower status thread priority => {e}")
         while not self.exit_flag:
             # When in power save mode:
             # + Make LED refresh faster so the fading effect looks smooth

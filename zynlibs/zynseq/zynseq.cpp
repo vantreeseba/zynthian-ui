@@ -140,10 +140,14 @@ LinkSync* g_pLink = NULL;      // Pointer to the Link session (NULL until init()
 uint8_t g_nLinkQuantumBars = 1; // Quantity of bars in the Link launch quantum
 // Phase error (in beats) beyond which the bar grid is snapped rather than steered
 #define LINK_SNAP_BEATS 0.125
-// Proportion of the phase error corrected in each period whilst steering
-#define LINK_SERVO_GAIN 0.05
+// Proportion of the phase error corrected in each beat whilst steering
+#define LINK_SERVO_GAIN 0.1
 // Maximum proportional change to the tick period whilst steering
 #define LINK_SERVO_LIMIT 0.05
+// Gain and limit used instead whilst sequences are playing and the error is too large to
+// steer gently: a brief, audible push is better than the metronome leaving the sequences
+#define LINK_CHASE_GAIN 0.2
+#define LINK_CHASE_LIMIT 0.1
 
 float g_fSwingAmount = 0.0; // Swing amount, range from 0 to 1, but values over 0.5 are not "MPC swing"
 float g_fHumanTime = 0.0;   // Timing Humanization, range from 0 to FLOAT_MAX
@@ -276,6 +280,17 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
     jack_midi_clear_buffer(pClockBuffer);
     jack_midi_clear_buffer(pClippyBuffer);
 
+    // ** Ableton Link **
+    // Sample the session once per period, before anything that may make us wait, as the
+    // time at which we do so is what places the session timeline against the audio
+    LinkState linkState;
+    LinkAudioOut linkOut;
+    linkOut.pLeft = (const float*)jack_port_get_buffer(g_pLinkSendPortL, nFrames);
+    linkOut.pRight = (const float*)jack_port_get_buffer(g_pLinkSendPortR, nFrames);
+    linkOut.sampleRate = g_nSampleRate;
+    const double dLinkQuantum = (double)g_nBeatsPerBar * g_nLinkQuantumBars;
+    const bool bLinkActive = g_pLink && g_pLink->audioUpdate(nNow, nFrames, dLinkQuantum, g_nBeatsPerBar, &linkState, &linkOut);
+
     // Hold the lock for the rest of the period to protect the schedule and sequences
     ScheduleLock lock;
 
@@ -330,20 +345,12 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
         }
     }
 
-    // ** Ableton Link **
-    // Sample the session once per period and steer the internal clock towards it. The
-    // tick period used for this period may be trimmed slightly to correct phase error.
+    // Steer the internal clock towards the Link session. The tick period used for this
+    // period may be trimmed to correct phase error.
     double dFramesPerTick = g_dFramesPerTick;
     // Ticks into this period at which to release a pending transport start. Negative
     // to start straight away, beyond the ticks in this period to hold until a later one.
     int64_t nLinkStartTick = -1;
-    LinkState linkState;
-    LinkAudioOut linkOut;
-    linkOut.pLeft = (const float*)jack_port_get_buffer(g_pLinkSendPortL, nFrames);
-    linkOut.pRight = (const float*)jack_port_get_buffer(g_pLinkSendPortR, nFrames);
-    linkOut.sampleRate = g_nSampleRate;
-    const double dLinkQuantum = (double)g_nBeatsPerBar * g_nLinkQuantumBars;
-    const bool bLinkActive = g_pLink && g_pLink->audioUpdate(nFrames, dLinkQuantum, g_nBeatsPerBar, &linkState, &linkOut);
     if (bLinkActive) {
         // Follow the session tempo (without echoing it back to the session)
         if (fabs(linkState.tempo - g_dTempo) > 0.0001) {
@@ -388,28 +395,37 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
                 dError += dBar;
             while (dError >= dBar / 2)
                 dError -= dBar;
-            if (fabs(dError) > LINK_SNAP_BEATS) {
-                // Too far out to steer (just joined, tempo jump, xrun) => snap the grid
+            const bool bFarOut = fabs(dError) > LINK_SNAP_BEATS;
+            if (bFarOut && g_seqMan.getPlayingSequencesCount() == 0) {
+                // Too far out to steer (just joined, tempo jump, xrun) and only the
+                // metronome follows the grid => snap the grid
                 const double dBeatInBar = floor(linkState.barPhase);
                 g_nBeat = (uint32_t)dBeatInBar + 1;
                 nNextBeatTime = nTickTime + (uint32_t)lround((1.0 - (linkState.barPhase - dBeatInBar)) * PPQN_INTERNAL);
             } else if (dError != 0.0) {
                 // Steer by trimming the tick period. A positive error means the session
-                // is ahead of us, so we need shorter ticks to catch up.
-                double dTrim = 1.0 - dError * LINK_SERVO_GAIN;
-                if (dTrim < 1.0 - LINK_SERVO_LIMIT)
-                    dTrim = 1.0 - LINK_SERVO_LIMIT;
-                else if (dTrim > 1.0 + LINK_SERVO_LIMIT)
-                    dTrim = 1.0 + LINK_SERVO_LIMIT;
-                dFramesPerTick *= dTrim;
+                // is ahead of us, so we need shorter ticks to catch up. Sequences are
+                // clocked by the same ticks but do not follow a snapped grid, so whilst
+                // any are playing a large error is chased down instead, which keeps
+                // them and the metronome together all the way back to the session.
+                const double dGain = bFarOut ? LINK_CHASE_GAIN : LINK_SERVO_GAIN;
+                const double dLimit = bFarOut ? LINK_CHASE_LIMIT : LINK_SERVO_LIMIT;
+                double dTrim = dError * dGain;
+                if (dTrim > dLimit)
+                    dTrim = dLimit;
+                else if (dTrim < -dLimit)
+                    dTrim = -dLimit;
+                dFramesPerTick *= 1.0 - dTrim;
             }
         } else if (g_nTransportState == STARTING) {
             // Launch on the next downbeat of the session's launch quantum, at the tick
             // it falls upon rather than at the period boundary that follows it
-            double dBeatsToLaunch = dLinkQuantum - linkState.phase;
-            if (dBeatsToLaunch >= dLinkQuantum)
-                dBeatsToLaunch = 0.0; // Already on the downbeat
-            nLinkStartTick = llround(dBeatsToLaunch * PPQN_INTERNAL);
+            // A downbeat can fall after the last tick of one period yet before the start
+            // of the next. It is then less than a period behind us, so launch straight
+            // away (aligned to the session) rather than waiting out another quantum.
+            const double dBeatsPerPeriod = (double)nFrames / (dFramesPerTick * PPQN_INTERNAL);
+            if (linkState.phase >= dBeatsPerPeriod)
+                nLinkStartTick = llround((dLinkQuantum - linkState.phase) * PPQN_INTERNAL);
         }
     }
 
@@ -640,16 +656,16 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
                 SEQ_EVENT{nTickTime, 0, MIDI_MESSAGE{MIDI_START, 0, 0}}
             );
         } else if (g_nTransportState == STOPPING) {
-            if (g_nBeat == 1) {
-                g_nTransportState = STOPPED;
-                jack_transport_stop(g_pJackClient);
-                jack_transport_locate(g_pJackClient, 0);
-                g_seqMan.resetFollowRepeat();
-                g_mSchedule.map.emplace(
-                    nTickTime,
-                    SEQ_EVENT{nTickTime, 0, MIDI_MESSAGE{MIDI_STOP, 0, 0}}
-                );
-            }
+            // Beats do not advance whilst stopping, so waiting for a particular one
+            // would leave the transport neither stopped nor able to be started by Link
+            g_nTransportState = STOPPED;
+            jack_transport_stop(g_pJackClient);
+            jack_transport_locate(g_pJackClient, 0);
+            g_seqMan.resetFollowRepeat();
+            g_mSchedule.map.emplace(
+                nTickTime,
+                SEQ_EVENT{nTickTime, 0, MIDI_MESSAGE{MIDI_STOP, 0, 0}}
+            );
         }
 
         if (g_nTransportState == PLAYING) {
@@ -677,6 +693,9 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
             if (g_seqMan.consumeBarResync()) {
                 g_nBeat = 1;
                 nNextBeatTime = nTickTime + PPQN_INTERNAL;
+                // Otherwise the session would straight away pull the grid back again
+                if (bLinkActive)
+                    g_pLink->alignDownbeat(nFrame, g_nSampleRate, dLinkQuantum);
             }
 
             // Check for sequenced timebase changes (from patterns)
@@ -832,9 +851,6 @@ int onJackSampleRateChange(jack_nframes_t nFrames, void* /*pArgs*/) {
 int onJackXrun(void* /*pArgs*/) {
     DPRINTF("zynseq detected XRUN %u\n", ++g_nXruns);
     // g_bTimebaseChanged = true; // Discontinuity so need to recalculate timebase parameters
-    // The audio stream stalled, so the sample time to host time mapping is no longer valid
-    if (g_pLink)
-        g_pLink->resetTimeFilter();
     return 0;
 }
 

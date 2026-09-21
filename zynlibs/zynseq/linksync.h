@@ -148,6 +148,7 @@ class LinkSync {
     void requestIsPlaying(bool playing);
 
     /** @brief  Sample the session and apply pending requests
+        @param  sampleTime Audio server's frame clock at the start of this JACK period
         @param  frames Quantity of frames in this JACK period
         @param  quantum Quantity of beats in the launch grid (a whole quantity of bars)
         @param  beatsPerBar Quantity of beats in each bar
@@ -157,11 +158,23 @@ class LinkSync {
         @retval bool True if state was sampled (false if Link is disabled)
         @note   Realtime-safe. Must only be called from the audio thread
     */
-    bool audioUpdate(std::uint32_t frames, double quantum, double beatsPerBar, LinkState* pState,
-                     const LinkAudioOut* pOut);
+    bool audioUpdate(std::uint64_t sampleTime, std::uint32_t frames, double quantum, double beatsPerBar,
+                     LinkState* pState, const LinkAudioOut* pOut);
 
-    /** @brief  Reset the sample-time to host-time mapping
-        @note   Call when the audio stream is interrupted, e.g. on xrun or sample rate change
+    /** @brief  Ask the session to put a downbeat of the launch quantum within the period
+                last passed to audioUpdate(), because our bar grid was just moved there
+        @param  frameOffset Frames into the period at which the downbeat falls
+        @param  sampleRate Sample rate in Hz
+        @param  quantum Quantity of beats in the launch grid
+        @note   Realtime-safe. Must only be called from the audio thread
+        @note   Alone in a session the grid moves to us. Otherwise the session keeps its
+                grid and we are steered back onto it.
+    */
+    void alignDownbeat(std::uint32_t frameOffset, std::uint32_t sampleRate, double quantum);
+
+    /** @brief  Request a reset of the sample-time to host-time mapping
+        @note   Thread-safe. Applied by the audio thread on its next period. Call when the
+                relationship between the frame clock and time changes, e.g. sample rate change
     */
     void resetTimeFilter();
 
