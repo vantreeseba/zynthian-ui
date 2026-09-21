@@ -340,9 +340,7 @@ class zynthian_side_chain(tkinter.Canvas):
                     bg_col = c_special
             if disabled:
                 fg_col = zynthian_gui_config.color_tx_off
-        node["id"] = zynthian_gui_config.create_round_rect(
-            self, x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
-            radius=zynthian_gui_config.corner_radius,
+        node["id"] = self.create_rectangle(x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
             fill=bg_col, outline=bg_col, tags="node"
         )
         title, size = self.fit_text_to_box(title)

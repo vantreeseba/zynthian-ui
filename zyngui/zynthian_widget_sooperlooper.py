@@ -87,8 +87,6 @@ class zynthian_widget_sooperlooper(zynthian_widget_base.zynthian_widget_base):
                 fill=zynthian_gui_config.color_ml,
                 width=2
             )
-            # Kept as create_rectangle: refresh_gui() resizes this border per-frame via
-            # canvas.coords(x0, y0, x1, y1), which a create_round_rect polygon can't accept.
             pos_border = pos_canvas.create_rectangle(2, 2, 2, 2, width=2,
                                                      outline=zynthian_gui_config.color_on,
                                                      state=tkinter.HIDDEN)

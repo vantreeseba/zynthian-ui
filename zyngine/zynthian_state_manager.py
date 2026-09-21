@@ -2505,18 +2505,23 @@ class zynthian_state_manager:
         dirs = [capture_dir_sdc, zynthian_gui_config.clip_record_ram_dir] + zynthian_gui_config.get_external_storage_dirs(ex_data_dir)
         return os.path.dirname(fpath) in dirs
 
-    def get_new_capture_fpath(self, ext="mid"):
-        exdirs = zynthian_gui_config.get_external_storage_dirs(ex_data_dir)
-        path = None
-        filename = None
-        if exdirs:
-            for path in exdirs:
-                if not self.check_mount_readonly(path):
-                    filename = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-                    break
-        if not filename:
-            path = capture_dir_sdc
-            filename = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    def get_capture_dir(self):
+        """First writable external storage, else the SD card capture directory"""
+
+        for path in zynthian_gui_config.get_external_storage_dirs(ex_data_dir):
+            if not self.check_mount_readonly(path):
+                return path
+        return capture_dir_sdc
+
+    def get_new_capture_fpath(self, ext="mid", capture_dir=None):
+        """Path for a new capture file
+
+        capture_dir: Directory resolved earlier with get_capture_dir(), for callers
+        that can't afford its filesystem access (default: resolve it now)
+        """
+
+        path = capture_dir if capture_dir else self.get_capture_dir()
+        filename = datetime.now().strftime("%Y-%m-%d_%H%M%S")
         if self.last_snapshot_fpath and len(self.last_snapshot_fpath) > 4:
             filename += "_" + os.path.basename(self.last_snapshot_fpath[:-4])
         filename = filename.replace("/", ";").replace(">", ";").replace(" ; ", ";")

@@ -1096,11 +1096,16 @@ def audio_autoconnect():
                         dst = dst_ports[min(i, dst_count - 1)]
                         required_routes[dst.name].add(src.name)
 
+    # Physical outputs selectable for the metronome, direct monitor and PFL
+    try:
+        hw_ports = get_hw_audio_dst_ports()
+    except:
+        hw_ports = []
+
     try:
         # Connect metronome to its selected output (main mixbus aux by default)
         try:
             outs = zynthian_gui_config.metronome_output.split("+")
-            hw_ports = get_hw_audio_dst_ports()
             metro_dsts = [hw_ports[int(outs[0]) - 1].name, hw_ports[int(outs[-1]) - 1].name]
         except:
             metro_dsts = ["zynmixer_bus:input_01a", "zynmixer_bus:input_01b"]
@@ -1111,7 +1116,6 @@ def audio_autoconnect():
         # through each clip chain's strip instead => monitor ports stay silent)
         try:
             outs = zynthian_gui_config.monitor_output.split("+")
-            hw_ports = get_hw_audio_dst_ports()
             required_routes[hw_ports[int(outs[0]) - 1].name].add("clippy:monitor_a")
             required_routes[hw_ports[int(outs[-1]) - 1].name].add("clippy:monitor_b")
         except:
@@ -1128,7 +1132,6 @@ def audio_autoconnect():
             outs = zynthian_gui_config.pfl_output.split("+")
             if len(outs) == 1:
                 outs.append(outs[0])
-            hw_ports = get_hw_audio_dst_ports()
             required_routes[hw_ports[int(outs[0])-1].name].add("zynmixer_bus:pfl_out_a")
             required_routes[hw_ports[int(outs[1])-1].name].add("zynmixer_bus:pfl_out_b")
         except:

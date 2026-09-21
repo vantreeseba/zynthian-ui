@@ -1281,14 +1281,11 @@ class zynthian_gui_pated_notes(zynthian_gui_pated_base):
         coord = self.get_cell(step, row, duration, offset)
         coord[0] -= 1
         coord[1] -= 1
-        # Rounded cursor: smoothed polygons can't be resized with a 4-value
-        # coords() call, so recreate on move (user-paced, not per-frame).
-        if self.rect_selected_cell:
-            self.grid_canvas.delete(self.rect_selected_cell)
-        self.rect_selected_cell = zynthian_gui_config.create_round_rect(
-            self.grid_canvas, coord[0], coord[1], coord[2], coord[3],
-            radius=zynthian_gui_config.corner_radius, fill="", outline=SELECT_BORDER,
-            width=self.select_thickness, tags="selected_cell")
+        if not self.rect_selected_cell:
+            self.rect_selected_cell = self.grid_canvas.create_rectangle(coord, fill="", outline=SELECT_BORDER,
+                                                                   width=self.select_thickness, tags="selected_cell")
+        else:
+            self.grid_canvas.coords(self.rect_selected_cell, coord)
         self.grid_canvas.tag_raise(self.rect_selected_cell)
 
         if self.zyngui.tts:

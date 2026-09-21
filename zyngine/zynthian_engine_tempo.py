@@ -23,6 +23,7 @@
 # ******************************************************************************
 
 import logging
+from threading import Timer
 from time import monotonic
 from collections import deque
 
@@ -73,6 +74,7 @@ class zynthian_engine_tempo(zynthian_engine):
 
         self.zctrls = None
         self.zctrl_metro_out = None
+        self.metro_out_timer = None
 
     # ---------------------------------------------------------------------------
     # Processor Management
@@ -179,13 +181,21 @@ class zynthian_engine_tempo(zynthian_engine):
 
     def send_controller_value(self, zctrl):
         if zctrl.symbol == "metro_out":
-            label = zctrl.get_value2label()
-            if label != zynthian_gui_config.metronome_output:
-                zynthian_gui_config.metronome_output = label
-                zynconf.save_config({
-                    "ZYNTHIAN_METRONOME_OUTPUT": label
-                })
-                zynautoconnect.request_audio_connect(True)
+            # Scrolling through the outputs would otherwise repatch the metronome and
+            # sync the config to disk at every one passed on the way
+            if self.metro_out_timer:
+                self.metro_out_timer.cancel()
+            self.metro_out_timer = Timer(0.7, self.apply_metro_out, args=(zctrl.get_value2label(),))
+            self.metro_out_timer.start()
+
+    def apply_metro_out(self, label):
+        self.metro_out_timer = None
+        if label != zynthian_gui_config.metronome_output:
+            zynthian_gui_config.metronome_output = label
+            zynconf.save_config({
+                "ZYNTHIAN_METRONOME_OUTPUT": label
+            })
+            zynautoconnect.request_audio_connect(True)
 
     # ----------------------------------------------------------------------------
     # Special

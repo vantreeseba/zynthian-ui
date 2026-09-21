@@ -144,11 +144,8 @@ class zynthian_gui_touchkeypad_v5(tkinter.Canvas):
             x = self.x_offset + self.button_width * column
         y = self.button_height * row
         tag = f"v5_button_{button}"
-        config[RECT_ID] = zynthian_gui_config.create_round_rect(
-            self,
-            x, y,
+        config[RECT_ID] = self.create_rectangle(x, y,
             x+self.button_width, y+self.button_height,
-            radius=zynthian_gui_config.corner_radius,
             outline=zynthian_gui_config.color_bg,
             width=1,
             fill=self.bg_color,

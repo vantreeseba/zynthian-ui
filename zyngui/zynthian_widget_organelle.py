@@ -800,9 +800,7 @@ class zynthian_widget_organelle(zynthian_widget_base):
                 if key == sorted_keys[page]:
                     bbox = self.canvas.bbox(text_id)
                     if bbox:
-                        highlight = zynthian_gui_config.create_round_rect(
-                            self.canvas, 0, bbox[1] - 2, self.oled_width, bbox[3] + 2,
-                            zynthian_gui_config.corner_radius,
+                        highlight = self.canvas.create_rectangle(0, bbox[1] - 2, self.oled_width, bbox[3] + 2,
                             fill=zynthian_gui_config.color_select_bg,
                             outline="", tags=["highlight"]
                         )

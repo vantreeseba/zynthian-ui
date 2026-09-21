@@ -152,8 +152,7 @@ class zynthian_gui_selector_grid(zynthian_gui_base):
 
     def _draw_node(self, idx, node, x, y):
         fill = zynthian_gui_config.color_panel_hl if node["action"] else zynthian_gui_config.color_panel_bg
-        zynthian_gui_config.create_round_rect(self.canvas, x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
-            radius=2 * zynthian_gui_config.corner_radius,
+        self.canvas.create_rectangle(x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
             fill=fill,
             outline=fill,
             tags=("node", f"node_{idx}", "rect"))

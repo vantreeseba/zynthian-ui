@@ -119,24 +119,9 @@ class zynthian_gui_keyboard(zynthian_gui_fullscreen_modal):
             self.btn_space = self.add_button(' ', 4, row, 3)
             self.btn_delete = self.add_button('Del', 7, row, 1)
             self.btn_enter = self.add_button('Enter', 8, row, 2)
-        self.highlight_box = None
-        self.move_highlight_box(0, 0, self.key_width, self.key_height)
+        self.highlight_box = self.key_canvas.create_rectangle(
+            0, 0, self.key_width, self.key_height, outline=zynthian_gui_config.color_select, width=2)
         self.refresh_keys()
-
-    # Function to (re)draw the selection cursor at the given bounds.
-    # Smoothed polygons cannot be resized with a 4-value coords() call, so the
-    # cursor is recreated on each move (selection changes only, not per frame).
-    def move_highlight_box(self, x0, y0, x1, y1):
-        if self.highlight_box is not None:
-            self.key_canvas.delete(self.highlight_box)
-        self.highlight_box = zynthian_gui_config.create_round_rect(
-            self.key_canvas, x0, y0, x1, y1,
-            radius=zynthian_gui_config.corner_radius,
-            outline=zynthian_gui_config.color_select, width=2, fill="",
-            # Unlike rectangles, polygons swallow clicks across their whole
-            # interior even when unfilled; disable the cursor so the key
-            # underneath keeps receiving presses.
-            state=tkinter.DISABLED)
 
     # Function to draw keyboard
     def refresh_keys(self):
@@ -181,14 +166,12 @@ class zynthian_gui_keyboard(zynthian_gui_fullscreen_modal):
     def add_button(self, label, col, row, colspan=1):
         index = len(self.buttons)
         tag = "key:%d" % (index)
-        r = zynthian_gui_config.create_round_rect(self.key_canvas,
-                                             1 + self.key_width * col,
+        r = self.key_canvas.create_rectangle(1 + self.key_width * col,
                                              1 + self.key_height * row,
                                              self.key_width * (col + colspan) - 1,
                                              self.key_height * (row + 1) - 1,
-                                             radius=zynthian_gui_config.corner_radius,
                                              tags=(tag),
-                                             fill=zynthian_gui_config.color_panel_hl)
+                                             fill=zynthian_gui_config.color_panel_hl, outline="")
         l = self.key_canvas.create_text(1 + self.key_width * (col + colspan / 2),
                                         1 + self.key_height * (row + 0.5),
                                         text=label,
@@ -293,7 +276,7 @@ class zynthian_gui_keyboard(zynthian_gui_fullscreen_modal):
     def highlight(self, key):
         box = self.key_canvas.bbox(self.buttons[key][0])
         if box:
-            self.move_highlight_box(box[0]+1, box[1]+1, box[2], box[3])
+            self.key_canvas.coords(self.highlight_box, box[0]+1, box[1]+1, box[2], box[3])
             if self.zyngui.tts:
                 try:
                     match key:

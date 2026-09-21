@@ -440,9 +440,7 @@ class zynthian_gui_base(tkinter.Frame):
                 bg = zynthian_gui_config.color_panel_bg
             else:
                 bg = zynthian_gui_config.color_scale(zynthian_gui_config.color_panel_bg, 0.6)
-            zynthian_gui_config.create_round_rect(
-                c, x0, 1, x1, h - 2,
-                radius=zynthian_gui_config.corner_radius, fill=bg, width=0)
+            c.create_rectangle(x0, 1, x1, h - 2, fill=bg, width=0)
             if not item:
                 continue
             name, value = item

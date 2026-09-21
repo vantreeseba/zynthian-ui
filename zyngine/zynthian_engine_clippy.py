@@ -29,7 +29,7 @@ import math
 import time
 import ctypes
 import logging
-from threading import Timer, Thread, Lock
+from threading import Timer, Thread, Lock, get_native_id
 from collections import deque
 
 import zynautoconnect
@@ -137,6 +137,7 @@ class zynthian_engine_clippy(zynthian_engine):
         self.jackname = self.libclippy.getJackname().decode("utf-8")
         self.zynseq.clippy = self
         self.refresh_monitor_routing()
+        self.capture_dir = None  # Where the next take is saved, resolved by the prewarm thread
         self.prewarm_record_buffer()
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_TEMPO, self.start_tempo_timer)
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.on_seq_play_state)
@@ -675,7 +676,9 @@ class zynthian_engine_clippy(zynthian_engine):
         # Cap open-ended recordings to what fits in the capture buffer and MAX_BEATS
         beats_cap = min(MAX_BEATS, int(MAX_DURATION * tempo / 60))
         self.libseq.setMaxRecordBars(max(1, beats_cap // bpb))
-        base = self.state_manager.get_new_capture_fpath("wav")[:-4]
+        # Capture directory resolved by the prewarm thread: looking for writable
+        # storage is filesystem access, too slow for the fast MIDI thread
+        base = self.state_manager.get_new_capture_fpath("wav", self.capture_dir)[:-4]
         chain_name = chain.get_name().replace("/", "_").replace(" ", "_")
         path = f"{base}_{chain_name}_clip{phrase + 1}_{round(tempo)}bpm.wav"
         if zynthian_gui_config.clip_record_ram:
@@ -818,10 +821,15 @@ class zynthian_engine_clippy(zynthian_engine):
                    and time.monotonic() < timeout):
                 time.sleep(0.01)
             os.makedirs(os.path.dirname(path), exist_ok=True)
+            # The new loop is already playing: writing it out must not compete with
+            # engines streaming from the same disk
+            self.set_thread_nice(10)
             if self.libclippy.saveClip(clip_channel, note, bytes(path, "utf-8")):
                 logging.error(f"Failed to save recorded clip to '{path}'")
         except Exception as e:
             logging.error(f"Failed to save recorded clip => {e}")
+        # Back to normal before taking the lock the audio thread waits on
+        self.set_thread_nice(0)
         self.libclippy.disarmRecord()
         self.prewarm_record_buffer()
         rec = self.recordings.pop((processor, phrase), None)
@@ -842,8 +850,25 @@ class zynthian_engine_clippy(zynthian_engine):
         comes from a pad controller on the fast MIDI thread. A stereo
         prewarm also serves a mono take.
         """
-        Thread(target=self.libclippy.prewarmRecordBuffer, args=(2, 0),
-               name="clippy_prewarm", daemon=True).start()
+        Thread(target=self.prewarm_task, name="clippy_prewarm", daemon=True).start()
+
+    def prewarm_task(self):
+        # Touching every page of the buffers is pure memory traffic => let audio go first
+        self.set_thread_nice(10)
+        self.libclippy.prewarmRecordBuffer(2, 0)
+        try:
+            self.capture_dir = self.state_manager.get_capture_dir()
+        except Exception as e:
+            logging.debug(f"Can't resolve capture directory => {e}")
+            self.capture_dir = None
+
+    @staticmethod
+    def set_thread_nice(nice):
+        """Set the scheduling priority of the calling thread alone"""
+        try:
+            os.setpriority(os.PRIO_PROCESS, get_native_id(), nice)
+        except Exception as e:
+            logging.debug(f"Can't set thread priority => {e}")
 
     def cleanup_recording(self, processor, phrase):
         """Abort path: free clippy recorder resources and clear tracking"""

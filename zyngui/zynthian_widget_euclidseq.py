@@ -577,7 +577,7 @@ class zynthian_widget_euclidseq(zynthian_widget_base.zynthian_widget_base, tk.Fr
 
             if k == self.select_ch:
                 size=10*self.scale*0.8
-                zynthian_gui_config.create_round_rect(self.canvas,cx-size,cy-size,cx+size,cy+size,zynthian_gui_config.corner_radius,fill=zynthian_gui_config.color_panel_hl,outline=zynthian_gui_config.color_select,width=2)
+                self.canvas.create_rectangle(cx-size,cy-size,cx+size,cy+size,fill=zynthian_gui_config.color_panel_hl,outline=zynthian_gui_config.color_select,width=2)
 
             self.canvas.create_text(cx,cy,text=f"{self.note_numbers[k]}",fill=zynthian_gui_config.color_hl,font=self.note_font)
 

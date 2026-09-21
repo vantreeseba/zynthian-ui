@@ -863,40 +863,6 @@ LAUNCHER_STARTING_COLOUR = {"rgb": "#009000", "launchpad": 21, "apc": 87, "apc_m
 LAUNCHER_STOPPING_COLOUR = {"rgb": "#D00000", "launchpad": 5, "apc": 72, "apc_mk1": 1} #red
 LAUNCHER_REC_COLOUR = {"rgb": "#FF2020", "launchpad": 5, "apc": 72, "apc_mk1": 1} #red (clip recording)
 
-def round_rect_points(x0, y0, x1, y1, radius, corners=(True, True, True, True)):
-    """ Point list for a rounded rectangle drawn as a smoothed polygon.
-    corners selects which to round: (top-left, top-right, bottom-right,
-    bottom-left). Use with canvas.coords() to move/resize an existing item. """
-    r = min(radius, abs(x1 - x0) // 2, abs(y1 - y0) // 2)
-    tl, tr, br, bl = corners
-    points = []
-    if tl:
-        points += [x0 + r, y0]
-    else:
-        points += [x0, y0, x0, y0]
-    if tr:
-        points += [x1 - r, y0, x1, y0, x1, y0 + r]
-    else:
-        points += [x1, y0, x1, y0]
-    if br:
-        points += [x1, y1 - r, x1, y1, x1 - r, y1]
-    else:
-        points += [x1, y1, x1, y1]
-    if bl:
-        points += [x0 + r, y1, x0, y1, x0, y1 - r]
-    else:
-        points += [x0, y1, x0, y1]
-    if tl:
-        points += [x0, y0 + r, x0, y0]
-    return points
-
-def create_round_rect(canvas, x0, y0, x1, y1, radius, corners=(True, True, True, True), **kwargs):
-    """ Draw a rounded rectangle on a Tk canvas as a smoothed polygon.
-    Returns the canvas item id. Accepts the same options as create_polygon
-    (fill, outline, width, tags, ...). Unlike create_rectangle, the default
-    outline is empty, so pass outline explicitly if a border is wanted. """
-    return canvas.create_polygon(round_rect_points(x0, y0, x1, y1, radius, corners), smooth=True, **kwargs)
-
 for i, value in enumerate(LAUNCHER_COLOUR):
     LAUNCHER_COLOUR[i]["rgb_light"] = color_variant(value["rgb"], 40)
 
@@ -1034,7 +1000,6 @@ if "zynthian_main.py" in sys.argv[0]:
         pad_xs = max(1, font_size // 8)
         pad_sm = max(2, font_size // 4)
         pad_md = max(4, font_size // 2)
-        corner_radius = max(3, font_size // 4)
 
         # ------------------------------------------------------------------------------
         # Setup Root Frame for the GUI

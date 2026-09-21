@@ -88,6 +88,7 @@ class zynthian_gui_launcher_pad():
         self.flash_dim = None
         self.playing = False  # True while playing/recording => progress sweep shown
         self.progress_shown = False  # Mirrors progress_line visibility to skip no-op canvas calls
+        self.progress_x = None  # Playhead position last drawn, to skip no-op canvas calls
         self.last_state = None  # Last drawn sequence state, so draw() can skip no-op redraws
 
         chain_id = self.chain.chain_id
@@ -106,9 +107,7 @@ class zynthian_gui_launcher_pad():
 
         tags = ("launcher", "launcher_show", f"strip_{chain_id}", f"launcher_{chain_id}_{phrase}")
         # Launcher pad (background)
-        self.pad = zynthian_gui_config.create_round_rect(self.canvas,
-                                                self.x + 1, self.y + 1, self.x + self.width - 2, self.y + self.height - 2,
-                                                radius=zynthian_gui_config.corner_radius,
+        self.pad = self.canvas.create_rectangle(self.x + 1, self.y + 1, self.x + self.width - 2, self.y + self.height - 2,
                                                 width=2,
                                                 outline="",
                                                 fill=zynthian_gui_config.color_panel_bg,
@@ -267,9 +266,11 @@ class zynthian_gui_launcher_pad():
         """
         if self.playing and progress is not None:
             x1 = self.x + 2 + int((self.width - 5) * progress / 100)
-            self.canvas.coords(self.progress_line,
-                               self.x + 2, self.y + self.height - 6,
-                               x1, self.y + self.height - 3)
+            if x1 != self.progress_x:
+                self.progress_x = x1
+                self.canvas.coords(self.progress_line,
+                                   self.x + 2, self.y + self.height - 6,
+                                   x1, self.y + self.height - 3)
             if not self.progress_shown:
                 self.canvas.itemconfig(self.progress_line, state=tkinter.NORMAL)
                 self.progress_shown = True
@@ -736,19 +737,18 @@ class zynthian_gui_mixer_strip():
         # Audio mixer elements
         if self.chain.zynmixer_proc:
             # Toggle 1 button
-            self.toggle = zynthian_gui_config.create_round_rect(self.canvas, x + 1, self.toggle_y + 1, x + self.width - 1, self.mute_y - 1, radius=zynthian_gui_config.corner_radius, fill=self.gui_mixer.button_bgcol, width=0, tags=(f"toggle_{id}",))
+            self.toggle = self.canvas.create_rectangle(x + 1, self.toggle_y + 1, x + self.width - 1, self.mute_y - 1, fill=self.gui_mixer.button_bgcol, width=0, tags=(f"toggle_{id}",))
             self.toggle_text = self.canvas.create_text(x + self.width / 2, self.toggle_y + self.button_height * 0.5, text="S", fill=self.gui_mixer.button_txcol, font=self.gui_mixer.font, tags=(f"toggle_{id}",))
 
             # Mute button
-            self.mute = zynthian_gui_config.create_round_rect(self.canvas, x + 1, self.mute_y + 1, x + self.width - 1, self.balance_y - 1, radius=zynthian_gui_config.corner_radius, fill=self.gui_mixer.button_bgcol, width=0, tags=(f"mute_{id}",))
+            self.mute = self.canvas.create_rectangle(x + 1, self.mute_y + 1, x + self.width - 1, self.balance_y - 1, fill=self.gui_mixer.button_bgcol, width=0, tags=(f"mute_{id}",))
             self.mute_text = self.canvas.create_text(x + self.width / 2, self.mute_y + self.button_height * 0.5, text="M", fill=self.gui_mixer.button_txcol, font=self.gui_mixer.font, tags=(f"mute_{id}",))
 
             # Balance indicator
             self.balance_bg = self.canvas.create_rectangle(self.x + 1, self.balance_y, self.x + self.width - 1, self.fader_y, fill=self.gui_mixer.balance_bg_color, width=0, tags=(f"balance_{id}",))
             self.balance_fg = self.canvas.create_rectangle(self.centre_x - 1, self.balance_y, self.centre_x + 1, self.fader_y, fill=self.gui_mixer.balance_fg_color, width=0, tags=(f"balance_{id}",))
             # Fader
-            # Fader level fill: square top edge marks the level, rounded bottom corners
-            self.fader_overlay = zynthian_gui_config.create_round_rect(self.canvas, x + 1, self.fader_y, x + 1 + self.fader_width, self.legend_y, radius=zynthian_gui_config.corner_radius, corners=(False, False, True, True), fill=self.gui_mixer.fader_color, width=0, tags=("fader", "fader_overlay", f"fader_{id}"))
+            self.fader_overlay = self.canvas.create_rectangle(x + 1, self.fader_y, x + 1 + self.fader_width, self.legend_y, fill=self.gui_mixer.fader_color, width=0, tags=("fader", "fader_overlay", f"fader_{id}"))
             self.fader_horizontal = self.canvas.create_rectangle(x + 1, self.fader_y, x + self.width - 1, self.fader_y + self.balance_height, fill=self.gui_mixer.fader_color, width=0, tags=("fader_horizontal",), state=tkinter.HIDDEN)
 
             # DPM
@@ -794,20 +794,14 @@ class zynthian_gui_mixer_strip():
             tags = ("legend", f"legend_strip_{id}", "legend_strip_bus")
         else:
             tags = ("legend", f"legend_strip_{id}")
-        self.legend_strip_bg = zynthian_gui_config.create_round_rect(self.canvas, x + 1, self.gui_mixer.legend_y, x + self.width - 1, self.gui_mixer.legend_y + self.legend_height - 2, radius=zynthian_gui_config.corner_radius, corners=(True, True, False, False), width=0, fill=self.gui_mixer.legend_bg_color, tags=tags)
+        self.legend_strip_bg = self.canvas.create_rectangle(x + 1, self.gui_mixer.legend_y, x + self.width - 1, self.gui_mixer.legend_y + self.legend_height - 2, width=0, fill=self.gui_mixer.legend_bg_color, tags=tags)
         self.legend_strip_txt = self.canvas.create_text(self.centre_x, self.gui_mixer.legend_y + self.legend_height / 2, fill=self.gui_mixer.legend_txt_color, text="-", tags=(f"legend_strip_{id}",), font=self.gui_mixer.font)
         self.legend_strip_midi_bg = self.canvas.create_rectangle(x + 1, self.gui_mixer.legend_y + self.legend_height - 2, x + self.width - 1, self.gui_mixer.legend_y + self.legend_height, width=0, fill=self.gui_mixer.legend_bg_color, tags=tags)
         # Chain identity accent: same hue as the chain's launcher pads and
         # controller LEDs. Deliberately not tagged "legend" so the bulk
         # legend recolor in highlight_active_chain() leaves it alone.
         if self.chain.chain_id:
-            # Radius 3 (the bar's own height) rather than corner_radius so the
-            # rounding maths stays valid on a 3px-tall shape; the 1px radius
-            # mismatch with the legend bg underneath is invisible at this size.
-            self.legend_chain_accent = zynthian_gui_config.create_round_rect(
-                self.canvas,
-                x + 1, self.gui_mixer.legend_y, x + self.width - 1, self.gui_mixer.legend_y + 3,
-                radius=3, corners=(True, True, False, False),
+            self.legend_chain_accent = self.canvas.create_rectangle(x + 1, self.gui_mixer.legend_y, x + self.width - 1, self.gui_mixer.legend_y + 3,
                 width=0, fill=zynthian_gui_config.get_chain_color(self.chan),
                 tags=(f"legend_strip_{id}",))
 
@@ -1006,10 +1000,8 @@ class zynthian_gui_mixer_strip():
         level = self.chain.zynmixer_proc.controllers_dict["level"].value
         if level is not None:
             self.canvas.coords(self.fader_overlay,
-                *zynthian_gui_config.round_rect_points(
-                    self.x + 1, self.fader_y + self.gui_mixer.fader_height * (1 - level),
-                    self.x + 1 + self.fader_width, self.legend_y,
-                    zynthian_gui_config.corner_radius, corners=(False, False, True, True)))
+                self.x + 1, self.fader_y + self.gui_mixer.fader_height * (1 - level),
+                self.x + 1 + self.fader_width, self.legend_y)
             self.canvas.coords(self.fader_horizontal,
                 self.x + 1, self.fader_y,
                 self.x + 1 + (self.width - 2) * level, self.fader_y + self.balance_height)

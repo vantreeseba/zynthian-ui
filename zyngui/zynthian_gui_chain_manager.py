@@ -494,9 +494,7 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
                     bg_col = c_special
             if disabled:
                 fg_col = zynthian_gui_config.color_tx_off
-        node["id"] = zynthian_gui_config.create_round_rect(
-            self.canvas, x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
-            radius=zynthian_gui_config.corner_radius,
+        node["id"] = self.canvas.create_rectangle(x, y, x + self.BLOCK_WIDTH, y + self.BLOCK_HEIGHT,
             fill=bg_col, outline=bg_col, tags="node"
         )
         # Chain identity accent on the chain-title node: same hue as the
@@ -505,10 +503,7 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
         if proc == "chain_options" and node["chain_id"]:
             try:
                 chan = self.chain_manager.chains[node["chain_id"]].midi_chan
-                zynthian_gui_config.create_round_rect(
-                    self.canvas, x, y, x + 5, y + self.BLOCK_HEIGHT,
-                    radius=zynthian_gui_config.corner_radius,
-                    corners=(True, False, False, True), width=0,
+                self.canvas.create_rectangle(x, y, x + 5, y + self.BLOCK_HEIGHT, width=0,
                     fill=zynthian_gui_config.get_chain_color(chan))
             except Exception:
                 pass
@@ -578,10 +573,7 @@ class zynthian_gui_chain_manager(zynthian_gui_base):
 
             if self.moving_chain and self.selected_node[0] == chain_idx:
                 # Highlight chain being moved
-                zynthian_gui_config.create_round_rect(
-                    self.canvas,
-                    chain_offset - 1, 0, chain_offset + 1 + self.BLOCK_WIDTH, divider_height,
-                    radius=zynthian_gui_config.corner_radius,
+                self.canvas.create_rectangle(chain_offset - 1, 0, chain_offset + 1 + self.BLOCK_WIDTH, divider_height,
                     outline=zynthian_gui_config.color_info,
                     width=3,
                     fill="",
