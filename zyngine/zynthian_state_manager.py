@@ -307,6 +307,17 @@ class zynthian_state_manager:
         self.end_busy("reset state")
         #self.clear_busy()  # TODO Is this needed?
 
+    def stop_sequencer(self):
+        """Stop all sequences and let the JACK cycle that was running when the stop
+        was requested finish before the caller tears anything down. The RT thread may
+        still be part way through the period it already started, so freeing patterns,
+        sequences or clips straight away corrupts the audio it is writing (heard as
+        the metronome glitching on a session reset)."""
+
+        self.zynseq.libseq.stop()
+        # Two periods: one for the cycle in flight, one for the first silent cycle
+        sleep(2 * self.jack_period)
+
     def clean(self, chains=True, zynseq=True):
         """Remove Chains & Sequences.
         chains : True for cleaning all chains
@@ -316,7 +327,7 @@ class zynthian_state_manager:
         self.mute()
         self.stop_pad_midi_record()
         # self.zynseq.transport_stop("ALL")
-        self.zynseq.libseq.stop()
+        self.stop_sequencer()
         if zynseq:
             self.zynseq.reset()
         if chains:
@@ -361,7 +372,7 @@ class zynthian_state_manager:
 
         self.start_busy("session reset", "resetting session...")
         self.stop_pad_midi_record()
-        self.zynseq.libseq.stop()
+        self.stop_sequencer()
         if self.session_record_mode:
             self.toggle_session_record()
         clippy_procs = [chain.get_clippy_processor() for chain in self.chain_manager.chains.values()]

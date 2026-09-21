@@ -302,11 +302,21 @@ class zynthian_gui_launcher_pad():
             else:
                 state_seq = state_phrase["sequences"][self.chain.midi_chan]
 
+            # The pad also shows things that aren't part of the sequence state:
+            # live MIDI capture into it and the clip a finished take leaves behind.
+            # Both change while the sequence state stands still (recording => playing),
+            # so they have to be part of the "did anything change?" test.
+            extra_state = (
+                self.gui_mixer.state_manager.midi_record_pad == (self.phrase, self.chain.midi_chan),
+                self.get_clippy_file(),
+                self.get_clippy_timesig()
+            )
+
             # Don't draw if state didn't change
-            if not force and self.last_state is not None and self.last_state == state_seq:
+            if not force and self.last_state is not None and self.last_state == (state_seq, extra_state):
                 return
 
-            self.last_state = copy.copy(state_seq)      # NOTE: Better deepcopy?
+            self.last_state = (copy.copy(state_seq), extra_state)      # NOTE: Better deepcopy?
 
             # Cleared only once we know we are redrawing; the early return above
             # leaves a flashing or playing pad to carry on as it is
@@ -2028,6 +2038,9 @@ class zynthian_gui_mixer(zynthian_gui_base):
             self.rec_countdown_clip = None
         if not self.launcher_mode:
             return
+        # The sequence can already be playing before the take is saved, so the pad
+        # only learns it now holds a clip from this signal => redraw it
+        self.launcher_play_state_cb(phrase, chan)
         if state == 1:
             self.set_title(f"⏺ Armed: {clip} — recording at next bar", zynthian_gui_config.color_status_record, None, 4)
         elif state == 2:
@@ -2626,10 +2639,13 @@ class zynthian_gui_mixer(zynthian_gui_base):
         self.state_manager.end_busy("remove_phrase")
 
     def clear_clip_confirmed(self, params):
-        phrase, delete_file = params
+        phrase, delete_file = params[0], params[1]
+        reset_length = len(params) > 2 and params[2]
         try:
             proc = self.highlighted_strip.chain.get_clippy_processor()
-            proc.engine.clear_clip(proc, phrase, delete_file)
+            if proc.engine.clear_clip(proc, phrase, delete_file) and reset_length:
+                # Drop the length of the cleared take => the next one records open-ended
+                proc.engine.reset_clip_length(proc, phrase)
         except Exception as e:
             logging.error(f"Can't clear clip => {e}")
         self.zyngui.show_screen("launcher")
@@ -2701,7 +2717,11 @@ class zynthian_gui_mixer(zynthian_gui_base):
         options[f"Monitor input ({chain.monitor_mode.upper()})"] = params
         if has_clip:
             options["Clear clip"] = params
+            options["Clear clip + reset length"] = params
             options["Delete clip + audio file"] = params
+        elif self.zynseq.libseq.getSequenceLength(self.zynseq.scene, phrase, chain.midi_chan):
+            # Empty pad still holding the length of its last take
+            options["Reset pad length"] = params
         self.zyngui.screens['option'].config(f"Clip options: {chain.get_name()} · {phrase + 1}",
                                              options, self.clip_menu_cb)
         self.zyngui.show_screen('option')
@@ -2731,6 +2751,13 @@ class zynthian_gui_mixer(zynthian_gui_base):
         elif option == "Clear clip":
             self.zyngui.show_confirm("Clear this clip pad?\n(The audio file is kept on disk)",
                                      self.clear_clip_confirmed, (phrase, False))
+        elif option == "Clear clip + reset length":
+            self.zyngui.show_confirm("Clear this clip pad and reset its length?\n(The audio file is kept on disk and the next take records open-ended)",
+                                     self.clear_clip_confirmed, (phrase, False, True))
+        elif option == "Reset pad length":
+            if proc.engine.reset_clip_length(proc, phrase):
+                self.set_title("Pad length reset", None, None, 2)
+            self.zyngui.show_screen("launcher")
         elif option == "Delete clip + audio file":
             self.zyngui.show_confirm("Clear this clip pad and DELETE its audio file from disk?",
                                      self.clear_clip_confirmed, (phrase, True))
@@ -3157,20 +3184,35 @@ class zynthian_gui_mixer(zynthian_gui_base):
         return False
 
     def cuia_clear_pad(self, params=None):
-        """Clear the selected launcher pad (pedal-friendly undo/reset)"""
+        """Clear the selected launcher pad (pedal-friendly undo/reset)
 
+        no params => clear the pad's content, keeping its length
+        RESET_LENGTH => also reset the pad's length, so the next take records
+        open-ended instead of punching out at the length of the previous one
+        """
+
+        reset_length = False
+        if params:
+            param = str(params[0]).upper()
+            if param in ("RESET_LENGTH", "LENGTH"):
+                reset_length = True
+            else:
+                logging.error(f"Bad param: {params} (expected RESET_LENGTH)")
+                return True
         phrase = self.zynseq.phrase
         if self.highlighted_strip is None or phrase >= self.zynseq.phrases:
             return True
-        self.clear_pad(self.highlighted_strip.chain, phrase)
+        self.clear_pad(self.highlighted_strip.chain, phrase, reset_length)
         return True
 
-    def clear_pad(self, chain, phrase):
+    def clear_pad(self, chain, phrase, reset_length=False):
         """Clear the launcher pad at chain,phrase
 
         Recording in flight on the pad => abort the take, keeping previous pad content
         Audio clip pad => clear the clip, deleting the file only if it is a recorded take
         MIDI pad => clear the pad's pattern
+        reset_length: True to also reset the cleared pad's length (the next clip
+        take records open-ended, a MIDI pad's pattern returns to one bar)
         """
 
         sm = self.state_manager
@@ -3187,10 +3229,17 @@ class zynthian_gui_mixer(zynthian_gui_base):
                 fpath = proc.controllers_dict[f"file {phrase + 1}"].get_value()
             except Exception:
                 fpath = ""
-            if not fpath:
+            cleared = False
+            if fpath:
+                # Recorded takes are deleted from disk, library samples are kept
+                cleared = proc.engine.clear_clip(proc, phrase, delete_file=sm.is_capture_fpath(fpath))
+                if not cleared:
+                    return
+            elif not reset_length:
                 return
-            # Recorded takes are deleted from disk, library samples are kept
-            if proc.engine.clear_clip(proc, phrase, delete_file=sm.is_capture_fpath(fpath)):
+            if reset_length and proc.engine.reset_clip_length(proc, phrase):
+                self.set_title("Pad cleared, length reset" if cleared else "Pad length reset", None, None, 2)
+            elif cleared:
                 self.set_title("Pad cleared", None, None, 2)
         elif chain and chain.chain_id and type(chain.midi_chan) is int and chain.midi_chan < 16:
             if sm.midi_record_pad == (phrase, chain.midi_chan):
@@ -3200,8 +3249,11 @@ class zynthian_gui_mixer(zynthian_gui_base):
             pattern = self.zynseq.libseq.getPattern(self.zynseq.scene, phrase, chain.midi_chan, 0, 0)
             if pattern > 0:
                 self.zynseq.libseq.clearPattern(pattern)
+                if reset_length:
+                    # A pattern always has a length => back to a single bar
+                    self.zynseq.libseq.setBeatsInPattern(pattern, self.zynseq.bpb)
                 self.zynseq.libseq.updateSequenceInfo()
-                self.set_title("Pad cleared", None, None, 2)
+                self.set_title("Pad cleared, length reset" if reset_length else "Pad cleared", None, None, 2)
 
     def cuia_toggle_seq_row(self, params=None):
         """Launch/stop a whole row of pads (phrase) at the next bar sync

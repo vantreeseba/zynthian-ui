@@ -1066,7 +1066,15 @@ bool checkBlock(FILE* pFile, uint32_t nActualSize, uint32_t nExpectedSize) {
 void reset() {
     g_nPhrase = 0;
     g_nSequence = 0;
+    // init() deletes every sequence and pattern: hold the schedule mutex so the
+    // RT thread is not part way through clocking them (and drop the events it
+    // scheduled from them) or it reads freed memory => audio corruption
+    while (g_bMutex)
+        std::this_thread::sleep_for(std::chrono::microseconds(10));
+    g_bMutex = true;
     g_seqMan.init();
+    g_mSchedule.map.clear();
+    g_bMutex = false;
     g_nScene = 0;
     g_nBar = 1;
     g_nBarStartTick = g_nTick;
@@ -1418,7 +1426,13 @@ bool setState(const char* state) {
         g_nSequence = 0;
         uint8_t nLowestScene = 255;
 
+        // Deleting the old sequences and patterns must not race the RT thread
+        while (g_bMutex)
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
+        g_bMutex = true;
         g_seqMan.init();
+        g_mSchedule.map.clear();
+        g_bMutex = false;
 
         setTempoFromState(j.value("tempo", g_dTempo)); //!@todo Do we want to reset tempo to default or use previous if not in state?
         setDefaultBpb(j.value("bpb", DEFAULT_BPB));
@@ -2927,9 +2941,18 @@ uint32_t getBeat() {
     return g_nBeat;
 }
 
-void stop() {
+// Stop all sequences and drop the pending schedule. Caller must hold g_bMutex.
+void stopUnlocked() {
     g_seqMan.stop();
     g_mSchedule.map.clear();
+}
+
+void stop() {
+    while (g_bMutex)
+        std::this_thread::sleep_for(std::chrono::microseconds(10));
+    g_bMutex = true;
+    stopUnlocked();
+    g_bMutex = false;
 }
 
 uint32_t getSequencePlayPosition(uint8_t scene, uint8_t phrase, uint8_t sequence) {
@@ -3495,7 +3518,7 @@ void removePhrase(uint8_t scene, uint8_t phrase) {
     while (g_bMutex)
         std::this_thread::sleep_for(std::chrono::microseconds(10));
     g_bMutex = true;
-    stop(); //!@todo Blunt stop everything to avoid pointers to events in deleted sequences segfault!
+    stopUnlocked(); //!@todo Blunt stop everything to avoid pointers to events in deleted sequences segfault!
     g_seqMan.removePhrase(scene, phrase);
     g_bMutex = false;
     g_bDirty = true;

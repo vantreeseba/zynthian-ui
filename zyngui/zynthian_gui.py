@@ -1494,6 +1494,8 @@ class zynthian_gui:
 
     def cuia_clear_pad(self, params=None):
         # Clear the selected launcher pad (aborts an in-flight recording)
+        # "RESET_LENGTH": also reset the pad's length, so the next take records
+        # open-ended instead of punching out at the previous take's length
         self.screens["mixer"].cuia_clear_pad(params)
 
     def cuia_toggle_seq_row(self, params=None):

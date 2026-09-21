@@ -976,7 +976,7 @@ uint8_t loadClip(uint8_t channel, uint8_t note, const char* path, uint16_t nbeat
 
     float* data_in = (float*)malloc(size);
     if (!data_in) {
-        fprintf(stderr,"loadClip(): Can't reserve memory (%d bytes) to load sample data.\n", size);
+        fprintf(stderr,"loadClip(): Can't reserve memory (%zu bytes) to load sample data.\n", size);
         sf_close(sndfile);
         return 0;
     }
@@ -985,7 +985,7 @@ uint8_t loadClip(uint8_t channel, uint8_t note, const char* path, uint16_t nbeat
     sf_close(sndfile);
 
     if (count != frames) {
-        fprintf(stderr,"loadClip(): Error reading %d frames of sample data.\n", frames);
+        fprintf(stderr,"loadClip(): Error reading %lld frames of sample data.\n", (long long)frames);
         free(data_in);
         return 0;
     }
@@ -1247,15 +1247,23 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
     Clip* clip = player->clips[id];
     if(clip == NULL)
         return ERROR_RANGE;
+    // Detach the clip from every pointer the RT thread can reach before freeing it.
+    // Taking the mutex also waits out a process cycle already using it, so a pad
+    // cleared (or a session reset) while the clip plays cannot free it mid-period
+    getMutex();
     if (player->current_clip_id == id) {
-        getMutex();
         player->current_clip = NULL;
         player->current_clip_id = -1;
-        releaseMutex();
+    }
+    // A pad queued to launch holds the clip here until the next sync point
+    if (player->starting_clip == clip) {
+        player->starting_clip = NULL;
+        player->starting_clip_id = -1;
     }
     if (clip == g_recorder.committed_clip)
         g_recorder.committed_clip = NULL;
     player->clips[id] = NULL;
+    releaseMutex();
     for (int i=0; i < clip->channels; i++)
         free(clip->alloc[i]);
     free(clip);
@@ -1624,7 +1632,7 @@ int saveFile(const char* dst_path, float *data[], int samplerate, int channels, 
     // Interleave into buffer data_out
     float *data_out = malloc(frames * channels * sizeof(float));
     if (!data_out) {
-        fprintf(stderr, "saveFile(): Failed to reserve memory (%d bytes).\n", frames * channels * sizeof(float));
+        fprintf(stderr, "saveFile(): Failed to reserve memory (%zu bytes).\n", frames * channels * sizeof(float));
         return 1;
     }
     for (int ch = 0; ch < channels; ch++) {

@@ -405,6 +405,8 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
         # Register for record punch countdown feedback
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.track_record_pad)
         zynsigman.register_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_BEAT, self.on_beat)
+        # Register for clip recording state (the take is saved after the pad plays)
+        zynsigman.register_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE, self.on_clip_rec_state)
 
     def end(self):
         # Unregister from zynseq updates
@@ -415,6 +417,7 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
         # Unregister from record punch countdown feedback
         zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, self.track_record_pad)
         zynsigman.unregister(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_BEAT, self.on_beat)
+        zynsigman.unregister(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE, self.on_clip_rec_state)
         if self.countdown_timer:
             self.countdown_timer.cancel()
             self.countdown_timer = None
@@ -540,17 +543,40 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
         else:
             self.toggle_pad(phrase, midi_chan)
 
-    def clear_pad(self, phrase, midi_chan):
+    def clear_pad(self, phrase, midi_chan, reset_length=False):
         """Clear the pad at phrase,midi_chan: abort a recording take in flight,
         else clear a clippy pad's clip or a MIDI pad's pattern.
+        reset_length: True to also reset the cleared pad's length, so the next
+        take records open-ended instead of punching out at the previous length.
         """
 
         try:
             chain_id = self.chain_manager.get_chain_ids_by_midi_chan(midi_chan)[0]
             chain = self.chain_manager.chains[chain_id]
-            zynthian_gui_config.zyngui.screens["mixer"].clear_pad(chain, phrase)
+            zynthian_gui_config.zyngui.screens["mixer"].clear_pad(chain, phrase, reset_length)
         except Exception as e:
             logging.error(f"Failed to clear pad => {e}")
+
+    def on_clip_rec_state(self, chan=None, phrase=None, state=None):
+        """Refresh a clip pad when its recording state changes
+
+        chan - zynseq's midi chan
+        phrase - phrase index (row)
+        state - clippy record state (0=idle, 1=armed, 2=recording, 3=saving)
+
+        A take is saved asynchronously, after the sequence is already playing, so
+        the play state signal that fires on punch-out is too early for the pad to
+        see the clip it now holds => light it from here as well.
+        """
+
+        if chan is None or phrase is None:
+            return
+        try:
+            # Same shape as the play state signal so drivers overriding
+            # update_seq_state() see nothing new
+            self.update_seq_state(phrase=phrase, chan=chan)
+        except Exception as e:
+            logging.error(f"Failed to refresh clip pad ({phrase},{chan}) => {e}")
 
     def track_record_pad(self, phrase, chan):
         """Track pads in a record state to drive the punch countdown flash

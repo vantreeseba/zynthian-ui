@@ -517,6 +517,36 @@ class zynthian_engine_clippy(zynthian_engine):
                 logging.error(f"Can't delete clip audio file '{fpath}' => {e}")
         return True
 
+    def reset_clip_length(self, processor, phrase):
+        """ Reset a cleared clip pad's length so the next take records open-ended
+
+        A clippy sequence keeps the length of its last take after the clip is
+        cleared and the sequencer punches the next recording out when it reaches
+        that length. Zeroing it lets the next take run until the user punches out
+        (or the safety cap), so a mistimed take can be re-recorded from scratch.
+
+        processor: Clippy processor
+        phrase: Phrase index
+        Returns: True on success
+        """
+
+        if (processor, phrase) in self.recordings:
+            logging.warning("Can't reset the length of a clip while it is recording")
+            return False
+        note = phrase + 1
+        try:
+            if processor.controllers_dict[f"file {note}"].value:
+                logging.warning("Can't reset the length of a pad holding a clip")
+                return False
+            # A pad with no clip has no beat count to keep: back to the default
+            processor.controllers_dict[f"beats {note}"].set_value(1, False)
+        except Exception as e:
+            logging.error(f"Can't reset clip length => {e}")
+            return False
+        self.libseq.setSequenceLength(self.zynseq.scene, phrase, processor.midi_chan, 0)
+        self.libseq.updateSequenceInfo()
+        return True
+
     # ---------------------------------------------------------------
     # Callbacks to re-warp sample file when needed (on-the-fly)
     # ---------------------------------------------------------------
@@ -699,7 +729,12 @@ class zynthian_engine_clippy(zynthian_engine):
                     zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                                           chan=chan, phrase=phrase, state=2)
             elif state == zynseq.SEQ_PLAYING:
-                if rec["state"] == "recording":
+                # "armed" too: the play state is polled, so a short take can go
+                # armed => recording => playing between two polls and we never see
+                # the recording state. Missing it strands the take (pad stuck
+                # showing ⏺, metronome never released); finalize_recording checks
+                # the clippy recorder itself and aborts cleanly if nothing punched in
+                if rec["state"] in ("armed", "recording"):
                     self.finalize_recording(processor, phrase)
             elif state == zynseq.SEQ_STOPPED:
                 # Cancelled arm, force-stop or abort
