@@ -308,40 +308,69 @@ class zynthian_state_manager:
         #self.clear_busy()  # TODO Is this needed?
 
     def stop_sequencer(self):
-        """Stop all sequences and let the JACK cycle that was running when the stop
-        was requested finish before the caller tears anything down. The RT thread may
-        still be part way through the period it already started, so freeing patterns,
-        sequences or clips straight away corrupts the audio it is writing (heard as
-        the metronome glitching on a session reset)."""
+        """Stop all sequences (zynseq tells clippy to stop its players too) and wait
+        for that to reach the audio before the caller tears anything down: one JACK
+        period for zynseq to send the stops, one for clippy to fade its clips out."""
 
         self.zynseq.libseq.stop()
-        # Two periods: one for the cycle in flight, one for the first silent cycle
-        sleep(2 * self.jack_period)
+        sleep(3 * self.jack_period)
 
-    def clean(self, chains=True, zynseq=True):
+    def clean(self, chains=True, zynseq=True, clips=False):
         """Remove Chains & Sequences.
         chains : True for cleaning all chains
         sequences : True for cleaning zynseq state (sequences)
+        clips : True for clearing all clip pads, deleting their audio files
+
+        Everything that tears down what the audio threads are playing goes through
+        here, in this order: mute, stop, wait, then free.
         """
 
         self.mute()
-        self.stop_pad_midi_record()
-        # self.zynseq.transport_stop("ALL")
-        self.stop_sequencer()
-        if zynseq:
-            self.zynseq.reset()
-        if chains:
-            zynautoconnect.pause()
-            self.chain_manager.remove_all_chains(True)
-            self.reset_zs3()
-            self.zynmixer_chan.reset()
-            self.zynmixer_bus.reset()
-            self.reload_midi_config()
-            zynautoconnect.request_midi_connect(True)
-            zynautoconnect.request_audio_connect(True)
-            zynautoconnect.resume()
-            self.chain_manager.chains[0]
-        self.mute(False)
+        try:
+            self.stop_pad_midi_record()
+            # self.zynseq.transport_stop("ALL")
+            self.stop_sequencer()
+            if clips:
+                self.clear_all_clips()
+            if zynseq:
+                self.zynseq.reset()
+            if chains:
+                zynautoconnect.pause()
+                self.chain_manager.remove_all_chains(True)
+                self.reset_zs3()
+                self.zynmixer_chan.reset()
+                self.zynmixer_bus.reset()
+                self.reload_midi_config()
+                zynautoconnect.request_midi_connect(True)
+                zynautoconnect.request_audio_connect(True)
+                zynautoconnect.resume()
+                self.chain_manager.chains[0]
+        finally:
+            self.mute(False)
+
+    def clear_all_clips(self):
+        """Abort in-flight clip recordings and clear every clip pad, deleting its
+        audio file. The sequencer must already be stopped."""
+
+        clippy_procs = [chain.get_clippy_processor() for chain in self.chain_manager.chains.values()]
+        clippy_procs = [proc for proc in clippy_procs if proc is not None]
+        if not clippy_procs:
+            return
+        engine = clippy_procs[0].engine
+        # Abort armed/in-flight recordings; entries in "saving" belong to their save thread
+        for (rec_proc, rec_phrase), rec in list(engine.recordings.items()):
+            if rec["state"] != "saving":
+                engine.cleanup_recording(rec_proc, rec_phrase)
+        # Wait for saves to drain: clearing a pad mid-save would free buffers still being written
+        timeout = monotonic() + 3
+        while engine.recordings and monotonic() < timeout:
+            sleep(0.1)
+        for proc in clippy_procs:
+            # Iterate the file zctrls, not the phrase count: pads beyond the current
+            # phrase count keep their controllers (and clips) when phrases are removed
+            for symbol in list(proc.controllers_dict):
+                if symbol.startswith("file "):
+                    proc.engine.clear_clip(proc, int(symbol[5:]) - 1, delete_file=True)
 
     def clean_all(self):
         """Remove ALL Chains & Sequences."""
@@ -371,31 +400,13 @@ class zynthian_state_manager:
         from disk) and remove all sequences. Chains, mixer and other settings are kept."""
 
         self.start_busy("session reset", "resetting session...")
-        self.stop_pad_midi_record()
-        self.stop_sequencer()
-        if self.session_record_mode:
-            self.toggle_session_record()
-        clippy_procs = [chain.get_clippy_processor() for chain in self.chain_manager.chains.values()]
-        clippy_procs = [proc for proc in clippy_procs if proc is not None]
-        if clippy_procs:
-            engine = clippy_procs[0].engine
-            # Abort armed/in-flight recordings; entries in "saving" belong to their save thread
-            for (rec_proc, rec_phrase), rec in list(engine.recordings.items()):
-                if rec["state"] != "saving":
-                    engine.cleanup_recording(rec_proc, rec_phrase)
-            # Wait for saves to drain: clearing a pad mid-save would free buffers still being written
-            timeout = monotonic() + 3
-            while engine.recordings and monotonic() < timeout:
-                sleep(0.1)
-            for proc in clippy_procs:
-                # Iterate the file zctrls, not the phrase count: pads beyond the current
-                # phrase count keep their controllers (and clips) when phrases are removed
-                for symbol in list(proc.controllers_dict):
-                    if symbol.startswith("file "):
-                        proc.engine.clear_clip(proc, int(symbol[5:]) - 1, delete_file=True)
-        self.clean(chains=False, zynseq=True)
-        self.end_busy("session reset")
-        self.busy.clear()
+        try:
+            if self.session_record_mode:
+                self.toggle_session_record()
+            self.clean(chains=False, zynseq=True, clips=True)
+        finally:
+            self.end_busy("session reset")
+            self.busy.clear()
 
     def mute(self, mute=True, wait=0.01):
         self.main_mixbus_proc.controllers_dict["mute"].set_value(mute)

@@ -26,6 +26,7 @@
 
 #include "clippy.h"
 #include <unistd.h> // provides usleep
+#include <stdatomic.h> // provides atomic_flag
 #include <string.h> // provides memset, memcpy, strcpy
 #include <jack/jack.h> // provides jack API
 #include <jack/midiport.h> // provides jack midi port API
@@ -90,7 +91,7 @@ jack_nframes_t samplerate = 48000;
 jack_nframes_t buffersize = 1024;
 static jack_port_t* midi_input_port;
 static jack_client_t* jack_client;
-static volatile uint8_t mutex = 0;
+static atomic_flag mutex = ATOMIC_FLAG_INIT;
 Player* players[16]; // Up to 16 players, 1 per MIDI channel
 
 typedef struct {
@@ -128,14 +129,14 @@ static jack_port_t* monitor_port_b = NULL;
 static volatile uint8_t monitor_direct = 0;
 static volatile float monitor_gain = 1.0f; // Gain applied on the direct monitor ports only
 
+// Not recursive: the holder must not call anything that takes it again
 static void inline getMutex() {
-    while (mutex)
-        usleep(100);
-    mutex = 1;
+    while (atomic_flag_test_and_set(&mutex))
+        usleep(10);
 }
 
 static void inline releaseMutex() {
-    mutex = 0;
+    atomic_flag_clear(&mutex);
 }
 
 float* out_buff_a[16];
@@ -203,9 +204,7 @@ jack_nframes_t process_clip(uint8_t channel, Clip* clip, jack_nframes_t frames, 
 static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
     Player* player;
 
-    while (mutex)
-        usleep(10);
-    mutex = 1;
+    getMutex();
 
     void* midi_buffer = jack_port_get_buffer(midi_input_port, frames);
     jack_nframes_t numMidiEvents = jack_midi_get_event_count(midi_buffer);
@@ -541,7 +540,7 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                 player->state = STATE_READY;
         }
     }
-    mutex = 0;
+    releaseMutex();
     return 0;
 }
 
@@ -1251,7 +1250,7 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
     // Taking the mutex also waits out a process cycle already using it, so a pad
     // cleared (or a session reset) while the clip plays cannot free it mid-period
     getMutex();
-    if (player->current_clip_id == id) {
+    if (player->current_clip == clip || player->current_clip_id == id) {
         player->current_clip = NULL;
         player->current_clip_id = -1;
     }

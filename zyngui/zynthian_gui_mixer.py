@@ -302,21 +302,13 @@ class zynthian_gui_launcher_pad():
             else:
                 state_seq = state_phrase["sequences"][self.chain.midi_chan]
 
-            # The pad also shows things that aren't part of the sequence state:
-            # live MIDI capture into it and the clip a finished take leaves behind.
-            # Both change while the sequence state stands still (recording => playing),
-            # so they have to be part of the "did anything change?" test.
-            extra_state = (
-                self.gui_mixer.state_manager.midi_record_pad == (self.phrase, self.chain.midi_chan),
-                self.get_clippy_file(),
-                self.get_clippy_timesig()
-            )
-
-            # Don't draw if state didn't change
-            if not force and self.last_state is not None and self.last_state == (state_seq, extra_state):
+            # Don't draw if state didn't change. The pad also shows things that aren't in
+            # the sequence state (live MIDI capture, the clip a finished take leaves
+            # behind), so whatever signals a change to one pad must force its redraw.
+            if not force and self.last_state is not None and self.last_state == state_seq:
                 return
 
-            self.last_state = (copy.copy(state_seq), extra_state)      # NOTE: Better deepcopy?
+            self.last_state = copy.copy(state_seq)      # NOTE: Better deepcopy?
 
             # Cleared only once we know we are redrawing; the early return above
             # leaves a flashing or playing pad to carry on as it is
@@ -2059,12 +2051,14 @@ class zynthian_gui_mixer(zynthian_gui_base):
     def launcher_play_state_cb(self, phrase, chan):
         if not self.launcher_mode:
             return
+        # Forced: a signal for a single pad means something it shows has changed,
+        # which need not be part of the sequence state that draw() compares
         if chan == 32:
-            self.chain_strips[-1].launchers[phrase].draw()
+            self.chain_strips[-1].launchers[phrase].draw(True)
         else:
             for strip in self.chain_strips:
                 if strip.chain.midi_chan == chan:
-                    strip.launchers[phrase].draw()
+                    strip.launchers[phrase].draw(True)
 
     def topbar_short_touch_action(self):
         self.toggle_launcher_mode()

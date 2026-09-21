@@ -596,8 +596,17 @@ uint32_t SequenceManager::getTriggerSequence(uint8_t note) {
 
 size_t SequenceManager::getPlayingSequencesCount() { return m_vPlayingSequences.size(); }
 
-void SequenceManager::stop() {
+void SequenceManager::stop(EvSchedule* pSchedule) {
     for (auto pSequence: m_vPlayingSequences) {
+        uint8_t nGroup = pSequence->getGroup();
+        if (pSchedule && nGroup > 15 && nGroup < 32 && pSequence->getPlayState() != STOPPED) {
+            // Clippy plays (and records) until told otherwise and these sequences will
+            // not be clocked again, so say now what clock() says as a sequence stops
+            uint8_t nChannel = nGroup - 16;
+            if (pSequence == m_pRecordingSequence)
+                pSchedule->map.emplace(0, SEQ_EVENT{0, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), uint8_t(pSequence->getPhrase() + 1), CLIPPY_VEL_REC_ABORT}});
+            pSchedule->map.emplace(0, SEQ_EVENT{0, 0xfe, MIDI_MESSAGE{uint8_t(MIDI_NOTE_ON | nChannel), 0, 1}});
+        }
         pSequence->setPlayState(STOPPED);
     }
     m_vPlayingSequences.clear();

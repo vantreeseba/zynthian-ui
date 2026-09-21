@@ -29,7 +29,7 @@ import math
 import time
 import ctypes
 import logging
-from threading import Timer, Thread
+from threading import Timer, Thread, Lock
 from collections import deque
 
 import zynautoconnect
@@ -93,6 +93,7 @@ class zynthian_engine_clippy(zynthian_engine):
         self.monitors_dict = {}
         # Live clip recordings in flight: (processor, phrase) => {state, path, tempo, bpb, channels}
         self.recordings = {}
+        self.finalize_lock = Lock()
         self.custom_gui_fpath = "/zynthian/zynthian-ui/zyngui/zynthian_widget_audio_file.py"
 
         self.libclippy =  None
@@ -649,14 +650,9 @@ class zynthian_engine_clippy(zynthian_engine):
             self.libseq.toggleRecordState(self.zynseq.scene, phrase, chan)
             rec = self.recordings.get((processor, phrase))
             if state == zynseq.SEQ_RECORDING and rec and rec.get("free"):
-                # Free take punches out on the next clock pulse => finalize
-                # synchronously so the derived tempo lands within a few ms
-                timeout = time.monotonic() + 0.25
-                while (self.libclippy.getRecordState() == REC_RECORDING
-                       and time.monotonic() < timeout):
-                    time.sleep(0.002)
-                if self.libclippy.getRecordState() in (REC_DONE, REC_FINISHING):
-                    self.finalize_recording(processor, phrase)
+                # Free take punches out on the next clock pulse => finalize now, not
+                # at the next state poll, so the derived tempo lands within a few ms
+                self.finalize_recording(processor, phrase)
             return True
         return self.arm_clip_record(processor, phrase)
 
@@ -729,12 +725,11 @@ class zynthian_engine_clippy(zynthian_engine):
                     zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                                           chan=chan, phrase=phrase, state=2)
             elif state == zynseq.SEQ_PLAYING:
-                # "armed" too: the play state is polled, so a short take can go
-                # armed => recording => playing between two polls and we never see
-                # the recording state. Missing it strands the take (pad stuck
-                # showing ⏺, metronome never released); finalize_recording checks
-                # the clippy recorder itself and aborts cleanly if nothing punched in
-                if rec["state"] in ("armed", "recording"):
+                # The play state is polled, so a short take can go armed => recording
+                # => playing between two polls. But a pad re-armed while its old clip
+                # plays also reads "playing" until zynseq acts on the arm, so only a
+                # recorder that has punched in says an armed take is over.
+                if rec["state"] == "recording" or self.libclippy.getRecordState() != REC_ARMED:
                     self.finalize_recording(processor, phrase)
             elif state == zynseq.SEQ_STOPPED:
                 # Cancelled arm, force-stop or abort
@@ -743,14 +738,22 @@ class zynthian_engine_clippy(zynthian_engine):
     def finalize_recording(self, processor, phrase):
         """Punch-out committed => update controllers and save the clip to disk"""
 
-        rec = self.recordings.get((processor, phrase))
-        if rec is None:
-            return
+        # The state poll and a free take's punch-out can both get here => first one wins
+        with self.finalize_lock:
+            rec = self.recordings.get((processor, phrase))
+            if rec is None or rec["state"] == "saving":
+                return
+            rec["state"] = "saving"
         note = phrase + 1
         clip_channel = processor.midi_chan - 16
+        # zynseq moves the sequence on a JACK period before clippy acts on the punch-out
+        timeout = time.monotonic() + 0.25
+        while self.libclippy.getRecordState() == REC_RECORDING and time.monotonic() < timeout:
+            time.sleep(0.002)
         # REC_FINISHING => committed and looping, still capturing the latency tail
         if self.libclippy.getRecordState() not in (REC_DONE, REC_FINISHING):
             logging.warning("Clip recording did not complete => aborting")
+            rec["state"] = "aborted"
             self.libseq.setPlayState(self.zynseq.scene, phrase, processor.midi_chan, zynseq.SEQ_STOPPED)
             self.cleanup_recording(processor, phrase)
             return
@@ -800,7 +803,6 @@ class zynthian_engine_clippy(zynthian_engine):
         filename = os.path.splitext(os.path.basename(path))[0]
         self.zynseq.set_sequence_param(self.zynseq.scene, phrase, processor.midi_chan, "name", filename)
         self.libseq.updateSequenceInfo()
-        rec["state"] = "saving"
         self.update_monitor(processor)
         zynsigman.send_queued(zynsigman.S_CLIPPY, zynsigman.SS_CLIPPY_REC_STATE,
                               chan=processor.midi_chan, phrase=phrase, state=3)
@@ -846,14 +848,16 @@ class zynthian_engine_clippy(zynthian_engine):
     def cleanup_recording(self, processor, phrase):
         """Abort path: free clippy recorder resources and clear tracking"""
 
-        rec = self.recordings.get((processor, phrase))
-        if rec is None:
-            return
-        if rec.get("state") == "saving":
-            # The clippy_save thread owns teardown now: disarming here would
-            # shrink/free the clip buffers saveClip() is still reading
-            return
-        self.recordings.pop((processor, phrase), None)
+        # The state poll, a pad clear and a session reset can all get here => first one wins
+        with self.finalize_lock:
+            rec = self.recordings.get((processor, phrase))
+            if rec is None:
+                return
+            if rec.get("state") == "saving":
+                # The clippy_save thread owns teardown now: disarming here would
+                # shrink/free the clip buffers saveClip() is still reading
+                return
+            self.recordings.pop((processor, phrase), None)
         self.libclippy.disarmRecord()
         self.prewarm_record_buffer()
         if not rec.get("free"):

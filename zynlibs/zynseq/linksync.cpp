@@ -195,10 +195,14 @@ bool LinkSync::audioUpdate(std::uint32_t frames, double quantum, double beatsPer
 
     const int play = m_pImpl->pendingPlay.exchange(-1, std::memory_order_relaxed);
     if (play > 0) {
-        // Request beat 0 at the start time so that peers launch in phase with us
-        state.setIsPlayingAndRequestBeatAtTime(true, hostTime, 0.0, dQuantumIn);
-        bCommit = true;
-        bSelfPlayChange = true;
+        // Request beat 0 at the start time so that peers launch in phase with us. Never
+        // whilst already playing: alone in a session the request is granted there and
+        // then, which would jump the phase of a timeline everything is locked to.
+        if (!state.isPlaying()) {
+            state.setIsPlayingAndRequestBeatAtTime(true, hostTime, 0.0, dQuantumIn);
+            bCommit = true;
+            bSelfPlayChange = true;
+        }
     } else if (play == 0) {
         // Stopping says nothing about the beat grid, so leave the timeline alone
         state.setIsPlaying(false, hostTime);

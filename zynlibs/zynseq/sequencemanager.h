@@ -277,8 +277,9 @@ class SequenceManager {
     size_t getPlayingSequencesCount();
 
     /** @brief  Stop all collections / sequences
+        @param  pSchedule Schedule to add the events that stop clippy playing and recording (Default: None)
     */
-    void stop();
+    void stop(EvSchedule* pSchedule = nullptr);
 
     /** @brief  Check if tempo has changed
         @retval bool True if tempo has changed

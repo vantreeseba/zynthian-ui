@@ -29,6 +29,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <atomic>
 #include <cstdint>
 
 #include <jack/jack.h>      // provides JACK interface
@@ -36,6 +37,7 @@
 #include <stdio.h>          // provides printf
 #include <stdlib.h>         // provides exit
 #include <thread>           // provides thread for timer
+#include <chrono>           // provides sleep durations
 #include <cmath>            // provides sqrt
 #include <unistd.h>         // provides gethostname
 #include <nlohmann/json.hpp>// provides json
@@ -83,7 +85,21 @@ uint8_t g_nScene                    = 0;            // Index of currently select
 Pattern* g_pPattern                 = NULL;         // Pointer to currently edited pattern
 uint16_t g_nPhrase                  = 0;            // Index of currently edited phrase
 uint16_t g_nSequence                = 0;            // Index of currently edited sequence
-bool g_bMutex                       = false;        // Mutex lock for access to g_mSchedule
+std::atomic_flag g_lock             = ATOMIC_FLAG_INIT; // Guards g_mSchedule and the sequence manager against the JACK process thread
+
+// Scoped hold of g_lock. The JACK process thread holds it for the whole of each
+// period, so anything that adds to the schedule or deletes what the sequence manager
+// is clocking must hold it too. Not recursive: a holder must not call another holder.
+class ScheduleLock {
+  public:
+    ScheduleLock() {
+        while (g_lock.test_and_set(std::memory_order_acquire))
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
+    }
+    ~ScheduleLock() { g_lock.clear(std::memory_order_release); }
+    ScheduleLock(const ScheduleLock&) = delete;
+    ScheduleLock& operator=(const ScheduleLock&) = delete;
+};
 bool g_bDebug                       = false;        // True to output debug info
 bool g_bPatternModified             = false;        // True if pattern has changed since last check
 bool g_bDirty                       = false;        // True if anything has been modified
@@ -158,6 +174,9 @@ void setTempoInternal(double tempo, bool bPropagate);
 
 // Set tempo whilst restoring state
 void setTempoFromState(double tempo);
+
+// Stop all sequences with the schedule lock already held
+void stopUnlocked();
 
 // Convert tempo to frames per clock
 void updateClockTiming() {
@@ -257,10 +276,8 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
     jack_midi_clear_buffer(pClockBuffer);
     jack_midi_clear_buffer(pClippyBuffer);
 
-    // Get mutex lock to protect access to MIDI output schedule
-    while (g_bMutex)
-        std::this_thread::sleep_for(std::chrono::microseconds(10));
-    g_bMutex = true;
+    // Hold the lock for the rest of the period to protect the schedule and sequences
+    ScheduleLock lock;
 
     // Process MIDI input
     jack_midi_event_t midiEvent;
@@ -437,8 +454,11 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
                 // MIDI song selection will change selected sequencer scene
                 uint8_t nSong = midiEvent.buffer[1];
                 DPRINTF("StepJackClient Select song %u\n", nSong);
-                if (nSong < g_seqMan.getNumScenes())
-                    setScene(nSong); //!@todo Restricted to existing scenes but may want to allow creating new scene
+                if (nSong < g_seqMan.getNumScenes()) {
+                    // Lock already held by this thread, so not setScene() which takes it
+                    g_seqMan.setScene(nSong); //!@todo Restricted to existing scenes but may want to allow creating new scene
+                    g_nScene = nSong;
+                }
                 break;
             }
             default:
@@ -761,7 +781,9 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
                     nSize = 3;
                     break;
                 case MIDI_NOTE_ON:
-                    g_naHeldNote[it->second.msg.command & 0x0f][it->second.msg.value1] = it->second.msg.value2;
+                    // Clippy's note ons launch clips and never get a note off
+                    if (it->second.output != 0xfe)
+                        g_naHeldNote[it->second.msg.command & 0x0f][it->second.msg.value1] = it->second.msg.value2;
                     nSize = 3;
                     break;
                 case MIDI_NOTE_OFF:
@@ -793,7 +815,6 @@ int onJackProcess(jack_nframes_t nFrames, void* /*pArgs*/) {
         }
         g_mSchedule.map.erase(g_mSchedule.map.begin(), it);
     }
-    g_bMutex = false;
     return 0;
 }
 
@@ -1063,27 +1084,40 @@ bool checkBlock(FILE* pFile, uint32_t nActualSize, uint32_t nExpectedSize) {
     return false;
 }
 
-void reset() {
-    g_nPhrase = 0;
-    g_nSequence = 0;
-    // init() deletes every sequence and pattern: hold the schedule mutex so the
-    // RT thread is not part way through clocking them (and drop the events it
-    // scheduled from them) or it reads freed memory => audio corruption
-    while (g_bMutex)
-        std::this_thread::sleep_for(std::chrono::microseconds(10));
-    g_bMutex = true;
+// Delete every sequence and pattern, leaving nothing behind that points at them
+void clearSequences() {
+    {
+        // The process thread clocks the playing sequences and captures MIDI into the
+        // selected pattern. Take both away from it between two of its periods...
+        ScheduleLock lock;
+        g_bMidiRecord = false;
+        g_pPattern = NULL;
+        g_nPhrase = 0;
+        g_nSequence = 0;
+        stopUnlocked();
+    }
+    // ...after which it reaches no sequence or pattern, so freeing them need not hold
+    // the lock. That takes tens of ms: holding the process thread off for so long
+    // drops whole periods of audio from every JACK client.
     g_seqMan.init();
-    g_mSchedule.map.clear();
-    g_bMutex = false;
+}
+
+void reset() {
+    clearSequences();
     g_nScene = 0;
-    g_nBar = 1;
-    g_nBarStartTick = g_nTick;
-    g_nBeat = 1;
+    // The process thread owns the bar position whilst the transport runs (the metronome
+    // may well be), and moving it under a running click shifts the downbeat mid bar
+    if (g_nTransportState == STOPPED) {
+        g_nBar = 1;
+        g_nBarStartTick = g_nTick;
+        g_nBeat = 1;
+    }
     g_nDefaultBpb = DEFAULT_BPB;
     g_nBeatsPerBar = DEFAULT_BPB;
-    // Create default phrases
+    // Create default phrases. Nothing is playing so, as above, without the lock.
     for (uint8_t phrase = 0; phrase < 8; ++phrase)
-        insertPhrase(g_nScene, phrase);
+        g_seqMan.insertPhrase(g_nScene, phrase);
+    g_bDirty = true;
 }
 
 const char* convertToJson(const char* filename) {
@@ -1422,17 +1456,9 @@ void setPattern(uint32_t id, const char* patn_state) {
 bool setState(const char* state) {
     try {
         json j = json::parse(state);
-        g_nPhrase = 0;
-        g_nSequence = 0;
         uint8_t nLowestScene = 255;
 
-        // Deleting the old sequences and patterns must not race the RT thread
-        while (g_bMutex)
-            std::this_thread::sleep_for(std::chrono::microseconds(10));
-        g_bMutex = true;
-        g_seqMan.init();
-        g_mSchedule.map.clear();
-        g_bMutex = false;
+        clearSequences();
 
         setTempoFromState(j.value("tempo", g_dTempo)); //!@todo Do we want to reset tempo to default or use previous if not in state?
         setDefaultBpb(j.value("bpb", DEFAULT_BPB));
@@ -1935,14 +1961,11 @@ int16_t getPatternZoom() {
 void sendMidiMsg(MIDI_MESSAGE& msg) {
     // Find first available time slot
     uint32_t tick = g_nBarStartTick + g_nTick;;
-    while (g_bMutex)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    g_bMutex = true;
+    ScheduleLock lock;
     g_mSchedule.map.emplace(
         tick,
         SEQ_EVENT{tick, 0, msg}
     );
-    g_bMutex = false;
 }
 
 // Schedule a note off event after 'duration' ms
@@ -2941,18 +2964,20 @@ uint32_t getBeat() {
     return g_nBeat;
 }
 
-// Stop all sequences and drop the pending schedule. Caller must hold g_bMutex.
+// Stop all sequences and drop the pending schedule. Caller must hold a ScheduleLock.
 void stopUnlocked() {
-    g_seqMan.stop();
     g_mSchedule.map.clear();
+    // The note offs were dropped with the schedule, so release what is sounding
+    for (uint8_t nChannel = 0; nChannel < 16; ++nChannel)
+        for (uint8_t nNote = 0; nNote < 128; ++nNote)
+            if (g_naHeldNote[nChannel][nNote])  // Cleared again as the note off is sent
+                g_mSchedule.map.emplace(0, SEQ_EVENT{0, 0, MIDI_MESSAGE{uint8_t(MIDI_NOTE_OFF | nChannel), nNote, 0}});
+    g_seqMan.stop(&g_mSchedule);
 }
 
 void stop() {
-    while (g_bMutex)
-        std::this_thread::sleep_for(std::chrono::microseconds(10));
-    g_bMutex = true;
+    ScheduleLock lock;
     stopUnlocked();
-    g_bMutex = false;
 }
 
 uint32_t getSequencePlayPosition(uint8_t scene, uint8_t phrase, uint8_t sequence) {
@@ -3171,11 +3196,8 @@ void updateSequenceInfo() {
 // ** Scene management **
 
 bool setScene(uint8_t scene) {
-    while (g_bMutex)
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    g_bMutex = true;
+    ScheduleLock lock;
     bool bCreated = g_seqMan.setScene(scene);
-    g_bMutex = false;
     g_nScene = scene;
     return bCreated;
 }
@@ -3321,9 +3343,14 @@ uint8_t getTransportState() {
 }
 
 void transportStart(uint8_t id) {
-    if (g_nTransportState != PLAYING)
-        g_nTransportState = STARTING;
     g_nTransportClients |= (1 << id);
+    // Another client joining a transport that is already running (a pad launched or
+    // armed over the metronome) must leave it alone. Asking the Link session to play
+    // also asks it for beat 0, which would drag the bar grid out from under everything
+    // that is already playing.
+    if (g_nTransportState == PLAYING || g_nTransportState == STARTING)
+        return;
+    g_nTransportState = STARTING;
     // Do not echo a start that the session itself asked for
     if (g_pLink && id != TRANSPORT_CLIENT_LINK)
         g_pLink->requestIsPlaying(true);
@@ -3496,49 +3523,34 @@ uint8_t getNumPhrases(uint8_t scene) {
 
 void insertPhrase(uint8_t scene, uint8_t phrase)
 {
-    while (g_bMutex)
-        std::this_thread::sleep_for(std::chrono::microseconds(10));
-    g_bMutex = true;
+    ScheduleLock lock;
     g_seqMan.insertPhrase(scene, phrase);
-    g_bMutex = false;
     g_bDirty = true;
 }
 
 void duplicatePhrase(uint8_t scene, uint8_t phrase)
 {
-    while (g_bMutex)
-        std::this_thread::sleep_for(std::chrono::microseconds(10));
-    g_bMutex = true;
+    ScheduleLock lock;
     g_seqMan.duplicatePhrase(scene, phrase);
-    g_bMutex = false;
     g_bDirty = true;
 }
 
 void removePhrase(uint8_t scene, uint8_t phrase) {
-    while (g_bMutex)
-        std::this_thread::sleep_for(std::chrono::microseconds(10));
-    g_bMutex = true;
+    ScheduleLock lock;
     stopUnlocked(); //!@todo Blunt stop everything to avoid pointers to events in deleted sequences segfault!
     g_seqMan.removePhrase(scene, phrase);
-    g_bMutex = false;
     g_bDirty = true;
 }
 
 void nudgePhrase(uint8_t scene, uint8_t phrase, bool forward) {
-    while (g_bMutex)
-        std::this_thread::sleep_for(std::chrono::microseconds(10));
-    g_bMutex = true;
+    ScheduleLock lock;
     g_seqMan.nudgePhrase(scene, phrase, forward);
-    g_bMutex = false;
     g_bDirty = true;
 }
 
 void setPhraseBPB(uint8_t scene, uint8_t phrase, uint8_t bpb) {
-    while (g_bMutex)
-        std::this_thread::sleep_for(std::chrono::microseconds(10));
-    g_bMutex = true;
+    ScheduleLock lock;
     g_seqMan.setPhraseTimeSig(scene, phrase, bpb);
-    g_bMutex = false;
     g_bDirty = true;
 }
 
