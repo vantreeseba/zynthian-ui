@@ -871,8 +871,7 @@ class zynthian_gui_mixer_strip():
         self.clip_progress = self.canvas.create_rectangle(x + 1, self.legend_y, x + 1, self.legend_y + self.clip_progress_height, width=0, fill=self.gui_mixer.legend_txt_color, tags=(f"legend_strip_{id}",))
 
         # Indicators
-        # Record arm has no legend indicator: the strip's record toggle button
-        # already shows the armed state.
+        self.record_indicator = self.canvas.create_text(x + 2, self.legend_y + self.legend_height - 16, text="⚫", fill=zynthian_gui_config.color_hl, anchor="sw", state=tkinter.HIDDEN)
         self.play_indicator = self.canvas.create_text(x + 2, self.legend_y + self.legend_height - 2, text="⏹", fill=zynthian_gui_config.color_hl, anchor="sw", state=tkinter.HIDDEN)
 
         # Bind events to gui elements (tracked so build_mixer can unbind
@@ -954,6 +953,7 @@ class zynthian_gui_mixer_strip():
         self.canvas.move(self.clip_progress, dx, 0)
         if self.chain.chain_id:
             self.canvas.move(self.legend_chain_accent, dx, 0)
+        self.canvas.move(self.record_indicator, dx, 0)
         self.canvas.move(self.play_indicator, dx, 0)
 
         for pad in self.launchers:
@@ -1171,6 +1171,18 @@ class zynthian_gui_mixer_strip():
 
             if control in [None, 'balance']:
                 self.draw_balance()
+
+            if control in [None, 'record']:
+                if self.chain.zynmixer_proc.controllers_dict['record'].value:
+                    if self.state_manager.audio_recorder.status:
+                        self.canvas.itemconfig(
+                            self.record_indicator, fill=self.gui_mixer.rec_color, state=tkinter.NORMAL)
+                    else:
+                        self.canvas.itemconfig(
+                            self.record_indicator, fill=self.gui_mixer.high_color, state=tkinter.NORMAL)
+                else:
+                    self.canvas.itemconfig(
+                        self.record_indicator, state=tkinter.HIDDEN)
 
             if control in [None, 'play']:
                 try:
