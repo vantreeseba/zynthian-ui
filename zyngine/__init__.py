@@ -2,6 +2,7 @@
 __all__ = [
     "zynthian_controller",
     "zynthian_lv2",
+    "zynthian_clap",
     "zynthian_engine",
     "zynthian_engine_audio_mixer",
     "zynthian_engine_sfz",
@@ -14,6 +15,7 @@ __all__ = [
     "zynthian_engine_puredata",
     "zynthian_engine_aeolus",
     "zynthian_engine_jalv",
+    "zynthian_engine_clap",
     "zynthian_engine_sfizz",
     "zynthian_engine_alsa_mixer",
     "zynthian_engine_tempo",
@@ -28,6 +30,7 @@ __all__ = [
 ]
 from zyngine.zynthian_controller import *
 from zyngine.zynthian_lv2 import *
+from zyngine.zynthian_clap import *
 from zyngine.zynthian_engine import *
 from zyngine.zynthian_engine_audio_mixer import *
 from zyngine.zynthian_engine_sfz import *
@@ -40,6 +43,7 @@ from zyngine.zynthian_engine_pianoteq import *
 from zyngine.zynthian_engine_puredata import *
 from zyngine.zynthian_engine_aeolus import *
 from zyngine.zynthian_engine_jalv import *
+from zyngine.zynthian_engine_clap import *
 from zyngine.zynthian_engine_sfizz import *
 from zyngine.zynthian_engine_alsa_mixer import *
 from zyngine.zynthian_engine_tempo import *
