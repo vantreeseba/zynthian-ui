@@ -42,6 +42,12 @@ from rdflib import Graph, Namespace, RDF
 from enum import Enum
 from random import randrange
 
+# This module is also run as a script from its own directory
+try:
+    import zynthian_clap
+except ImportError:
+    from zyngine import zynthian_clap
+
 # ------------------------------------------------------------------------------
 # Some variables & definitions
 # ------------------------------------------------------------------------------
@@ -620,6 +626,75 @@ def generate_engines_config_file(refresh=True, reset_rankings=None):
             "EDIT": engine_edit
         }
         logging.debug("LV2 Plugin '{}' => {}".format(
+            engine_name, genengines[key]))
+
+    # Add CLAP plugins
+    for plugin in zynthian_clap.scan_plugins():
+        try:
+            engine_name = plugin['name']
+            engine_path = plugin['path']
+            engine_uri = plugin['id']
+            features = plugin['features']
+        except Exception as e:
+            logging.warning(f"Can't get basic info for CLAP plugin => {e}")
+            continue
+
+        key = f"CP/{engine_name}"
+        try:
+            engine_id = engines[key]['ID']
+            engine_title = engines[key]['TITLE']
+            engine_type = engines[key]['TYPE']
+            engine_cat = engines[key]['CAT']
+            if engine_cat not in engine_categories[engine_type]:
+                engine_cat = zynthian_clap.get_plugin_cat(engine_type, features)
+            engine_index = engines[key]['INDEX']
+            engine_descr = engines[key]['DESCR']
+            engine_quality = engines[key]['QUALITY']
+            engine_complex = engines[key]['COMPLEX']
+            try:
+                engine_edit = engines[key]['EDIT']
+            except:
+                engine_edit = 0
+        except:
+            hash.update(key.encode())
+            engine_id = hash.hexdigest()[:10]
+            engine_title = engine_name
+            engine_type = zynthian_clap.get_plugin_type(features)
+            engine_cat = zynthian_clap.get_plugin_cat(engine_type, features)
+            engine_index = 9999
+            engine_descr = ""
+            engine_quality = 0
+            engine_complex = 0
+            engine_edit = 0
+
+        if not engine_descr:
+            engine_descr = plugin.get('description', "")
+            if not engine_descr:
+                engine_descr = get_engine_description(key)
+
+        if reset_rankings == 1:
+            engine_quality = engine_complex = 0
+        elif reset_rankings == 2:
+            engine_quality = randrange(5)
+            engine_complex = randrange(5)
+
+        genengines[key] = {
+            'ID': engine_id,
+            'NAME': engine_name,
+            'TITLE': engine_title,
+            'TYPE': engine_type,
+            'CAT': engine_cat,
+            'ENABLED': is_engine_enabled(key, True),
+            'INDEX': engine_index,
+            'URL': engine_uri,
+            'UI': "",
+            'PATH': engine_path,
+            'DESCR': engine_descr,
+            "QUALITY": engine_quality,
+            "COMPLEX": engine_complex,
+            "EDIT": engine_edit
+        }
+        logging.debug("CLAP Plugin '{}' => {}".format(
             engine_name, genengines[key]))
 
     try:
@@ -1339,7 +1414,7 @@ if __name__ == '__main__':
                 test_lv2_plugin(info)
             else:
                 for key, info in engines.items():
-                    if 'URL' in info and info['URL']:
+                    if key.startswith("JV/") and 'URL' in info and info['URL']:
                         test_lv2_plugin(info)
 
     else:
