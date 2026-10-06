@@ -1847,6 +1847,13 @@ class zynthian_state_manager:
             # Add controllers
             for symbol, zctrl in processor.controllers_dict.items():
                 processor_state["controllers"][symbol] = zctrl.get_state()
+
+            # Add engine's opaque state, for engines having more state than their controllers
+            if hasattr(processor.engine, "get_processor_state"):
+                engine_state = processor.engine.get_processor_state(processor)
+                if engine_state:
+                    processor_state["engine_state"] = engine_state
+
             processor_states[id] = processor_state
         if processor_states:
             self.zs3[zs3_id]["processors"] = processor_states

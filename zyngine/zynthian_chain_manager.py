@@ -33,6 +33,7 @@ from zyngine import *
 from zyngine import zynthian_lv2
 from zyngine.zynthian_chain import *
 from zyngine.zynthian_engine_jalv import *
+from zyngine.zynthian_engine_clap import *
 from zyngine.zynthian_engine_pianoteq import *
 from zyngine.zynthian_signal_manager import zynsigman
 from zyngine.zynthian_processor import zynthian_processor
@@ -69,6 +70,7 @@ engine2class = {
     "LS": zynthian_engine_linuxsampler,
     "BF": zynthian_engine_setbfree,
     'JV': zynthian_engine_jalv,
+    'CP': zynthian_engine_clap,
     "AE": zynthian_engine_aeolus,
     "PT": zynthian_engine_pianoteq,
     "AP": zynthian_engine_audioplayer,
@@ -1429,8 +1431,8 @@ class zynthian_chain_manager:
             # Start new engine instance
             info = self.engine_info[eng_code]
             zynthian_engine_class = info["ENGINE"]
-            if eng_code[0:3] == "JV/":
-                eng_key = f"JV/{self.zyngine_counter}"
+            if eng_code[0:3] in ("JV/", "CP/"):
+                eng_key = f"{eng_code[0:3]}{self.zyngine_counter}"
                 zyngine = zynthian_engine_class(eng_code, self.state_manager, False)
             elif eng_code in ("SF", "PD"):
                 eng_key = f"{eng_code}/{self.zyngine_counter}"
@@ -1461,10 +1463,10 @@ class zynthian_chain_manager:
                 del self.zyngines[eng_key]
 
     def stop_unused_jalv_engines(self):
-        """Stop JALV engines that are not used by any processors"""
+        """Stop JALV & CLAP engines that are not used by any processors"""
         for eng_key in list(self.zyngines.keys()):
-            if len(self.zyngines[eng_key].processors) == 0 and eng_key[0:3] == "JV/":
-                logging.debug(f"Stopping Unused Jalv Engine '{eng_key}'...")
+            if len(self.zyngines[eng_key].processors) == 0 and eng_key[0:3] in ("JV/", "CP/"):
+                logging.debug(f"Stopping Unused Plugin Engine '{eng_key}'...")
                 self.state_manager.set_busy_details(f"stopping engine {self.zyngines[eng_key].get_name()}")
                 self.zyngines[eng_key].stop()
                 del self.zyngines[eng_key]

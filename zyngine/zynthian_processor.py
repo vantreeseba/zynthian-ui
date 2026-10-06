@@ -925,6 +925,13 @@ class zynthian_processor:
         else:
             res = False
 
+        # Set engine's opaque state, before the controller values that may refine it
+        if "engine_state" in state and hasattr(self.engine, "set_processor_state"):
+            try:
+                self.engine.set_processor_state(self, state["engine_state"])
+            except:
+                logging.exception(traceback.format_exc())
+
         # Set controller values
         if "controllers" in state:
             # Flag controllers to avoid collisions from preset feedback values
