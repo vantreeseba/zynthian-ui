@@ -13,6 +13,8 @@ set (CMAKE_BUILD_TYPE Debug)
 
 add_library(zynseq SHARED zynseq.h zynseq.cpp sequencemanager.cpp pattern.cpp sequence.cpp timebase.cpp track.cpp linksync.cpp)
 add_definitions(-Werror)
+target_compile_options(zynseq PRIVATE -Wmisleading-indentation)
+
 if(mimalloc_FOUND)
     # Defines HAS_MIMALLOC so you can use #ifdef HAS_MIMALLOC in your C++ code
     target_compile_definitions(zynseq PRIVATE HAS_MIMALLOC)

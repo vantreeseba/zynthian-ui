@@ -30,6 +30,7 @@ from time import monotonic
 import neopixel_spi as neopixel
 
 # Zynthian specific modules
+from zyngine.zynthian_signal_manager import zynsigman
 from zyngui import zynthian_gui_config
 
 # ---------------------------------------------------------------------------
@@ -43,6 +44,7 @@ class zynthian_wsleds_base:
         self.zyngui = zyngui
         self.state_manager = self.zyngui.state_manager
         self.ctrldev_manager = self.state_manager.ctrldev_manager
+        self.zynseq = self.zyngui.state_manager.zynseq
 
         # LED strip variables
         self.spi_board = None
@@ -59,10 +61,19 @@ class zynthian_wsleds_base:
         # frames must not reach show()
         self.last_frame = None
 
+        self.setup_colors()
+
+        # Beat blinking variables
+        self.beat = 0
+        self.beat_state = False
+        self.beat_color = self.wscolor_default
+        self.beat_led = None
+        self.metro_mode = 0
+
+        self.ended = False
+
         self.wsled_state_enabled = True
         self.last_wsled_state = ""
-
-        self.setup_colors()
 
     def setup_colors(self):
         # Predefined colors
@@ -122,14 +133,19 @@ class zynthian_wsleds_base:
         if self.num_leds > 0:
             try:
                 self.spi_board = board.SPI()
-                self.wsleds = neopixel.NeoPixel_SPI(
-                    self.spi_board, self.num_leds, pixel_order=neopixel.GRB, auto_write=False, frequency=self.spi_freq)
+                self.wsleds = neopixel.NeoPixel_SPI(self.spi_board,
+                                                    self.num_leds,
+                                                    pixel_order=neopixel.GRB,
+                                                    auto_write=False,
+                                                    frequency=self.spi_freq)
+                self.ended = False
                 self.light_on_all()
             except Exception as e:
                 self.wsleds = None
                 logging.error(f"Can't start RGB LEDs => {e}")
 
     def end(self):
+        self.ended = True
         self.light_off_all()
 
     def get_num(self):
@@ -185,8 +201,44 @@ class zynthian_wsleds_base:
         if frame != self.last_frame:
             self.last_frame = frame
             self.wsleds.show()
+            if self.wsled_state_enabled and not self.state_manager.power_save_mode:
+                zynsigman.send(zynsigman.S_WSLEDS, zynsigman.SS_WSLEDS_UPDATE)
+
+    def metro_cb(self, mode, volume):
+        self.metro_mode = mode
+        if self.metro_mode == 0 or (self.metro_mode == 1 and self.zynseq.playing_sequences == 0):
+            self.wsleds[self.beat_led] = self.beat_color
+
+    def beat_cb(self, beat):
+        if self.beat_led is None or self.metro_mode == 0 or (self.metro_mode == 1 and self.zynseq.playing_sequences == 0):
+            return
+        if self.beat != beat:
+            self.beat = beat
+            if self.beat == 1 and self.metro_mode != 4:
+                self.beat_state = True
+                self.wsleds[self.beat_led] = self.wscolor_active2
+            elif self.beat_state:
+                self.beat_state = False
+                self.wsleds[self.beat_led] = self.wscolor_off
+            else:
+                self.beat_state = True
+                self.wsleds[self.beat_led] = self.beat_color
+            self.show()
+
+    def update_tempo_wsled(self, workflow):
+        if workflow == "tempo":
+            self.beat_color = self.wscolor_active
+        else:
+            self.beat_color = self.wscolor_default
+        if self.metro_mode == 0 or (self.metro_mode == 1 and self.zynseq.playing_sequences == 0):
+            self.wsleds[self.beat_led] = self.beat_color
 
     def update(self):
+        # Ignore refreshes once end() has lighted-off the LEDs, so a late call
+        # from the status thread can't light them up again while exiting.
+        if self.ended:
+            return
+
         # Blink/pulse phase from wall-clock so timing doesn't depend on
         # the status refresh rate (periods match the historical 10Hz tick)
         now = monotonic()

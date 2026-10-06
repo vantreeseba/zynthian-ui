@@ -54,6 +54,7 @@ class zynthian_signal_manager:
     S_TRANSPORT = 13
     S_PROCESSOR = 14
     S_CLIPPY = 15
+    S_WSLEDS = 16
 
     #-------------------------------------------------------------------------
     # Signal sub-id (owned by each corresponding class)
@@ -125,7 +126,10 @@ class zynthian_signal_manager:
     SS_CLIPPY_REC_STATE = 1 # Clip record state change (chan, phrase, state: 0=idle, 1=armed, 2=recording, 3=saving)
     SS_CLIPPY_REC_MODE = 2 # Session record mode toggled (mode)
 
-    last_signal = 15
+    # RGB LEDs
+    SS_WSLEDS_UPDATE = 0
+
+    last_signal = 16
     last_subsignal = 10
 
     def __init__(self):

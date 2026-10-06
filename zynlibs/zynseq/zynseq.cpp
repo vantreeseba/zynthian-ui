@@ -2993,7 +2993,7 @@ uint32_t getStateChange(uint32_t* states, uint32_t size) {
     return count;
 }
 
-uint8_t* getProgress() {
+float* getProgress() {
     return g_seqMan.getProgress();
 }
 

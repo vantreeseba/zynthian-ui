@@ -446,7 +446,7 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
         // Stopped sequence => Reset progress and remove from the list. Don't increase counter!
         if (nPlayState == STOPPED || nPlayState == CHILD_PLAYING) {
             if (nGroup < 33)
-                m_aGroupProgress[nGroup] = 0;
+                m_aGroupProgress[nGroup] = 0.0;
 
             // Stop clippy if no other clippy sequences in same group are running
             if (bIsClippy && nPlayState == STOPPED) {
@@ -476,16 +476,16 @@ uint8_t SequenceManager::clock(uint32_t nTime, EvSchedule* pSchedule, bool bSync
 
         if (pSequence->getPlayState() & 0x01) {
             if (nGroup < 32 && pSequence->getLength())
-                m_aGroupProgress[nGroup] = (100 * pSequence->getPlayPosition() / pSequence->getLength());
+                m_aGroupProgress[nGroup] = (100.0 * pSequence->getPlayPosition() / pSequence->getLength());
             else if (nGroup < 32 && isRecordState(pSequence->getPlayState()))
                 // Open-ended recording (no length yet) => report progress through current bar
-                m_aGroupProgress[nGroup] = (100 * barPos / (m_nTimeSig * PPQN_INTERNAL));
+                m_aGroupProgress[nGroup] = (100.0 * barPos / (m_nTimeSig * PPQN_INTERNAL));
             else if (nGroup == 32) {
                 uint8_t nTimeSig = pSequence->getTimeSig();
                 if (nTimeSig)
-                    m_aGroupProgress[32] = (100 * barPos / (nTimeSig * PPQN_INTERNAL));
+                    m_aGroupProgress[32] = (100.0 * barPos / (nTimeSig * PPQN_INTERNAL));
                 else
-                    m_aGroupProgress[32] = (100 * barPos / (m_nTimeSig * PPQN_INTERNAL));
+                    m_aGroupProgress[32] = (100.0 * barPos / (m_nTimeSig * PPQN_INTERNAL));
             }
         }
         nResult |= (pSequence->getPlayState() & 0x3);
@@ -707,7 +707,7 @@ void SequenceManager::setDefaultTimeSig(uint8_t bpb) {
 	}
 }
 
-uint8_t* SequenceManager::getProgress() {
+float* SequenceManager::getProgress() {
     return m_aGroupProgress;
 }
 

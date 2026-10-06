@@ -46,7 +46,8 @@ class zynthian_engine_tempo(zynthian_engine):
     # ---------------------------------------------------------------------------
 
     _ctrl_screens = [
-        ["Tempo", ["bpm", "metro_enable", "metro_volume", "metro_out"]]
+        ["Tempo", ["bpm", "metro_enable", "metro_volume", "bpb"]],
+        ["Metronome", ["metro_out"]]
     ]
 
     # ----------------------------------------------------------------------------
@@ -148,36 +149,35 @@ class zynthian_engine_tempo(zynthian_engine):
 
     def get_controllers_dict(self, processor=None, ctrl_list=None):
         if zynautoconnect.get_ext_clock_zmip() < 0:
-            self._ctrl_screens = [["Tempo", ["bpm", "metro_enable", "metro_volume", "metro_out"]]]
+            self._ctrl_screens = [["Tempo", ["bpm", "metro_enable", "metro_volume", "bpb"]],
+                                  ["Metronome", ["metro_out"]]]
         else:
-            self._ctrl_screens = [["Tempo", ["ppqn", "metro_enable", "metro_volume", "metro_out"]]]
+            self._ctrl_screens = [["Tempo", ["ppqn", "metro_enable", "metro_volume", "bpb"]],
+                                  ["Metronome", ["metro_out"]]]
 
-        if processor:
-            if not processor.controllers_dict:
-                processor.controllers_dict = {
-                    "bpm": self.state_manager.zynseq.zctrl_tempo,
-                    "metro_enable": self.state_manager.zynseq.zctrl_metro_mode,
-                    "metro_volume": self.state_manager.zynseq.zctrl_metro_volume,
-                    "ppqn": self.state_manager.zynseq.zctrl_ppqn,
-                    "metro_out": self.get_metro_out_zctrl()
-                }
-                # The shared zynseq zctrls are created without a processor: bind them here
-                # so MIDI-learn bindings can be saved/restored ([processor.id, symbol])
-                for zctrl in processor.controllers_dict.values():
-                    zctrl.processor = processor
-            else:
-                # The output selector may have been rebuilt with fresh port labels
-                zctrl = self.get_metro_out_zctrl()
-                zctrl.processor = processor
-                processor.controllers_dict["metro_out"] = zctrl
+        if processor and processor.controllers_dict:
+            # The output selector may have been rebuilt with fresh port labels
+            zctrl = self.get_metro_out_zctrl()
+            zctrl.processor = processor
+            processor.controllers_dict["metro_out"] = zctrl
             return processor.controllers_dict
-        return  {
+
+        zctrls = {
             "bpm": self.state_manager.zynseq.zctrl_tempo,
             "metro_enable": self.state_manager.zynseq.zctrl_metro_mode,
             "metro_volume": self.state_manager.zynseq.zctrl_metro_volume,
             "ppqn": self.state_manager.zynseq.zctrl_ppqn,
+            "bpb": self.state_manager.zynseq.zctrl_bpb,
             "metro_out": self.get_metro_out_zctrl()
         }
+
+        if processor:
+            # The shared zynseq zctrls are created without a processor: bind them here
+            # so MIDI-learn bindings can be saved/restored ([processor.id, symbol])
+            for zctrl in zctrls.values():
+                zctrl.processor = processor
+            processor.controllers_dict = zctrls
+        return zctrls
 
     def send_controller_value(self, zctrl):
         if zctrl.symbol == "metro_out":
