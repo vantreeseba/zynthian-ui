@@ -237,6 +237,8 @@ class zynthian_state_manager:
 
         # Start VNC as configured
         self.default_vncserver()
+        # Start netJACK2 master as configured
+        self.default_netjack()
 
         self.chain_manager.add_chain(0)
         self.ctrldev_manager = zynthian_ctrldev_manager(self)
@@ -2913,6 +2915,44 @@ class zynthian_state_manager:
             self.start_vncserver(False)
         else:
             self.stop_vncserver(False)
+
+    # Start/Stop netJACK2 master depending on configuration
+    def default_netjack(self):
+        if zynthian_gui_config.netjack_enabled:
+            self.start_netjack(False)
+        else:
+            self.stop_netjack(False)
+
+    def start_netjack(self, save_config=True):
+        self.start_busy("start_netjack", "starting netJACK2")
+        logging.info("STARTING netJACK2 master")
+        try:
+            # The manager outlives the UI, so drop any instance left loaded before loading
+            Popen("jack_unload netmanager", shell=True, stdout=PIPE, stderr=STDOUT).wait()
+            check_output("jack_load netmanager", shell=True, stderr=STDOUT)
+            zynthian_gui_config.netjack_enabled = 1
+            if save_config:
+                zynconf.save_config({
+                    "ZYNTHIAN_NETJACK_ENABLED": str(zynthian_gui_config.netjack_enabled)
+                })
+            zynautoconnect.request_audio_connect(True)
+        except Exception as e:
+            logging.error(e)
+            zynthian_gui_config.netjack_enabled = 0
+            self.set_busy_error("ERROR STARTING netJACK2", e)
+            sleep(2.0)
+
+        self.end_busy("start_netjack")
+
+    def stop_netjack(self, save_config=True):
+        logging.info("STOPPING netJACK2 master")
+        # Fails harmlessly when the manager is not loaded
+        Popen("jack_unload netmanager", shell=True, stdout=PIPE, stderr=STDOUT).wait()
+        zynthian_gui_config.netjack_enabled = 0
+        if save_config:
+            zynconf.save_config({
+                "ZYNTHIAN_NETJACK_ENABLED": str(zynthian_gui_config.netjack_enabled)
+            })
 
     # ---------------------------------------------------------------------------
     # MIDI Network Services

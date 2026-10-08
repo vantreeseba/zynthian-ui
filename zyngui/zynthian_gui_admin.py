@@ -197,6 +197,14 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         else:
             self.list_data.append((self.toggle_link, 0, "\u2610 Ableton Link",
                                    ["Share tempo and bar phase with Ableton Live and other Link apps on the local network.", "midi_settings.png"]))
+        if zynthian_gui_config.netjack_enabled:
+            peers = len(zynautoconnect.get_netjack_dst_ports())
+            peer_txt = "no peers yet" if peers == 0 else f"{peers} peer" + ("" if peers == 1 else "s")
+            self.list_data.append((self.toggle_netjack, 0, f"\u2612 NetJACK Audio ({peer_txt})",
+                                   ["Sending the main mix to netJACK2 slaves on the local network.\n\nThis device is the netJACK2 master: start the receiving computer as a slave, e.g. jackd -d net.", "network.png"]))
+        else:
+            self.list_data.append((self.toggle_netjack, 0, "\u2610 NetJACK Audio",
+                                   ["Send this device's audio to other computers on the local network using netJACK2.", "network.png"]))
 
         self.list_data.append((None, 0, "> AUDIO"))
 
@@ -624,6 +632,13 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         zynconf.save_config({
             "ZYNTHIAN_LINK_ENABLED": str(int(enable))
         })
+        self.update_list()
+
+    def toggle_netjack(self):
+        if zynthian_gui_config.netjack_enabled:
+            self.state_manager.stop_netjack()
+        else:
+            self.state_manager.start_netjack()
         self.update_list()
 
     def toggle_link_start_stop_sync(self):

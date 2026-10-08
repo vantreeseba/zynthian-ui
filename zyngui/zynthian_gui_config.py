@@ -764,6 +764,9 @@ link_start_stop_sync = get_env_int('ZYNTHIAN_LINK_START_STOP_SYNC', 0)
 link_audio = get_env_int('ZYNTHIAN_LINK_AUDIO', 0)
 # Quantity of bars a pending transport start waits for the Link session to come round to
 link_quantum = get_env_int('ZYNTHIAN_LINK_QUANTUM', 1)
+# Run as netJACK2 master at startup, sending the main mix to netJACK2 slaves on the
+# local network
+netjack_enabled = get_env_int('ZYNTHIAN_NETJACK_ENABLED', 0)
 
 # ------------------------------------------------------------------------------
 # Text To Speech Options

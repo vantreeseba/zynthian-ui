@@ -94,6 +94,7 @@ hw_midi_src_ports = []
 # List of hardware MIDI destination ports (including network, aubionotes, etc.)
 hw_midi_dst_ports = []
 hw_audio_dst_ports = []			# List of physical audio output ports
+netjack_dst_ports = []			# List of names of netJACK2 slave audio destination ports
 sidechain_map = {}				# Map of all audio target port names to use as sidechain inputs, indexed by jack client regex
 sidechain_ports = []			# List of currently active audio destination port names not to autoroute, e.g. sidechain inputs
 alsa_audio_srcs = {}			# Map of alsa_in processes, indexed by alsa device name
@@ -1197,6 +1198,11 @@ def audio_autoconnect():
         required_routes[hp_ports[0].name] = required_routes[hw_audio_dst_ports[0].name]
         required_routes[hp_ports[1].name] = required_routes[hw_audio_dst_ports[1].name]
 
+    # Send main mixbus to netJACK2 slaves
+    for ports in get_netjack_dst_ports().values():
+        required_routes.setdefault(ports[0], set()).add("zynmixer_bus:output_00a")
+        required_routes.setdefault(ports[-1], set()).add("zynmixer_bus:output_00b")
+
     # Enable zynmixer internal normalised routes and remove corresponding jack graph connections
     if "zynmixer_bus:input_00a" in required_routes and "zynmixer_bus:input_00b" in required_routes:
         for chan in range(2, state_manager.zynmixer_bus.MAX_NUM_CHANNELS):
@@ -1248,6 +1254,36 @@ def get_hw_audio_dst_ports():
             if port.name in ["system:playback_1", "system:playback_2"]:
                 ports.remove(port)
     return ports + jclient.get_ports("zynaout", is_input=True, is_audio=True)
+
+
+def get_netjack_dst_ports():
+    """Get the audio destination ports of connected netJACK2 slaves
+
+    Returns : Dictionary of lists of the first 2 port names, indexed by slave client name
+    """
+
+    slaves = {}
+    if zynthian_gui_config.netjack_enabled:
+        for port in jclient.get_ports(":to_slave_[12]$", is_input=True, is_audio=True):
+            slaves.setdefault(port.name.split(":")[0], []).append(port.name)
+    for ports in slaves.values():
+        ports.sort()
+    return slaves
+
+
+def update_netjack_ports():
+    """Check if netJACK2 slaves have joined or left
+
+    Returns : True if changed
+    """
+
+    global netjack_dst_ports
+
+    ports = [port for ports in get_netjack_dst_ports().values() for port in ports]
+    if ports == netjack_dst_ports:
+        return False
+    netjack_dst_ports = ports
+    return True
 
 
 def update_hw_audio_ports():
@@ -1618,6 +1654,9 @@ def auto_connect_thread():
                         do_midi = True
                     # Check if dynamic (hot-plug) audio changed
                     if update_hw_audio_ports():
+                        do_audio = True
+                    # Check if netJACK2 slaves changed
+                    if update_netjack_ports():
                         do_audio = True
                     # Check if requested to run audio connect (slow)
                     if deferred_audio_connect:
