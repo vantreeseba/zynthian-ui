@@ -1537,6 +1537,7 @@ class zynthian_gui:
         else:
             enable = not zynseq.is_link_enabled()
         zynseq.enable_link(enable)
+        zynautoconnect.request_audio_connect()
 
     def cuia_set_tempo(self, params=None):
         try:

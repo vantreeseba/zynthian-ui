@@ -187,7 +187,7 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
                                        ["Transport start/stop is local: Link shares tempo and phase only.", "midi_settings.png"]))
             if zynseq.is_link_audio_enabled():
                 self.list_data.append((self.toggle_link_audio, 0, "\u2612 Link Audio",
-                                       ["Broadcasting audio to the Link session.\n\nConnect what peers should hear to the zynseq link_send_a / link_send_b JACK ports. Nothing is sent unless a peer is listening.", "midi_settings.png"]))
+                                       ["Broadcasting the main mix to the Link session.\n\nThe main mixbus is connected to the zynseq link_send_a / link_send_b JACK ports. Nothing is sent unless a peer is listening.", "midi_settings.png"]))
             else:
                 self.list_data.append((self.toggle_link_audio, 0, "\u2610 Link Audio",
                                        ["Stream this device's audio to Ableton Live and other Link Audio peers on the local network.", "midi_settings.png"]))
@@ -627,6 +627,7 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         zynseq = self.state_manager.zynseq
         enable = not zynseq.is_link_enabled()
         zynseq.enable_link(enable)
+        zynautoconnect.request_audio_connect(True)
         logging.info(f"Ableton Link => {enable}")
         zynthian_gui_config.link_enabled = enable
         zynconf.save_config({
@@ -656,6 +657,7 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         zynseq = self.state_manager.zynseq
         enable = not zynseq.is_link_audio_enabled()
         zynseq.enable_link_audio(enable)
+        zynautoconnect.request_audio_connect(True)
         logging.info(f"Link Audio => {enable}")
         zynthian_gui_config.link_audio = enable
         zynconf.save_config({

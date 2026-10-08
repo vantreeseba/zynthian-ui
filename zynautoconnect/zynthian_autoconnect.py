@@ -94,7 +94,7 @@ hw_midi_src_ports = []
 # List of hardware MIDI destination ports (including network, aubionotes, etc.)
 hw_midi_dst_ports = []
 hw_audio_dst_ports = []			# List of physical audio output ports
-netjack_dst_ports = []			# List of names of netJACK2 slave audio destination ports
+netjack_dst_ports = []			# List of (name, uuid) of netJACK2 slave audio destination ports
 sidechain_map = {}				# Map of all audio target port names to use as sidechain inputs, indexed by jack client regex
 sidechain_ports = []			# List of currently active audio destination port names not to autoroute, e.g. sidechain inputs
 alsa_audio_srcs = {}			# Map of alsa_in processes, indexed by alsa device name
@@ -1203,6 +1203,12 @@ def audio_autoconnect():
         required_routes.setdefault(ports[0], set()).add("zynmixer_bus:output_00a")
         required_routes.setdefault(ports[-1], set()).add("zynmixer_bus:output_00b")
 
+    # Send main mixbus to the Ableton Link session
+    zynseq = state_manager.zynseq
+    if zynseq.is_link_enabled() and zynseq.is_link_audio_enabled():
+        required_routes.setdefault("zynseq:link_send_a", set()).add("zynmixer_bus:output_00a")
+        required_routes.setdefault("zynseq:link_send_b", set()).add("zynmixer_bus:output_00b")
+
     # Enable zynmixer internal normalised routes and remove corresponding jack graph connections
     if "zynmixer_bus:input_00a" in required_routes and "zynmixer_bus:input_00b" in required_routes:
         for chan in range(2, state_manager.zynmixer_bus.MAX_NUM_CHANNELS):
@@ -1279,7 +1285,15 @@ def update_netjack_ports():
 
     global netjack_dst_ports
 
-    ports = [port for ports in get_netjack_dst_ports().values() for port in ports]
+    # Track ports by uuid as well as name: a slave that leaves and rejoins between
+    # checks has the same port names but has lost its connections
+    ports = []
+    for names in get_netjack_dst_ports().values():
+        for name in names:
+            try:
+                ports.append((name, jclient.get_port_by_name(name).uuid))
+            except Exception:
+                pass
     if ports == netjack_dst_ports:
         return False
     netjack_dst_ports = ports
