@@ -1276,9 +1276,11 @@ class zynthian_engine_clippy(zynthian_engine):
         self.set_phrase(processor, self.zynseq.phrase)
 
     def remove_processor(self, processor):
-        for key in list(self.recordings):
-            if key[0] == processor:
-                self.recordings.pop(key, None)
+        # Abort properly so the record metronome hold is released. Takes being
+        # saved are left to their save thread, which releases it itself.
+        for key, rec in list(self.recordings.items()):
+            if key[0] == processor and rec.get("state") != "saving":
+                self.cleanup_recording(*key)
         self.zynseq.enable_channel(processor.midi_chan, False)
         if self.libclippy.removePlayer(processor.midi_chan - 16) != 0:
             return

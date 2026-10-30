@@ -350,24 +350,36 @@ class zynthian_state_manager:
         finally:
             self.mute(False)
 
+    def get_clippy_processors(self):
+        procs = [chain.get_clippy_processor() for chain in self.chain_manager.chains.values()]
+        return [proc for proc in procs if proc is not None]
+
+    def abort_clip_recordings(self):
+        """Abort armed/in-flight clip recordings and wait for takes being saved to finish.
+        The sequencer must already be stopped. Recorded files are kept."""
+
+        clippy_procs = self.get_clippy_processors()
+        if not clippy_procs:
+            return
+        engine = clippy_procs[0].engine
+        # Entries in "saving" belong to their save thread
+        for (rec_proc, rec_phrase), rec in list(engine.recordings.items()):
+            if rec["state"] != "saving":
+                engine.cleanup_recording(rec_proc, rec_phrase)
+        # Wait for saves to drain: clearing a pad or removing its chain mid-save
+        # would free buffers still being written
+        timeout = monotonic() + 3
+        while engine.recordings and monotonic() < timeout:
+            sleep(0.1)
+        if engine.recordings:
+            logging.warning("Clip recordings still saving after 3s")
+
     def clear_all_clips(self):
         """Abort in-flight clip recordings and clear every clip pad, deleting its
         audio file. The sequencer must already be stopped."""
 
-        clippy_procs = [chain.get_clippy_processor() for chain in self.chain_manager.chains.values()]
-        clippy_procs = [proc for proc in clippy_procs if proc is not None]
-        if not clippy_procs:
-            return
-        engine = clippy_procs[0].engine
-        # Abort armed/in-flight recordings; entries in "saving" belong to their save thread
-        for (rec_proc, rec_phrase), rec in list(engine.recordings.items()):
-            if rec["state"] != "saving":
-                engine.cleanup_recording(rec_proc, rec_phrase)
-        # Wait for saves to drain: clearing a pad mid-save would free buffers still being written
-        timeout = monotonic() + 3
-        while engine.recordings and monotonic() < timeout:
-            sleep(0.1)
-        for proc in clippy_procs:
+        self.abort_clip_recordings()
+        for proc in self.get_clippy_processors():
             # Iterate the file zctrls, not the phrase count: pads beyond the current
             # phrase count keep their controllers (and clips) when phrases are removed
             for symbol in list(proc.controllers_dict):
@@ -409,6 +421,21 @@ class zynthian_state_manager:
         finally:
             self.end_busy("session reset")
             self.busy.clear()
+
+    def stop_activity(self):
+        """Stop everything the session is doing before switching to another song:
+        session record mode, pad MIDI capture, launcher pads and clip recordings,
+        the forced record metronome and transport held by SooperLooper.
+        Mutes the output and leaves it muted: the caller restores it."""
+
+        self.mute()
+        if self.session_record_mode:
+            self.toggle_session_record()
+        self.stop_pad_midi_record()
+        self.stop_sequencer()
+        self.abort_clip_recordings()
+        self.release_record_metronome()
+        self.zynseq.transport_stop("sooperlooper")
 
     def mute(self, mute=True, wait=0.01):
         self.main_mixbus_proc.controllers_dict["mute"].set_value(mute)
@@ -1193,6 +1220,9 @@ class zynthian_state_manager:
             return None
 
         mute = self.zynmixer_bus.get_mute(0)
+        if load_chains and not merge:
+            # Switching song => start from a clean slate
+            self.stop_activity()
         try:
             snapshot = JSONDecoder().decode(json)
             self.set_busy_details("fixing legacy snapshot")
@@ -2710,6 +2740,14 @@ class zynthian_state_manager:
             if self.record_metronome_depth == 0 and self.saved_metronome_mode is not None:
                 self.zynseq.libseq.setMetronomeMode(self.saved_metronome_mode)
                 self.saved_metronome_mode = None
+
+    def release_record_metronome(self):
+        """Drop every recording's hold on the metronome and restore its configured mode"""
+
+        self.record_metronome_depth = 0
+        if self.saved_metronome_mode is not None:
+            self.zynseq.libseq.setMetronomeMode(self.saved_metronome_mode)
+            self.saved_metronome_mode = None
 
     def toggle_pad_midi_record(self, phrase, midi_chan):
         """ Toggle live MIDI capture into the pattern of a launcher pad

@@ -616,25 +616,44 @@ class zynseq(zynthian_engine):
     # MIDI transport & clock settings
     # -------------------------------------------------------------------
 
+    # Transport client slots in libseq's 32-bit client mask (see constants.h).
+    # libseq takes a slot number, not a name => names must be mapped here.
+    TRANSPORT_CLIENTS = {"zynseq": 1, "metro": 2, "link": 3, "zynsmf": 4, "sooperlooper": 5}
+    TRANSPORT_CLIENT_ALL = 255
+
+    def transport_client_id(self, client):
+        """Get the libseq transport slot for a client name ("ALL" releases every client)"""
+        if client == "ALL":
+            return self.TRANSPORT_CLIENT_ALL
+        try:
+            return self.TRANSPORT_CLIENTS[client]
+        except KeyError:
+            # Unknown clients get the next free slot (6..31)
+            slot = max(self.TRANSPORT_CLIENTS.values()) + 1
+            if slot > 31:
+                raise ValueError(f"No free transport client slot for '{client}'")
+            self.TRANSPORT_CLIENTS[client] = slot
+            return slot
+
     # Request JACK transport start
     # client: Name to register with transport to avoid other clients stopping whilst in use
     def transport_start(self, client):
         if self.libseq:
-            self.libseq.transportStart(bytes(client, "utf-8"))
+            self.libseq.transportStart(ctypes.c_uint8(self.transport_client_id(client)))
 
     # Request JACK transport stop
-    # client: Name registered with transport when started
+    # client: Name registered with transport when started, or "ALL"
     # Note: Transport stops when all registered clients have requested stop
     def transport_stop(self, client):
         if self.libseq:
-            self.libseq.transportStop(bytes(client, "utf-8"))
+            self.libseq.transportStop(ctypes.c_uint8(self.transport_client_id(client)))
 
     # Toggle JACK transport
     # client: Name to register or was previously registered with transport when started
 
     def transport_toggle(self, client):
         if self.libseq:
-            self.libseq.transportToggle(bytes(client, "utf-8"))
+            self.libseq.transportToggle(ctypes.c_uint8(self.transport_client_id(client)))
 
     def set_tempo(self, tempo):
         self.zctrl_tempo.set_value(tempo)
