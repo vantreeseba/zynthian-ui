@@ -179,6 +179,7 @@ class zynthian_ctrldev_gemifi(zynthian_ctrldev_zynmixer):
 		with self._lock:
 			if self.device.ready:
 				self.mapping.all_leds_off(self.device.all_components())
+				self.mapping.blank_displays()
 
 	def sleep_on(self):
 		with self._lock:

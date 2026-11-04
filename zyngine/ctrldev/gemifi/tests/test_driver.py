@@ -90,6 +90,9 @@ class FakeChain(object):
     def z(self, symbol):
         return self.zynmixer_proc.controllers_dict[symbol]
 
+    def get_name(self):
+        return "Main" if self.chain_id == 0 else "Pianoteq %d" % self.chain_id
+
 
 class FakeChainManager(object):
     def __init__(self, n):
@@ -160,7 +163,8 @@ def zyn_components():
         C(E, 1, "device_param_1", ring=11, mode=P.ENC_REL_TWOS),
         C(E, 2, "tempo", ring=0, mode=P.ENC_REL_TWOS),
         C(E, 3, "device_param_5", ring=0, mode=P.ENC_REL_TWOS),  # only 4 zynpots
-    ] + [C(L, i, "", colours=1, owner=P.OWNER_HOST_THEN_LOCAL) for i in range(9)]
+    ] + [C(L, i, "", colours=1, owner=P.OWNER_HOST_THEN_LOCAL) for i in range(9)] + [
+        C(P.KIND_DISPLAY, 0, "", cols=6, rows=1, display_type=1)]
 
 
 class Rig(object):
@@ -180,10 +184,10 @@ class Rig(object):
     def event(self, etype, index, value):
         self.dev.event(etype, index, value)
 
-    def leds(self):
-        """{led: level} from the FB_LED / FB_LEDS notifications so far (popped)."""
+    def leds(self, notes=None):
+        """{led: level} from the FB_LED / FB_LEDS notifications in `notes` (default: popped so far)."""
         out = {}
-        for cmd, pl in self.dev.take():
+        for cmd, pl in (self.dev.take() if notes is None else notes):
             if cmd == P.FB_LED:
                 out[P.dec_u14(pl[0:2])] = pl[2]
             elif cmd == P.FB_LEDS:
@@ -318,6 +322,27 @@ def test_master_mute_toggles_main_chain(rig):
     assert rig.leds().get(8) == 0
 
 
+def _texts(notes):
+    return [(P.dec_u14(pl[0:2]), pl[2], pl[3], pl[4:].decode("ascii")) for cmd, pl in notes if cmd == P.FB_TEXT]
+
+
+def test_display_shows_active_chain_name(rig):
+    # sent on connect, cut to the display's 6 columns
+    assert rig.drv.mapping._text_cache == {0: "Pianot"}
+    rig.dev.take()
+    rig.drv.tick()
+    assert not _texts(rig.dev.take())                   # change-only
+    rig.sm.chain_manager.set_active_chain_by_id(0)
+    rig.drv.tick()
+    assert _texts(rig.dev.take()) == [(0, 0, 0, "Main  ")]
+
+
+def test_display_text_is_ascii_padded():
+    from gemifi.zynthian_model import _display_text
+    assert _display_text("Café ⏺", 6) == "Cafe  "
+    assert _display_text(None, 3) == "   "
+
+
 def test_play_record_stop_use_audio_cuias(rig):
     rig.event(P.KIND_BUTTON, 0, 1)
     rig.event(P.KIND_BUTTON, 2, 1)
@@ -393,12 +418,16 @@ def test_sleep_turns_leds_off_and_wake_restores(rig):
     rig.event(P.KIND_BUTTON, 3, 1)                      # mute_1 on
     rig.dev.take()
     rig.drv.sleep_on()
-    assert set(rig.leds().values()) == {0}
+    notes = rig.dev.take()
+    assert set(rig.leds(notes).values()) == {0}
+    assert _texts(notes) == [(0, 0, 0, "      ")]       # display blank too
     rig.chain(2).z("solo").set_value(1)
     rig.drv.tick()
     assert not rig.dev.take()                           # quiet while asleep
     rig.drv.sleep_off()
-    assert rig.leds()[3] == 127
+    notes = rig.dev.take()
+    assert rig.leds(notes)[3] == 127
+    assert _texts(notes) == [(0, 0, 0, "Pianot")]
 
 
 def test_end_releases_and_restores_debug_events():
