@@ -112,6 +112,7 @@ class FakeChain(object):
         self.chain_id = chain_id
         self.midi_chan = None if chain_id == 0 else chain_id - 1
         self.clippy = None
+        self.current_processor = None
         self.zynmixer_proc = types.SimpleNamespace(controllers_dict={
             "level": FakeZctrl(0.8), "balance": FakeZctrl(0.0, -1, 1),
             "mute": FakeZctrl(0, 0, 1, 1), "solo": FakeZctrl(0, 0, 1, 1), "record": FakeZctrl(0, 0, 1, 1)})
@@ -199,11 +200,11 @@ def zyn_components():
         C(A, 0, "volume_1", takeover=P.TAKEOVER_PICKUP),
         C(A, 1, "fader_2", takeover=P.TAKEOVER_NONE),
         C(A, 2, "master"),                  # mcu: name -> master_volume
-        C(A, 3, "device_param_2", takeover=P.TAKEOVER_NONE),
+        C(A, 3, "zynthian.zynpot_2", takeover=P.TAKEOVER_NONE),
         C(E, 0, "vpot_1", ring=11, mode=P.ENC_REL_TWOS),     # -> pan_1
-        C(E, 1, "device_param_1", ring=11, mode=P.ENC_REL_TWOS),
+        C(E, 1, "zynthian.zynpot_1", ring=11, mode=P.ENC_REL_TWOS),
         C(E, 2, "tempo", ring=0, mode=P.ENC_REL_TWOS),
-        C(E, 3, "device_param_5", ring=0, mode=P.ENC_REL_TWOS),  # only 4 zynpots
+        C(E, 3, "zynthian.zynpot_5", ring=0, mode=P.ENC_REL_TWOS),  # only 4 zynpots
     ] + [C(L, i, "", colours=1, owner=P.OWNER_HOST_THEN_LOCAL) for i in range(9)] + [
         C(P.KIND_DISPLAY, 0, "", cols=6, rows=1, display_type=1)]
 
@@ -295,7 +296,7 @@ def test_notes_pass_through_and_gemifi_sysex_is_claimed(rig):
 
 def test_unsupported_roles_logged_once(rig, caplog):
     roles = [r for _k, _i, r in rig.drv.mapping.unknown_roles]
-    assert "loop" in roles and "device_param_5" in roles
+    assert "loop" in roles and "zynthian.zynpot_5" in roles
     assert "play" not in roles and "volume_1" not in roles
 
 
@@ -421,7 +422,7 @@ def test_pan_encoder_nudges_balance_with_boost_cut_ring(rig):
     assert rings and rings[-1][2] == P.RING_BOOST_CUT and rings[-1][5] & 1
 
 
-def test_device_params_drive_zynpots(rig):
+def test_zynpot_roles_drive_zynpots(rig):
     notes = rig.dev.take()
     rig.event(P.KIND_ENCODER, 1, P.int_to_s14(-2))
     rig.event(P.KIND_ANALOG, 3, P.U14_MAX)
@@ -535,7 +536,7 @@ def grid_components():
         C(E, 0, "pan_1", ring=0, mode=P.ENC_REL_TWOS),
         C(E, 1, "nav_scroll", ring=0, mode=P.ENC_REL_TWOS),
         C(E, 2, "tempo", ring=0, mode=P.ENC_REL_TWOS),
-        C(E, 3, "device_param_1", ring=0, mode=P.ENC_REL_TWOS),
+        C(E, 3, "zynthian.zynpot_1", ring=0, mode=P.ENC_REL_TWOS),
     ] + [C(PAD, k - 1, code61_pad_role(k), led=PAD_LED0 + k - 1) for k in range(1, 17)] + [
         C(PAD, 16, "play", led=19),         # a pad twin with a button role
         C(PAD, 17, ""),                     # a base pad: plays notes, no role
@@ -811,7 +812,7 @@ def test_param_display_shows_values_then_the_chain_name(grid):
 
 def test_param_display_zynpots_show_nothing(grid):
     grid.dev.take()
-    grid.event(P.KIND_ENCODER, 3, P.int_to_s14(1))                  # device_param_1: Zynthian shows it
+    grid.event(P.KIND_ENCODER, 3, P.int_to_s14(1))                  # zynthian.zynpot_1: Zynthian shows it
     grid.event(P.KIND_ENCODER, 1, P.int_to_s14(1))                  # nav_scroll
     assert not _texts(grid.dev.take())
 
@@ -862,3 +863,348 @@ def test_driver_reuses_the_zynpad_base():
 def test_param_labels():
     assert [ZM.param_label(r) for r in ("volume_3", "pan_8", "master_volume", "track_volume", "track_pan",
                                          "tempo", "device_param_1")] == ["V3", "P8", "M", "V", "P", "", ""]
+
+
+# ---- encoder modes (contract §5): zynthian.zynpot_N, device_param_N = the processor's params ----
+
+class FakeProcZctrl(FakeZctrl):
+    """A processor controller: zynthian_controller's attributes the driver reads."""
+
+    def __init__(self, symbol, value=0, lo=0, hi=127, nudge_factor=1, short_name=None, is_integer=True,
+                 ticks=None, labels=None, is_path=False, readonly=False):
+        FakeZctrl.__init__(self, value, lo, hi, nudge_factor)
+        self.symbol = symbol
+        self.name = symbol.title()
+        self.short_name = short_name or self.name
+        self.is_integer, self.ticks, self.labels, self.is_path = is_integer, ticks, labels, is_path
+        self.readonly = readonly
+        self.nudges = []
+
+    def set_value(self, v, send=True):
+        if self.readonly:
+            return
+        v = min(self.value_max, max(self.value_min, v))
+        self.value = int(v) if self.is_integer else v
+
+    def nudge(self, d, send=True, fine=False):
+        self.nudges.append(d)
+        if self.ticks:
+            i = min(range(len(self.ticks)), key=lambda k: abs(self.ticks[k] - self.value))
+            self.set_value(self.ticks[min(len(self.ticks) - 1, max(0, i + d))])
+        else:
+            self.set_value(self.value + d * self.nudge_factor)
+
+    def get_value2label(self, val=None):
+        val = self.value if val is None else val
+        return self.labels[self.ticks.index(val)]
+
+
+class FakeProcessor(object):
+    """zynthian_processor's control screens: an ordered dict, screen name -> list of zctrls."""
+
+    def __init__(self, pid, name, screens):
+        self.id, self.name = pid, name
+        self.screens = OrderedDict(screens)
+
+    def get_ctrl_screens(self):
+        return self.screens
+
+    def get_name(self):
+        return self.name
+
+
+def z(symbol, **kw):
+    return FakeProcZctrl(symbol, **kw)
+
+
+def synth():
+    """12 parameter slots: Main (4), Filter (2, padded to 4), Env (4)."""
+    return FakeProcessor(7, "OB-Xd", [
+        ("Main", [z("volume", value=100), z("tune", value=64), z("osc", value=0, ticks=[0, 1, 2],
+                                                                   labels=["Saw", "Pulse", "Tri"]),
+                  z("glide", value=0.5, lo=0, hi=1, nudge_factor=0.01, is_integer=False)]),
+        ("Filter", [z("cutoff", value=64, short_name="Cutoff"), z("reso", value=10)]),
+        ("Empty", []),                              # the control screen skips it too
+        ("Env", [z("attack"), z("decay"), z("sustain"), z("release")]),
+    ])
+
+
+# Mode indices: enc_midi 2, enc_zyn 3, enc_device 4 (arm 0 and pads 1 come first); twins carry
+# layer = mode index + 1.
+ENC_MIDI, ENC_ZYN, ENC_DEV = 2, 3, 4
+DP_ZYN = 12             # encoder index of the enc_zyn twin of encoder_5 (device_param_1)
+DP_DEV = 16             # encoder index of the enc_device twin of encoder_1 (device_param_1)
+BANK_ZYN, BANK_DEV = 4, 6       # device_bank_prev button twins (device_bank_next = + 1)
+
+
+def code61_enc_components(layers=True):
+    """The Code 61's encoder cycle: 8 plain encoders, then the enc_zyn twins (zynpots on E1-E4,
+    device_param_1..4 on E5-E8) and the enc_device twins (device_param_1..8); bank left / right
+    and their twins. `layers` False: firmware from before the `layer` byte."""
+    B, E = P.KIND_BUTTON, P.KIND_ENCODER
+    lay = (lambda n: n) if layers else (lambda n: None)
+    enc = lambda role, layer: C(E, 0, role, ring=0, mode=P.ENC_ABSOLUTE, layer=lay(layer))
+    return ([C(B, 0, "shift", layer=lay(0)), C(B, 1, "nav_back", layer=lay(0)),
+             C(B, 2, "bank_left", led=0, layer=lay(0)), C(B, 3, "bank_right", led=1, layer=lay(0)),
+             C(B, 4, "device_bank_prev", led=2, layer=lay(ENC_ZYN + 1)),
+             C(B, 5, "device_bank_next", led=3, layer=lay(ENC_ZYN + 1)),
+             C(B, 6, "device_bank_prev", led=4, layer=lay(ENC_DEV + 1)),
+             C(B, 7, "device_bank_next", led=5, layer=lay(ENC_DEV + 1))] +
+            [enc("", 0) for _ in range(8)] +
+            [enc("zynthian.zynpot_%d" % n, ENC_ZYN + 1) for n in range(1, 5)] +
+            [enc("device_param_%d" % n, ENC_ZYN + 1) for n in range(1, 5)] +
+            [enc("device_param_%d" % n, ENC_DEV + 1) for n in range(1, 9)] +
+            [C(P.KIND_LED, i, "", colours=1, owner=P.OWNER_HOST_THEN_LOCAL, layer=lay(0)) for i in range(6)] +
+            [C(P.KIND_DISPLAY, 0, "param", cols=6, rows=1, display_type=1)])
+
+
+def enc_rig(modes=(ENC_ZYN,), layers=True, proc=True):
+    r = Rig(components=code61_enc_components(layers))
+    r.dev.modes_on = set(modes) if layers else set()
+    r.dev.replay_layers = layers
+    if proc:
+        r.chain(1).current_processor = synth()
+    r.drv.init()
+    return r
+
+
+@pytest.fixture
+def enc():
+    r = enc_rig()
+    yield r
+    r.drv.end()
+
+
+def turn(rig, index, delta):
+    rig.event(P.KIND_ENCODER, index, P.int_to_s14(delta))
+
+
+def press(rig, button):
+    rig.event(P.KIND_BUTTON, button, 1)
+    rig.event(P.KIND_BUTTON, button, 0)
+
+
+def zc(rig, symbol, chain=1):
+    for zs in rig.chain(chain).current_processor.screens.values():
+        for zz in zs:
+            if zz.symbol == symbol:
+                return zz
+
+
+def test_role_helpers():
+    assert [ZM.zynpot_role(r) for r in ("zynthian.zynpot_1", "zynthian.zynpot_4", "zynthian.zynpot_5",
+                                        "zynthian.zynpot_0", "zynpot_1", "device_param_1")] == [0, 3, None, None,
+                                                                                               None, None]
+    assert [ZM.device_param_number(r) for r in ("device_param_1", "device_param_8", "device_param_9",
+                                                "device_param_x", "zynthian.zynpot_1")] == [1, 8, None, None, None]
+
+
+def test_zynpot_twins_drive_the_zynpots(enc):
+    turn(enc, 8, 3)                             # E1 in enc_zyn: zynthian.zynpot_1
+    turn(enc, 11, -1)                           # E4: zynthian.zynpot_4 -> zynpot 3
+    assert enc.sm.cuias == [("ZYNPOT", [0, 3]), ("ZYNPOT", [3, -1])]
+    roles = [r for _k, _i, r in enc.drv.mapping.unknown_roles]
+    assert not [r for r in roles if "zynpot" in r or r.startswith("device_")]
+
+
+def test_device_param_turns_the_processors_controller(enc):
+    turn(enc, DP_ZYN, 2)                        # device_param_1: Main / volume
+    turn(enc, DP_ZYN + 1, -4)                   # device_param_2: tune
+    assert (zc(enc, "volume").value, zc(enc, "tune").value) == (102, 60)
+    assert zc(enc, "volume").nudges == [2]      # the controller's own nudge
+    turn(enc, DP_ZYN + 2, 1)                    # osc: one tick
+    assert zc(enc, "osc").value == 1
+    assert enc.sm.cuias == []                   # not the zynpots any more
+
+
+def test_device_param_paging_follows_screens_and_clamps(enc):
+    m = enc.drv.mapping
+    assert len(enc.drv.song.device_params()) == 12 and m._device_bank_count() == 3
+    assert m.device_page_step() == 1            # enc_zyn: device_param_1..4 live
+    press(enc, BANK_ZYN + 1)                    # device_bank_next
+    assert m.device_bank == 1
+    turn(enc, DP_ZYN, 1)                        # Filter / cutoff
+    turn(enc, DP_ZYN + 2, 1)                    # a padded gap: nothing
+    assert zc(enc, "cutoff").value == 65
+    press(enc, BANK_ZYN + 1)
+    press(enc, BANK_ZYN + 1)                    # clamped at the last page
+    assert m.device_bank == 2
+    turn(enc, DP_ZYN + 3, 5)
+    assert zc(enc, "release").value == 5
+    press(enc, BANK_ZYN)                        # device_bank_prev
+    assert m.device_bank == 1
+    press(enc, BANK_ZYN)
+    press(enc, BANK_ZYN)
+    assert m.device_bank == 0
+
+
+def test_device_bank_leds_show_where_it_can_go(enc):
+    enc.drv.tick()
+    leds = enc.leds()
+    assert leds[2] == 0 and leds[3] == 127      # page 0: next only
+    press(enc, BANK_ZYN + 1)
+    press(enc, BANK_ZYN + 1)
+    enc.drv.tick()
+    leds = enc.leds()
+    assert leds[2] == 127 and leds[3] == 0
+
+
+def test_device_mode_pages_by_eight(enc):
+    m = enc.drv.mapping
+    enc.dev.set_mode(ENC_ZYN, False)
+    enc.dev.set_mode(ENC_DEV, True)
+    assert enc.drv.device.layers_on == {ENC_DEV}
+    assert m.device_page_step() == 2            # device_param_1..8 live
+    turn(enc, DP_DEV + 4, 1)                    # device_param_5 on page 0: Filter / cutoff
+    assert zc(enc, "cutoff").value == 65
+    press(enc, BANK_DEV + 1)                    # by 2 pages
+    assert m.device_bank == 2
+    turn(enc, DP_DEV, 1)                        # device_param_1: Env / attack
+    assert zc(enc, "attack").value == 1
+    press(enc, BANK_DEV + 1)                    # clamped
+    assert m.device_bank == 2
+    press(enc, BANK_DEV)
+    assert m.device_bank == 0
+
+
+def test_page_step_from_liveness():
+    for modes, step in (((), 1), ((ENC_MIDI,), 1), ((ENC_ZYN,), 1), ((ENC_DEV,), 2), ((ENC_ZYN, ENC_DEV), 2)):
+        r = enc_rig(modes)
+        assert r.drv.mapping.device_page_step() == step, modes
+        r.drv.end()
+
+
+def test_role_on_two_twins_works_from_either(enc):
+    turn(enc, DP_ZYN, 1)                        # device_param_1, enc_zyn twin (E5)
+    enc.dev.set_mode(ENC_ZYN, False)
+    enc.dev.set_mode(ENC_DEV, True)
+    turn(enc, DP_DEV, 1)                        # device_param_1, enc_device twin (E1)
+    assert zc(enc, "volume").value == 102
+
+
+def test_page_resets_when_the_processor_or_chain_changes(enc):
+    m = enc.drv.mapping
+    press(enc, BANK_ZYN + 1)
+    press(enc, BANK_ZYN + 1)
+    assert m.device_bank == 2
+    enc.chain(1).current_processor = synth()            # another processor (same id here: 7)
+    enc.chain(1).current_processor.id = 8
+    enc.drv.tick()
+    assert m.device_bank == 0
+    press(enc, BANK_ZYN + 1)
+    enc.chain(2).current_processor = synth()
+    enc.sm.chain_manager.set_active_chain_by_id(2)
+    enc.drv.on_active_chain(2)
+    assert m.device_bank == 0
+    turn(enc, DP_ZYN, 1)
+    assert zc(enc, "volume", chain=2).value == 101 and zc(enc, "volume", chain=1).value == 100
+
+
+def test_page_clamped_when_the_screens_shrink(enc):
+    m = enc.drv.mapping
+    press(enc, BANK_ZYN + 1)
+    press(enc, BANK_ZYN + 1)
+    del enc.chain(1).current_processor.screens["Env"]
+    enc.drv.tick()
+    assert m.device_bank == 1
+
+
+def test_no_processor_maps_nothing():
+    r = enc_rig(proc=False)
+    r.dev.take()
+    turn(r, DP_ZYN, 1)
+    press(r, BANK_ZYN + 1)
+    assert r.drv.mapping.device_bank == 0 and r.sm.cuias == []
+    r.drv.end()
+
+
+def test_param_display_shows_the_controllers_name_and_value(enc):
+    enc.dev.take()
+    turn(enc, DP_ZYN + 1, 1)                    # tune 65
+    assert _texts(enc.dev.take()) == [(0, 0, 0, "Tun 65")]
+    turn(enc, DP_ZYN + 2, 1)                    # osc: its label
+    assert _texts(enc.dev.take()) == [(0, 0, 0, "Pulse ")]    # no room for the name
+    turn(enc, DP_ZYN + 3, 10)                   # glide: a float
+    assert _texts(enc.dev.take()) == [(0, 0, 0, "G 0.60")]
+    zc(enc, "volume").value = 127
+    turn(enc, DP_ZYN, 100)                      # clamped at 127
+    assert zc(enc, "volume").value == 127
+    assert _texts(enc.dev.take()) == [(0, 0, 0, "Vo 127")]
+    for _ in range(ZM.TEXT_HOLD_TICKS):
+        enc.drv.tick()
+    assert _texts(enc.dev.take()) == [(0, 0, 0, "Pianot")]
+
+
+def test_device_bank_shows_the_first_parameter_or_the_processor(enc):
+    enc.dev.take()
+    press(enc, BANK_ZYN + 1)
+    assert _texts(enc.dev.take()) == [(0, 0, 0, "Cutoff")]
+    enc.chain(1).current_processor.screens = OrderedDict()
+    enc.drv.tick()
+    enc.dev.take()
+    press(enc, BANK_ZYN)
+    assert _texts(enc.dev.take()) == [(0, 0, 0, "OB-Xd ")]
+
+
+def test_absolute_twins_get_the_value_and_follow_the_page(enc):
+    vals = dict(_values(enc.dev.take(), P.KIND_ENCODER))
+    assert vals[DP_ZYN] == round(100 / 127 * P.U14_MAX)         # absolute encoder: FB_VALUE
+    press(enc, BANK_ZYN + 1)
+    vals = dict(_values(enc.dev.take(), P.KIND_ENCODER))
+    assert vals[DP_ZYN] == round(64 / 127 * P.U14_MAX)          # now Filter / cutoff
+    enc.drv.tick()
+    assert not _values(enc.dev.take(), P.KIND_ENCODER)          # change-only
+
+
+def test_device_param_on_a_fader_sets_the_value():
+    comps = [C(P.KIND_ANALOG, 0, "device_param_3", takeover=P.TAKEOVER_NONE),
+             C(P.KIND_ANALOG, 1, "device_param_1", takeover=P.TAKEOVER_NONE)]
+    r = Rig(components=comps)
+    r.chain(1).current_processor = synth()
+    r.drv.init()
+    r.event(P.KIND_ANALOG, 0, P.U14_MAX * 3 // 4)              # osc: snapped to a tick
+    r.event(P.KIND_ANALOG, 1, P.U14_MAX // 2)
+    assert zc(r, "osc").value == 2 and zc(r, "volume").value == 63
+    r.drv.end()
+
+
+def test_read_only_and_file_controllers_are_left_alone(enc):
+    p = enc.chain(1).current_processor
+    p.screens["Main"][0].readonly = True
+    p.screens["Main"][1] = z("sample", value="/x/kick.wav", is_path=True)
+    turn(enc, DP_ZYN, 1)
+    turn(enc, DP_ZYN + 1, 1)
+    assert zc(enc, "volume").value == 100 and zc(enc, "sample").nudges == []
+    assert zc(enc, "tune") is None and enc.drv.song.device_params()[1].zctrl is zc(enc, "sample")
+    assert ZM._zctrl_value_text(zc(enc, "sample")) == "kick"
+
+
+def test_old_firmware_without_layers_counts_everything_live():
+    r = enc_rig(layers=False)
+    assert all(c.layer is None for c in r.drv.device.all_components())
+    assert r.drv.device.layers_on == set()
+    assert r.drv.mapping.device_page_step() == 2                # device_param_1..8 all count
+    turn(r, DP_ZYN, 1)
+    turn(r, DP_DEV + 7, 1)                                      # device_param_8: Filter's gap
+    assert zc(r, "volume").value == 101
+    r.drv.end()
+
+
+def test_old_firmware_four_device_params_page_by_one():
+    comps = [C(P.KIND_ENCODER, i, "device_param_%d" % (i + 1), ring=0, mode=P.ENC_REL_TWOS) for i in range(4)] + [
+        C(P.KIND_BUTTON, 0, "device_bank_next")]
+    r = Rig(components=comps)
+    r.dev.replay_layers = False
+    r.chain(1).current_processor = synth()
+    r.drv.init()
+    press(r, 0)
+    assert r.drv.mapping.device_bank == 1
+    r.drv.end()
+
+
+def test_layer_event_refreshes_and_is_not_a_control(enc):
+    enc.dev.take()
+    enc.dev.set_mode(ENC_ZYN, False)
+    assert enc.sm.cuias == [] and enc.drv.mapping.device_page_step() == 1
+    enc.dev.set_mode(ENC_DEV, True)
+    assert enc.drv.mapping.device_page_step() == 2

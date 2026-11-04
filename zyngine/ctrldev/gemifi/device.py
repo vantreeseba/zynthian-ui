@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Benjamin Van Treese
 # Copied from gemifi (hosts/ableton-live/gemifi/device.py), MIT licensed (channel_left/right ->
-# strip_prev/next, gemifi issue #21).
+# strip_prev/next, gemifi issue #21; layer modes from EVENT type 8).
 # See LICENSE-MIT in this directory. The rest of the gemifi driver is GPL.
 """State machine for one gemifi device on the script's port (protocol/sysex.md 4.6).
 
@@ -16,6 +16,11 @@ for firmware that has it, in case BOOTED went out before the port was open.
 Pure Python, no Live imports. Time is a tick counter: the surface calls tick() from Live's
 update_display (about every 100 ms). Requests are stop-and-wait (sysex.md 1): one outstanding
 request, resent with the same seq on a timeout, BAD_CHECKSUM or BUSY, up to MAX_TRIES sends.
+
+Layers: a component with `layer` n > 0 (a twin) is live only while mode n - 1 is on. EVENT type 8
+says when a mode turns on or off, and the device sends it once for every mode that is on when
+debug.events is set to 1, so `layers_on` is known by the time the session is ready. Firmware
+without the `layer` byte has no EVENT 8 either: every component is live.
 """
 
 from . import protocol as P
@@ -71,7 +76,8 @@ class Device(object):
     Callbacks (assign after construction):
       on_ready(device)  - components are known and EVENTs are on; drive feedback now
       on_lost(device)   - the device stopped answering (or rebooted); feedback state is gone
-      on_event(event)   - a protocol.Event (button / key / analog / encoder / touch / pad)
+      on_event(event)   - a protocol.Event (button / key / analog / encoder / touch / pad / layer;
+                          `layers_on` is already updated for a layer EVENT)
       on_log(text)      - diagnostics for the script's log
     """
 
@@ -92,6 +98,7 @@ class Device(object):
         self.hello = None
         self.components = {}          # kind -> list of Component, by index
         self.events_before = None     # debug.events before we turned it on (restored on release)
+        self.layers_on = set()        # mode indexes whose layers are on (EVENT type 8)
         self._seq = 0
         self._pending = None
         self._queue = []
@@ -107,6 +114,7 @@ class Device(object):
         self._queue = []
         self.hello = None
         self.components = {}
+        self.layers_on = set()
         self.sends_booted = False
         self.state = SEARCHING
         self._request(P.HELLO, b"", self._on_hello, self._on_search_failed)
@@ -124,6 +132,11 @@ class Device(object):
     def feedback_ok(self):
         """sysex.md 4.6.2: notifications only go to a device that set caps bit 6."""
         return self.hello is not None and self.hello.has_feedback
+
+    def is_live(self, component):
+        """Whether `component` takes its physical control now: not a twin (layer 0 or not
+        reported), or a twin whose mode is on."""
+        return component.live(self.layers_on)
 
     def all_components(self):
         out = []
@@ -241,6 +254,13 @@ class Device(object):
                 ev = P.parse_event(frame.payload)
             except P.ProtocolError:
                 return
+            if ev.type == P.EVENT_LAYER and self.state in (ENABLING, READY):
+                # Kept before ready too: the replay after SET_PARAM debug.events may come
+                # ahead of its reply.
+                if ev.value:
+                    self.layers_on.add(ev.index)
+                else:
+                    self.layers_on.discard(ev.index)
             if self.state == READY and self.on_event is not None:
                 self.on_event(ev)
         elif frame.cmd == P.LOG:

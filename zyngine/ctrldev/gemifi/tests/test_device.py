@@ -273,3 +273,57 @@ def test_pads_enumerated_and_old_firmware_has_none():
     assert dev.ready and dev.components[P.KIND_PAD] == [] and dev.components[P.KIND_METER] == []
     asked = [f.payload[0] for f in old.requests if f.cmd == P.GET_COMPONENT]
     assert P.KIND_PAD in asked and P.KIND_METER in asked
+
+
+# ---- encoder modes: layer twins are live while EVENT type 8 says their mode is on ----
+
+def _layer_components():
+    E = P.KIND_ENCODER
+    return [P.Component(E, 0, 0, "e1", "", "", ring=0, center=0, mode=0, layer=0),
+            P.Component(E, 1, 0, "e1_zyn", "", "zynthian.zynpot_1", ring=0, center=0, mode=0, layer=4),
+            P.Component(E, 2, 0, "e1_dev", "", "device_param_1", ring=0, center=0, mode=0, layer=5)]
+
+
+def test_layer_replay_after_enabling_events():
+    for first in (False, True):             # the replay may come before or after the SET_PARAM reply
+        fake = FakeDevice(_layer_components())
+        fake.modes_on = {0, 3}
+        fake.replay_first = first
+        dev = connect(fake)
+        dev.start()
+        assert dev.ready and dev.layers_on == {0, 3}, first
+        e = dev.components[P.KIND_ENCODER]
+        assert [dev.is_live(c) for c in e] == [True, True, False]
+        assert [ev.type for ev in dev.events] == ([] if first else [P.EV_LAYER, P.EV_LAYER])
+
+
+def test_layer_events_switch_twins():
+    fake = FakeDevice(_layer_components())
+    dev = connect(fake)
+    dev.start()
+    e = dev.components[P.KIND_ENCODER]
+    assert dev.layers_on == set() and [dev.is_live(c) for c in e] == [True, False, False]
+    fake.set_mode(3, False)
+    fake.set_mode(4, True)
+    assert dev.layers_on == {4} and [dev.is_live(c) for c in e] == [True, False, True]
+    assert [(ev.type, ev.index, ev.value) for ev in dev.events] == [(8, 3, 0), (8, 4, 1)]
+    fake.boot()                             # a restart: re-synced from the replay
+    assert dev.ready and dev.layers_on == {4}
+    fake.modes_on = set()                   # power-on starts in another mode, nothing on here
+    fake.boot()
+    assert dev.ready and dev.layers_on == set()
+
+
+def test_old_firmware_everything_live():
+    """No `layer` byte (and no EVENT 8): every component counts as live."""
+    fake = FakeDevice()
+    dev = connect(fake)
+    dev.start()
+    assert all(c.layer is None and dev.is_live(c) for c in dev.all_components())
+
+
+def test_layer_events_before_hello_ignored():
+    fake = FakeDevice(_layer_components())
+    dev = connect(fake)
+    fake.out(P.build_frame(P.EVENT, 0, P.build_event(P.EV_LAYER, 4, 1)))
+    assert dev.layers_on == set()

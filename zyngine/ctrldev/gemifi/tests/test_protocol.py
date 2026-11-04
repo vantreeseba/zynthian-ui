@@ -282,3 +282,54 @@ def test_daw_scripts_example_frames():
     assert [(e.type, e.index, e.value) for e in evs] == [(5, 2, 1), (5, 2, 0), (7, 28, 9000), (7, 28, 0)]
     assert P.build_frame(P.FB_METER, 0, P.fb_meter(0, 100)) == hx("F0 7D 67 6D 01 27 00 04 00 00 00 64 00 10 F7")
     assert P.build_frame(P.FB_METER, 0, P.fb_meter(8, 127, True)) == hx("F0 7D 67 6D 01 27 00 04 00 08 00 7F 01 34 F7")
+
+
+# ---- encoder modes: the GET_COMPONENT `layer` byte and EVENT type 8 ----
+
+@pytest.mark.parametrize("c,before", [
+    (P.Component(P.KIND_BUTTON, 2, 9, "b2_arm", "B2 arm", "arm_1", led=12, layer=1), hx("0C 00")),
+    (P.Component(P.KIND_ENCODER, 12, 24, "e5_zyn", "E5 zyn", "device_param_1", ring=0, center=P.NONE_INDEX,
+                 mode=P.ENC_ABSOLUTE, layer=4), hx("00 7F 7F 00")),
+    (P.Component(P.KIND_LED, 30, 40, "led_x", "", "", colours=1, owner=P.OWNER_HOST, layer=2), hx("01 01")),
+    (P.Component(P.KIND_PAD, 16, 32, "pad1_pads", "Pad 1", "clip_1_4", led=20, layer=2), hx("14 00")),
+])
+def test_layer_byte(c, before):
+    payload = P.build_component_reply(c)
+    assert payload.endswith(before + bytes([c.layer]))          # last, after led / mode / owner
+    got = P.parse_component_reply(payload + hx("7F 7F"))         # later bytes ignored
+    assert (got.kind, got.role, got.layer, got.is_twin) == (c.kind, c.role, c.layer, True)
+    assert (got.led, got.mode, got.owner) == (c.led, c.mode, c.owner)
+
+
+def test_layer_byte_absent_or_zero():
+    """Older firmware sends no `layer`: None, not a twin. 0 = always there."""
+    for c in (P.Component(P.KIND_BUTTON, 0, 1, led=3),
+              P.Component(P.KIND_ENCODER, 0, 1, ring=0, center=0, mode=P.ENC_REL_TWOS),
+              P.Component(P.KIND_ENCODER, 0, 1, ring=0, center=0),
+              P.Component(P.KIND_LED, 0, 1, colours=1, owner=P.OWNER_HOST),
+              P.Component(P.KIND_LED, 0, 1, colours=1),
+              P.Component(P.KIND_PAD, 0, 1, led=3)):
+        got = P.parse_component_reply(P.build_component_reply(c))
+        assert got.layer is None and not got.is_twin, c
+    zero = P.parse_component_reply(P.build_component_reply(P.Component(P.KIND_BUTTON, 0, 1, led=3, layer=0)))
+    assert zero.layer == 0 and not zero.is_twin
+    # A layer needs the byte before it: an encoder / LED without mode / owner gets the default.
+    e = P.parse_component_reply(P.build_component_reply(P.Component(P.KIND_ENCODER, 0, 1, layer=3)))
+    assert (e.mode, e.layer) == (P.ENC_ABSOLUTE, 3)
+    x = P.parse_component_reply(P.build_component_reply(P.Component(P.KIND_LED, 0, 1, layer=3)))
+    assert (x.owner, x.layer) == (P.OWNER_HOST_THEN_LOCAL, 3)
+
+
+def test_layer_event():
+    f = P.parse_frame(P.build_frame(P.EVENT, 0, P.build_event(P.EV_LAYER, 4, 1, 99)))
+    ev = P.parse_event(f.payload)
+    assert (ev.type, ev.index, ev.value, ev.pressed) == (8, 4, 1, True)
+    assert not P.parse_event(P.build_event(P.EV_LAYER, 4, 0)).pressed
+
+
+def test_component_live_helpers():
+    twin = P.Component(P.KIND_ENCODER, 0, 1, layer=4)
+    assert (twin.mode_index, twin.live({3}), twin.live({2})) == (3, True, False)
+    for c in (P.Component(P.KIND_ENCODER, 0, 1, layer=0), P.Component(P.KIND_ENCODER, 0, 1)):
+        assert c.mode_index is None and c.live(set())
+    assert P.EVENT_LAYER == P.EV_LAYER == 8

@@ -29,8 +29,11 @@ The driver asks the device which buttons, faders, encoders and LEDs it has and w
 is for (its "role": play, volume_3, mute_1, device_param_2, clip_1_1...), hears presses and
 moves as EVENT messages, and drives the LEDs, fader pick-up, encoder rings and display from
 Zynthian's state. Pads with clip_T_S roles are a window on zynpad's launcher grid (chains x
-phrases), launched the way zynpad launches pads. The device's notes and CCs keep reaching the
-chains as usual.
+phrases), launched the way zynpad launches pads. zynthian.zynpot_N encoders are Zynthian's
+knobs; device_param_N are the selected chain's current processor's parameters, paged with
+device_bank_prev / next by as many pages of 4 as there are live device_param controls (layer
+twins count only while their mode is on, from EVENT type 8). The device's notes and CCs keep
+reaching the chains as usual.
 
 Specs: gemifi protocol/daw-scripts.md and hosts/zynthian/README.md. The protocol, session
 and role logic in gemifi/ are the MIT reference code from gemifi's Ableton Live script;
@@ -82,7 +85,7 @@ class zynthian_ctrldev_gemifi(zynthian_ctrldev_zynpad, zynthian_ctrldev_zynmixer
 							pad_press=self.on_pad_press, pad_release=self.on_pad_release,
 							switch_thresholds=_switch_thresholds)
 		self.device = Device(self._send)
-		self.mapping = ZynMapping(self.song, self.device.notify, log=self._log)
+		self.mapping = ZynMapping(self.song, self.device.notify, log=self._log, live=self.device.is_live)
 		self.device.on_ready = self._on_ready
 		self.device.on_lost = self._on_lost
 		self.device.on_event = self.mapping.handle_event

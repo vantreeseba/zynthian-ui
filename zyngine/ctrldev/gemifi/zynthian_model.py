@@ -26,10 +26,12 @@
 
 No Zynthian imports: everything comes in through the state manager (and the callbacks) the
 driver passes, so the tests can use fakes. Chains are the tracks, the chain mixer is the mixer,
-zynseq phrases are the scenes, Zynthian's four zynpots are device_param_1..4, and the clip grid
-is zynpad's launcher grid: columns are chains (in mixer order), rows are phrases.
+zynseq phrases are the scenes, Zynthian's four zynpots are zynthian.zynpot_1..4, device_param_N
+are the selected chain's current processor's parameters (its control screens, 4 a page), and
+the clip grid is zynpad's launcher grid: columns are chains (in mixer order), rows are phrases.
 """
 
+import os
 import re
 import unicodedata
 
@@ -65,6 +67,9 @@ ZYNPOT_SELECT = 3           # the select knob: nav_scroll
 HOST_NAMESPACE = "zynthian."
 _CUIA_ROLE = re.compile(r"^zynthian\.([a-z0-9_]+)$")
 _CLIP_ROLE = re.compile(r"^clip_([1-8])_([1-8])$")
+_ZYNPOT_ROLE = re.compile(r"^zynthian\.zynpot_([1-%d])$" % NUM_ZYNPOTS)
+_DEVICE_PARAM_ROLE = re.compile(r"^device_param_([1-8])$")
+PARAMS_PER_PAGE = 4         # a control screen's controllers: device pages are in units of 4
 GRID_STEPS = {"grid_left": (-1, 0), "grid_right": (1, 0), "grid_up": (0, -1), "grid_down": (0, 1)}
 TEXT_HOLD_TICKS = 15        # a knob's value stays on the display ~1.5 s, then the chain name
 DISPLAY_NAME_ROLES = ("", "track_name")     # show the selected chain's name
@@ -82,6 +87,18 @@ def param_label(role):
     if base in ("volume", "pan") and num.isdigit():
         return base[0].upper() + num
     return ""
+
+
+def device_param_number(role):
+    """'device_param_3' -> 3 (1..8); else None."""
+    m = _DEVICE_PARAM_ROLE.match(role or "")
+    return int(m.group(1)) if m else None
+
+
+def zynpot_role(role):
+    """'zynthian.zynpot_2' -> 1, the zynpot's index (0..3); else None."""
+    m = _ZYNPOT_ROLE.match(role or "")
+    return int(m.group(1)) - 1 if m else None
 
 
 def clip_role(role):
@@ -104,8 +121,7 @@ def press_type(held_ms, bold_us=SWITCH_BOLD_US, long_us=SWITCH_LONG_US):
 # they're logged once and ignored, as daw-scripts.md §6 asks.
 UNSUPPORTED_BUTTON_ROLES = frozenset((
     "loop", "overdub", "automation_arm", "undo", "redo", "rewind", "fast_forward",
-    "device_prev", "device_next", "device_bank_prev", "device_bank_next", "device_on",
-    "stop_all_clips"))
+    "device_prev", "device_next", "device_on", "stop_all_clips"))
 UNSUPPORTED_CONT_ROLES = frozenset(("cue_volume", "crossfader", "send_a", "send_b"))
 
 
@@ -167,6 +183,73 @@ class ZctrlParam(Param):
         z = self._lookup()
         if z is not None and not z.readonly:
             z.nudge(delta)
+
+
+def _zctrl_value_text(z):
+    """A controller's value for the param display: its label, a file name, or the number."""
+    v = z.value
+    if getattr(z, "is_path", False):
+        return os.path.splitext(os.path.basename(str(v or "")))[0]
+    if getattr(z, "ticks", None) and getattr(z, "labels", None):
+        try:
+            return str(z.get_value2label())
+        except Exception:
+            pass
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    if getattr(z, "is_integer", False) or abs(v) >= 100:
+        return "%d" % round(v)
+    return ("%.1f" if abs(v) >= 10 else "%.2f") % v
+
+
+class ProcParam(ZctrlParam):
+    """One of the current processor's controllers (device_param_N). Turns go through the
+    controller's own nudge (its nudge factor, or one tick for a list); absolute moves are
+    clamped to its range (snapped to a tick for a list). File-path controllers are left alone:
+    nudging one opens Zynthian's file selector."""
+
+    def __init__(self, zctrl, key):
+        ZctrlParam.__init__(self, lambda: zctrl, key)
+        self.zctrl = zctrl
+
+    @property
+    def name_label(self):
+        z = self.zctrl
+        return getattr(z, "short_name", None) or getattr(z, "name", None) or getattr(z, "symbol", "") or ""
+
+    def _fixed(self):
+        z = self.zctrl
+        return z.readonly or getattr(z, "is_path", False)
+
+    def display_text(self):
+        return _zctrl_value_text(self.zctrl)
+
+    def get_norm(self):
+        if getattr(self.zctrl, "is_path", False):
+            return 0.0
+        try:
+            return _norm(self.zctrl)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def set_norm(self, value):
+        if self._fixed():
+            return
+        z = self.zctrl
+        target = _denorm(z, min(1.0, max(0.0, value)))
+        ticks = getattr(z, "ticks", None)
+        if ticks:
+            try:
+                target = min(ticks, key=lambda t: abs(t - target))
+            except TypeError:
+                pass
+        z.set_value(target)
+
+    def nudge(self, delta):
+        if not self._fixed():
+            self.zctrl.nudge(int(delta))
 
 
 class TempoParam(Param):
@@ -273,6 +356,8 @@ class ZynSong(Song):
         self._pad_press = pad_press
         self._pad_release = pad_release
         self._switch_thresholds = switch_thresholds
+        self._params_sig = None         # device_params() cache: what it was built from ...
+        self._params = []               # ... and the list
 
     @property
     def chains(self):
@@ -370,6 +455,61 @@ class ZynSong(Song):
         z = self.zynseq
         z.libseq.togglePlayState(z.scene, z.phrase, PHRASE_CHANNEL)
 
+    # ---- the current processor: device_param_N ----
+
+    def current_processor(self):
+        """(active chain, its current processor), as zynthian_gui.get_current_processor() falls
+        back to it; (None, None) when there's none."""
+        chain = self.sm.chain_manager.get_active_chain()
+        if chain is None:
+            return None, None
+        return chain, getattr(chain, "current_processor", None)
+
+    def device_key(self):
+        """Changes when the selected chain or its current processor does (the page goes back to 0)."""
+        chain, proc = self.current_processor()
+        if proc is None:
+            return None
+        pid = getattr(proc, "id", None)
+        return (chain.chain_id, pid if pid is not None else id(proc))
+
+    def device_params(self):
+        """The current processor's control screens' controllers, in screen order, each screen
+        padded to PARAMS_PER_PAGE (None in the gaps) so a page is a screen, as Zynthian shows it.
+        Screens without controllers are left out (the control screen skips them too)."""
+        _chain, proc = self.current_processor()
+        if proc is None:
+            return []
+        try:
+            screens = list(proc.get_ctrl_screens().values())
+        except Exception:
+            return []           # being rebuilt (init_ctrl_screens): the next tick reads it again
+        key = self.device_key()
+        # Every device_param binding asks on every refresh: rebuild only when the controllers or
+        # their screens change. The cached list holds the controllers, so their ids stay unique.
+        sig = (key, tuple(tuple(id(z) for z in (zs or ())) for zs in screens))
+        if sig == self._params_sig:
+            return self._params
+        out = []
+        for zctrls in screens:
+            zctrls = [z for z in (zctrls or []) if z is not None]
+            for z in zctrls:
+                out.append(ProcParam(z, (key, len(out), getattr(z, "symbol", None))))
+            out.extend([None] * (-len(zctrls) % PARAMS_PER_PAGE))
+        self._params_sig, self._params = sig, out
+        return out
+
+    def device_name(self):
+        """The current processor's name, or ""."""
+        _chain, proc = self.current_processor()
+        if proc is None:
+            return ""
+        try:
+            name = proc.get_name()
+        except Exception:
+            name = None
+        return name or getattr(proc, "name", "") or ""
+
     # ---- zynpots, switches ----
 
     def zynpot(self, index):
@@ -461,19 +601,26 @@ class _ClipBinding(object):
 
 class ZynMapping(Mapping):
     """mapping.Mapping with Zynthian's differences: stop and record behave like Zynthian's
-    transport, device_param_1..4 drive the zynpots, master_mute mutes the main chain, faders
-    can jump instead of picking up, displays show the active chain's name (and a `param`
-    display the value being moved), clip_T_S pads show and launch zynpad's grid, nav_* drive
-    Zynthian's switches and arrows, zynthian.<cuia> runs a CUIA, and roles Zynthian has no use
-    for are left unbound (and so logged as unknown)."""
+    transport, zynthian.zynpot_1..4 drive the zynpots, device_param_N the current processor's
+    parameters (paged by device_bank_prev / next, by as many pages of 4 as there are live
+    device_param controls), master_mute mutes the main chain, faders can jump instead of
+    picking up, displays show the active chain's name (and a `param` display the value being
+    moved), clip_T_S pads show and launch zynpad's grid, nav_* drive Zynthian's switches and
+    arrows, zynthian.<cuia> runs a CUIA, and roles Zynthian has no use for are left unbound (and
+    so logged as unknown).
+
+    `device_bank` is the device page, in units of PARAMS_PER_PAGE: device_param_N is parameter
+    device_bank * 4 + N - 1. `live(component)` says whether a component takes its physical
+    control now (Device.is_live: layer twins only while their mode is on)."""
 
     # False: a fader sets its parameter as soon as it moves (jump). True: it waits until it
     # reaches the parameter's value (pick-up, in the device and in Mapping._analog).
     fader_pickup = True
     host_namespace = HOST_NAMESPACE
 
-    def __init__(self, song, notify, log=None):
+    def __init__(self, song, notify, log=None, live=None):
         Mapping.__init__(self, song, notify, log)
+        self.live = live if live is not None else (lambda c: True)
         self._displays = []         # every display with a name role or `param`
         self._param_displays = []
         self._text_cache = {}
@@ -560,6 +707,9 @@ class ZynMapping(Mapping):
                     return
             elif ev.type == P.EV_TOUCH:
                 return                      # nothing in Zynthian uses touch yet
+            elif ev.type == P.EV_LAYER:
+                self.refresh()              # the device has updated layers_on: other controls are live
+                return
             Mapping.handle_event(self, ev)
             if ev.type in (P.EV_ANALOG, P.EV_ENCODER):
                 table = self._analogs if ev.type == P.EV_ANALOG else self._encoders
@@ -711,15 +861,63 @@ class ZynMapping(Mapping):
 
     def _show_value(self, p, role):
         """A knob with `role` moved `p`: "<short name> <value>" on the param displays (just the
-        value when both don't fit), for TEXT_HOLD_TICKS."""
+        value when both don't fit; a processor parameter's name is cut to fit instead), for
+        TEXT_HOLD_TICKS."""
         if not self._param_displays:
             return
         value = p.display_text() if hasattr(p, "display_text") else "%d" % round(p.get_norm() * 100)
+        name = getattr(p, "name_label", None)
         label = param_label(role)
         for c in self._param_displays:
-            both = "%s %s" % (label, value)
-            self._show_text(c, both if label and len(both) <= c.cols else value)
+            if name:
+                room = c.cols - len(value) - 1
+                text = "%s %s" % (name[:room].rstrip(), value) if room >= 1 else value
+            else:
+                both = "%s %s" % (label, value)
+                text = both if label and len(both) <= c.cols else value
+            self._show_text(c, text)
         self._text_hold = TEXT_HOLD_TICKS
+
+    def _hold_text(self, text):
+        """`text` on the param displays for TEXT_HOLD_TICKS, then the chain name again."""
+        if not self._param_displays:
+            return
+        for c in self._param_displays:
+            self._show_text(c, text)
+        self._text_hold = TEXT_HOLD_TICKS
+
+    # ---- device pages (device_param_N, device_bank_prev / next) ----
+
+    def _device_bank_count(self):
+        """Pages of PARAMS_PER_PAGE parameters (the base class counts banks of 8)."""
+        n = len(self.song.device_params())
+        return (n + PARAMS_PER_PAGE - 1) // PARAMS_PER_PAGE
+
+    def device_page_step(self):
+        """Pages a device_bank_prev / next press moves: ceil(live device_param_N / 4), counting
+        each N once (1 with device_param_1..4 live, 2 with 1..8), at least 1."""
+        live = set()
+        for table in (self._analogs, self._encoders):
+            for b in table.values():
+                n = device_param_number(b.component.role)
+                if n is not None and self.live(b.component):
+                    live.add(n)
+        return max(1, (len(live) + PARAMS_PER_PAGE - 1) // PARAMS_PER_PAGE)
+
+    def _can_device_bank_step(self, d):
+        if d < 0:
+            return self.device_bank > 0
+        return self.device_bank + 1 < self._device_bank_count()
+
+    def device_bank_step(self, d):
+        """Move by device_page_step() pages, clamped to the pages that exist, and show the new
+        page's first parameter (or the processor's name)."""
+        last = max(0, self._device_bank_count() - 1)
+        self.device_bank = min(last, max(0, self.device_bank + d * self.device_page_step()))
+        params = self.song.device_params()
+        k = self.device_bank * PARAMS_PER_PAGE
+        p = params[k] if k < len(params) else None
+        self._hold_text(p.name_label if p is not None else self.song.device_name())
 
     def blank_displays(self):
         """Every display blank (sleep). Like all_leds_off, the cache then says blank."""
@@ -737,12 +935,16 @@ class ZynMapping(Mapping):
             return None
         if role == "nav_scroll":
             return lambda: self.song.zynpot(ZYNPOT_SELECT)
-        if role.startswith("device_param_"):
-            num = role[len("device_param_"):]
-            if not num.isdigit() or not 1 <= int(num) <= NUM_ZYNPOTS:
-                return None
-            index = int(num) - 1
-            return lambda: self.song.zynpot(index)
+        zp = zynpot_role(role)
+        if zp is not None:
+            return lambda: self.song.zynpot(zp)
+        n = device_param_number(role)
+        if n is not None:
+            def target(i=n - 1):
+                params = self.song.device_params()
+                k = self.device_bank * PARAMS_PER_PAGE + i
+                return params[k] if 0 <= k < len(params) else None
+            return target
         return Mapping._cont_role(self, role)
 
     def _analog(self, b, raw):

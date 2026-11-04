@@ -59,6 +59,9 @@ class FakeDevice(object):
         self.silent = False          # unplugged: answers nothing
         self._count = {}
         self.out = None              # callable(bytes): into the script
+        self.modes_on = set()        # layer modes that are on (EVENT type 8)
+        self.replay_layers = True    # SET_PARAM debug.events 1 replays EVENT 8 (firmware with layers)
+        self.replay_first = False    # ... ahead of the SET_PARAM reply
 
     def wire(self, data):
         """The script sent `data`."""
@@ -71,8 +74,24 @@ class FakeDevice(object):
         if self.silent or (f.cmd, n) in self.drop:
             return
         reply = self.answer(f)
+        replay = (f.cmd == P.SET_PARAM and P.dec_u14(f.payload[0:2]) == P.PARAM_DEBUG_EVENTS and
+                  P.dec_s32(f.payload[4:9]) == 1 and self.replay_layers and self.out is not None)
+        if replay and self.replay_first:
+            self._replay_layers()
         if reply is not None and self.out is not None:
             self.out(P.build_frame(f.cmd | P.REPLY, f.seq, reply))
+        if replay and not self.replay_first:
+            self._replay_layers()
+
+    def _replay_layers(self):
+        for m in sorted(self.modes_on):
+            self.event(P.EV_LAYER, m, 1)
+
+    def set_mode(self, index, on):
+        """A layer turns on or off: EVENT type 8 while debug.events is on."""
+        (self.modes_on.add if on else self.modes_on.discard)(index)
+        if self.params.get(P.PARAM_DEBUG_EVENTS) == 1 and self.out is not None:
+            self.event(P.EV_LAYER, index, 1 if on else 0)
 
     def answer(self, f):
         if f.cmd == P.HELLO:
