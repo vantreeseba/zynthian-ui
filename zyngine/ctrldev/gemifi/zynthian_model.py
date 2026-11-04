@@ -251,6 +251,11 @@ class ZynSong(Song):
     def select_track(self, track):
         self.sm.chain_manager.set_active_chain_by_id(track.key)
 
+    def master_track(self):
+        """The main chain (chain 0), or None."""
+        main = self.chains.get(0)
+        return ZynTrack(main) if main is not None else None
+
     def master_param(self, name):
         main = self.chains.get(0)
         if name == "volume" and main is not None:
@@ -278,8 +283,13 @@ class ZynSong(Song):
 
 class ZynMapping(Mapping):
     """mapping.Mapping with Zynthian's differences: stop and record behave like Zynthian's
-    transport, device_param_1..4 drive the zynpots, and roles Zynthian has no use for are
-    left unbound (and so logged as unknown)."""
+    transport, device_param_1..4 drive the zynpots, master_mute mutes the main chain, faders
+    can jump instead of picking up, and roles Zynthian has no use for are left unbound (and so
+    logged as unknown)."""
+
+    # False: a fader sets its parameter as soon as it moves (jump). True: it waits until it
+    # reaches the parameter's value (pick-up, in the device and in Mapping._analog).
+    fader_pickup = True
 
     def _button_role(self, role):
         if role in UNSUPPORTED_BUTTON_ROLES:
@@ -287,6 +297,8 @@ class ZynMapping(Mapping):
         s = self.song
         if role == "stop":
             return _ButtonRole(press=s.stop, momentary=True)
+        if role == "master_mute":
+            return self._track_flag_role("mute", s.master_track)
         if role == "record":
             # Zynthian records without playing, so no "armed" blink: lit while recording.
             return _ButtonRole(press=lambda: s.set_flag("record", not s.get_flag("record")),
@@ -306,13 +318,14 @@ class ZynMapping(Mapping):
 
     def _analog(self, b, raw):
         p = b.target()
-        if isinstance(p, ZynpotTarget):
-            p.set_norm(float(raw) / V14)    # Zynthian's own pick-up handles the jump
+        if isinstance(p, ZynpotTarget) or (p is not None and not self.fader_pickup):
+            p.set_norm(float(raw) / V14)    # zynpots: Zynthian's own pick-up handles the jump
             return
         Mapping._analog(self, b, raw)
 
     def _refresh_analog(self, b):
-        if isinstance(b.target(), ZynpotTarget):
+        # Jump mode sends no pick-up targets, so the device never holds a fader back.
+        if not self.fader_pickup or isinstance(b.target(), ZynpotTarget):
             self._value_cache[(P.KIND_ANALOG, b.component.index)] = None
             return
         Mapping._refresh_analog(self, b)

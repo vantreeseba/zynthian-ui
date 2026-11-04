@@ -57,6 +57,9 @@ class zynthian_ctrldev_gemifi(zynthian_ctrldev_zynmixer):
 	unroute_from_chains = False
 	# True: play / record / stop drive the MIDI (SMF) player and recorder instead of audio.
 	midi_transport = False
+	# False: faders jump to where they are as soon as they move. True: they pick up, doing
+	# nothing until they reach the current value.
+	fader_pickup = False
 
 	def __init__(self, state_manager, idev_in, idev_out=None):
 		super().__init__(state_manager, idev_in, idev_out)
@@ -135,6 +138,10 @@ class zynthian_ctrldev_gemifi(zynthian_ctrldev_zynmixer):
 		logging.info(f"gemifi [{self.idev}]: {text}")
 
 	def _on_ready(self, device):
+		self.mapping.fader_pickup = self.fader_pickup
+		if not self.fader_pickup:
+			# Drop pick-up targets left from earlier, so takeover: pickup faders send at once.
+			device.notify(P.FB_RELEASE, P.fb_release(P.RELEASE_VALUES))
 		self.mapping.bind(device.all_components())
 		for kind, index, role in self.mapping.unknown_roles:
 			if role not in self._logged_roles:
