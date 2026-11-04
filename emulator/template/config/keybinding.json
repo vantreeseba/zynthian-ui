@@ -1,0 +1,22 @@
+{
+  "Space": "ALL_NOTES_OFF",
+  "Backspace": "ZYNSWITCH 1",
+  "Escape": "ZYNSWITCH 1",
+  "Enter": "ZYNSWITCH 3",
+  "KeyI": "ZYNSWITCH 0",
+  "KeyK": "ZYNSWITCH 1",
+  "KeyO": "ZYNSWITCH 2",
+  "KeyL": "ZYNSWITCH 3",
+  "ArrowUp": "ARROW_UP",
+  "ArrowDown": "ARROW_DOWN",
+  "ArrowLeft": "ARROW_LEFT",
+  "ArrowRight": "ARROW_RIGHT",
+  "F1": "SCREEN_CHAIN_MANAGER",
+  "F2": "SCREEN_LAUNCHER",
+  "F3": "SCREEN_PATTERN_EDITOR",
+  "F4": "SCREEN_MIXER",
+  "F5": "SCREEN_ZYNPAD",
+  "F6": "SCREEN_SNAPSHOT",
+  "F7": "SCREEN_ADMIN",
+  "F8": "SCREEN_AUDIO_MIXER"
+}
