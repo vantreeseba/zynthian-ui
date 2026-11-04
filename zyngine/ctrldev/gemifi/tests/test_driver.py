@@ -151,6 +151,7 @@ def zyn_components():
         C(B, 8, "metronome", led=7),
         C(B, 9, "scene_next"),
         C(B, 10, "scene_launch"),
+        C(B, 11, "master_mute", led=8),
         C(A, 0, "volume_1", takeover=P.TAKEOVER_PICKUP),
         C(A, 1, "fader_2", takeover=P.TAKEOVER_NONE),
         C(A, 2, "master"),                  # mcu: name -> master_volume
@@ -159,15 +160,17 @@ def zyn_components():
         C(E, 1, "device_param_1", ring=11, mode=P.ENC_REL_TWOS),
         C(E, 2, "tempo", ring=0, mode=P.ENC_REL_TWOS),
         C(E, 3, "device_param_5", ring=0, mode=P.ENC_REL_TWOS),  # only 4 zynpots
-    ] + [C(L, i, "", colours=1, owner=P.OWNER_HOST_THEN_LOCAL) for i in range(8)]
+    ] + [C(L, i, "", colours=1, owner=P.OWNER_HOST_THEN_LOCAL) for i in range(9)]
 
 
 class Rig(object):
-    def __init__(self, components=None, caps=None, n_chains=10, logs=None):
+    def __init__(self, components=None, caps=None, n_chains=10, logs=None, fader_pickup=None):
         kw = {} if caps is None else {"caps": caps}
         self.dev = FakeDevice(zyn_components() if components is None else components, **kw)
         self.sm = FakeStateManager(n_chains)
         self.drv = DRIVER.zynthian_ctrldev_gemifi(self.sm, 3, 5)
+        if fader_pickup is not None:
+            self.drv.fader_pickup = fader_pickup
         SENT[5] = self.dev.wire
         self.dev.out = self.drv.midi_event
 
@@ -198,6 +201,14 @@ def rig():
     r.drv.end()
 
 
+@pytest.fixture
+def pickup_rig():
+    r = Rig(fader_pickup=True)
+    r.drv.init()
+    yield r
+    r.drv.end()
+
+
 def _values(notes, kind):
     return [(P.dec_u14(pl[1:3]), P.dec_u14(pl[3:5])) for cmd, pl in notes if cmd == P.FB_VALUE and pl[0] == kind]
 
@@ -209,12 +220,15 @@ def test_class_contract():
     assert cls.__name__ == "zynthian_ctrldev_gemifi"
     assert cls.dev_ids == ["*"]
     assert cls.unroute_from_chains is False
+    assert cls.fader_pickup is False
 
 
-def test_connects_enables_events_and_sends_initial_state(rig):
+def test_connects_enables_events_and_sends_initial_state(pickup_rig):
+    rig = pickup_rig
     assert rig.drv.device.ready
     assert rig.dev.params[P.PARAM_DEBUG_EVENTS] == 1
     notes = rig.dev.take()
+    assert (P.FB_RELEASE, P.fb_release(P.RELEASE_VALUES)) not in notes
     leds = {}
     for cmd, pl in notes:
         if cmd == P.FB_LED:
@@ -240,7 +254,8 @@ def test_unsupported_roles_logged_once(rig, caplog):
     assert "play" not in roles and "volume_1" not in roles
 
 
-def test_fader_sets_chain_level_without_echo(rig):
+def test_fader_sets_chain_level_without_echo(pickup_rig):
+    rig = pickup_rig
     rig.dev.take()
     rig.event(P.KIND_ANALOG, 0, 0x2000)                 # far from 0.8: not picked up yet
     assert rig.chain(1).z("level").value == 0.8
@@ -251,13 +266,33 @@ def test_fader_sets_chain_level_without_echo(rig):
     assert not _values(rig.dev.take(), P.KIND_ANALOG)
 
 
-def test_level_changed_on_screen_moves_pickup_target(rig):
+def test_level_changed_on_screen_moves_pickup_target(pickup_rig):
+    rig = pickup_rig
     rig.dev.take()
     rig.chain(1).z("level").set_value(0.25)
     rig.chain(2).z("level").set_value(0.25)
     rig.drv.update_mixer_strip(0, "level", 0.25)
     vals = _values(rig.dev.take(), P.KIND_ANALOG)
     assert vals == [(0, round(0.25 * P.U14_MAX))]       # fader_2 has no pick-up: nothing
+
+
+def test_jump_mode_releases_targets_and_sends_none(rig):
+    notes = rig.dev.take()
+    assert (P.FB_RELEASE, P.fb_release(P.RELEASE_VALUES)) in notes
+    assert not _values(notes, P.KIND_ANALOG)
+    rig.chain(1).z("level").set_value(0.25)
+    rig.drv.update_mixer_strip(0, "level", 0.25)
+    assert not _values(rig.dev.take(), P.KIND_ANALOG)
+
+
+def test_jump_mode_fader_jumps_at_once(rig):
+    rig.dev.take()
+    rig.event(P.KIND_ANALOG, 0, 0x2000)                 # far from 0.8: jumps anyway
+    assert rig.chain(1).z("level").value == pytest.approx(0x2000 / P.U14_MAX)
+    rig.event(P.KIND_ANALOG, 2, 0)                      # master
+    assert rig.drv.song.master_param("volume").get_norm() == 0.0
+    rig.drv.tick()
+    assert not _values(rig.dev.take(), P.KIND_ANALOG)
 
 
 def test_mute_button_toggles_and_led_follows_screen(rig):
@@ -268,6 +303,19 @@ def test_mute_button_toggles_and_led_follows_screen(rig):
     rig.chain(1).z("mute").set_value(0)                 # unmuted on the touchscreen
     rig.drv.tick()
     assert rig.leds() == {3: 0}
+
+
+def test_master_mute_toggles_main_chain(rig):
+    rig.leds()
+    rig.event(P.KIND_BUTTON, 11, 1)
+    rig.event(P.KIND_BUTTON, 11, 0)
+    assert rig.chain(0).z("mute").value == 1
+    assert rig.chain(1).z("mute").value == 0
+    rig.drv.tick()
+    assert rig.leds().get(8) == 127
+    rig.chain(0).z("mute").set_value(0)                 # unmuted on the touchscreen
+    rig.drv.tick()
+    assert rig.leds().get(8) == 0
 
 
 def test_play_record_stop_use_audio_cuias(rig):
