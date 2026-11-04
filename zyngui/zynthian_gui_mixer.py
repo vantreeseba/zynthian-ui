@@ -2979,6 +2979,8 @@ class zynthian_gui_mixer(zynthian_gui_base):
             src_info = params[0]
             clippy_proc = params[1]
             clippy_proc.engine.copy_clip(src_info[3], src_info[1], clippy_proc, self.zynseq.phrase)
+            # Pasting over a filled pad changes its name/length but not its play state
+            clippy_proc.engine.send_pad_changed(clippy_proc, self.zynseq.phrase)
         except Exception as e:
             logging.error(e)
 
@@ -3317,6 +3319,11 @@ class zynthian_gui_mixer(zynthian_gui_base):
                     # A pattern always has a length => back to a single bar
                     self.zynseq.libseq.setBeatsInPattern(pattern, self.zynseq.bpb)
                 self.zynseq.libseq.updateSequenceInfo()
+                # The grid reads the pad's event count from the cached state => refresh
+                # it, then redraw the pad (and controller LEDs)
+                self.zynseq.refresh_state(send=False)
+                zynsigman.send_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE,
+                                      phrase=phrase, chan=chain.midi_chan)
                 self.set_title("Pad cleared, length reset" if reset_length else "Pad cleared", None, None, 2)
 
     def cuia_toggle_seq_row(self, params=None):

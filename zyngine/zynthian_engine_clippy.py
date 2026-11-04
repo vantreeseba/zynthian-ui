@@ -514,6 +514,7 @@ class zynthian_engine_clippy(zynthian_engine):
         fpath = file_zctrl.value
         file_zctrl.set_value("", False)
         self.set_file(processor, phrase)
+        self.send_pad_changed(processor, phrase)
         if delete_file and fpath and os.path.isfile(fpath):
             # Don't delete a file still referenced by another clip pad, including pads
             # beyond the current phrase count (their controllers survive phrase removal)
@@ -556,7 +557,19 @@ class zynthian_engine_clippy(zynthian_engine):
             return False
         self.libseq.setSequenceLength(self.zynseq.scene, phrase, processor.midi_chan, 0)
         self.libseq.updateSequenceInfo()
+        self.send_pad_changed(processor, phrase)
         return True
+
+    def send_pad_changed(self, processor, phrase):
+        """ Tell the launcher grid and controller LEDs to redraw a clip pad
+
+        A pad's empty/filled look comes from its file controller, not the sequence
+        state, and clearing a stopped pad changes no play state => nothing else
+        signals the change.
+        """
+
+        zynsigman.send_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE,
+                              phrase=phrase, chan=processor.midi_chan)
 
     # ---------------------------------------------------------------
     # Callbacks to re-warp sample file when needed (on-the-fly)
