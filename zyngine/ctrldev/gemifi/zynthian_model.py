@@ -29,6 +29,8 @@ tests can use fakes. Chains are the tracks, the chain mixer is the mixer, zynseq
 the scenes and Zynthian's four zynpots are device_param_1..4.
 """
 
+import unicodedata
+
 from . import protocol as P
 from .mapping import Mapping, Param, Song, Track, V14, OFF, ON, _ButtonRole
 
@@ -52,6 +54,13 @@ def _norm(zctrl):
     if hi == lo:
         return 0.0
     return min(1.0, max(0.0, (float(zctrl.value) - lo) / (hi - lo)))
+
+
+def _display_text(text, cols):
+    """`text` as printable ASCII (accents dropped), cut and padded to `cols` characters."""
+    text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+    text = "".join(ch if " " <= ch <= "~" else " " for ch in text).strip()
+    return text[:cols].ljust(cols)
 
 
 def _denorm(zctrl, norm):
@@ -140,6 +149,11 @@ class ZynTrack(Track):
     @property
     def key(self):
         return self.chain.chain_id
+
+    @property
+    def name(self):
+        """The chain's short name, as on the mixer strip."""
+        return self.chain.get_name() or ""
 
     def _zctrl(self, symbol):
         proc = getattr(self.chain, "zynmixer_proc", None)
@@ -284,12 +298,44 @@ class ZynSong(Song):
 class ZynMapping(Mapping):
     """mapping.Mapping with Zynthian's differences: stop and record behave like Zynthian's
     transport, device_param_1..4 drive the zynpots, master_mute mutes the main chain, faders
-    can jump instead of picking up, and roles Zynthian has no use for are left unbound (and so
-    logged as unknown)."""
+    can jump instead of picking up, every display shows the active chain's name, and roles
+    Zynthian has no use for are left unbound (and so logged as unknown)."""
 
     # False: a fader sets its parameter as soon as it moves (jump). True: it waits until it
     # reaches the parameter's value (pick-up, in the device and in Mapping._analog).
     fader_pickup = True
+
+    def __init__(self, song, notify, log=None):
+        Mapping.__init__(self, song, notify, log)
+        self._displays = []
+        self._text_cache = {}
+
+    def bind(self, components):
+        Mapping.bind(self, components)
+        # Displays have no roles yet (hosts/README.md): each one shows the active chain.
+        self._displays = [c for c in components if c.kind == P.KIND_DISPLAY and c.cols and c.rows]
+
+    def forget(self):
+        Mapping.forget(self)
+        self._text_cache = {}
+
+    def refresh(self):
+        Mapping.refresh(self)
+        t = self.song.selected_track()
+        name = t.name if t is not None else ""
+        for c in self._displays:
+            self._show_text(c, name)
+
+    def blank_displays(self):
+        """Every display blank (sleep). Like all_leds_off, the cache then says blank."""
+        for c in self._displays:
+            self._show_text(c, "")
+
+    def _show_text(self, c, text):
+        line = _display_text(text, c.cols)
+        if self._text_cache.get(c.index) != line:
+            self._text_cache[c.index] = line
+            self.notify(P.FB_TEXT, P.fb_text(c.index, 0, 0, line))
 
     def _button_role(self, role):
         if role in UNSUPPORTED_BUTTON_ROLES:
