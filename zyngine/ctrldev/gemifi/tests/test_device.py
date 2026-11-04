@@ -28,7 +28,7 @@ def test_normalise_role():
     assert n("vpot_8") == "pan_8"
     assert n("rec_1") == "arm_1"
     assert (n("bank_left"), n("bank_right")) == ("bank_prev", "bank_next")
-    assert (n("channel_left"), n("channel_right")) == ("track_prev", "track_next")
+    assert (n("channel_left"), n("channel_right")) == ("strip_prev", "strip_next")
     assert (n("cycle"), n("click")) == ("loop", "metronome")
     for same in ("solo_2", "mute_4", "select_1", "play", "stop", "record", "rewind", "fast_forward", "undo",
                  "device_param_3", "x_mine", ""):
@@ -254,3 +254,22 @@ def test_keepalive_slows_down_with_booted():
     assert new.count(P.GET_PARAM) == 1
     dev.tick()
     assert new.count(P.GET_PARAM) == 2
+
+
+def test_pads_enumerated_and_old_firmware_has_none():
+    """Kind 7 after kind 6; firmware without pads or meters answers BAD_PARAM for 7 and 8."""
+    comps = default_components() + [P.Component(P.KIND_PAD, 0, 0, "pad1_pads", "", "clip_1_4", led=8),
+                                    P.Component(P.KIND_PAD, 1, 0, "pad2_pads", "", "clip_2_4", led=P.NONE_INDEX)]
+    fake = FakeDevice(comps)
+    dev = connect(fake)
+    dev.start()
+    assert dev.ready
+    pads = dev.components[P.KIND_PAD]
+    assert [(c.index, c.role, c.led) for c in pads] == [(0, "clip_1_4", 8), (1, "clip_2_4", P.NONE_INDEX)]
+    assert dev.components[P.KIND_METER] == []
+    old = FakeDevice()                                        # no pads: BAD_PARAM for kinds 7 and 8
+    dev = connect(old)
+    dev.start()
+    assert dev.ready and dev.components[P.KIND_PAD] == [] and dev.components[P.KIND_METER] == []
+    asked = [f.payload[0] for f in old.requests if f.cmd == P.GET_COMPONENT]
+    assert P.KIND_PAD in asked and P.KIND_METER in asked

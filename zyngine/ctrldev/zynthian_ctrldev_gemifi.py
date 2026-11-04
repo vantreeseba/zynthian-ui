@@ -26,9 +26,11 @@
 """gemifi devices: MIDI controllers that describe their own controls over SysEx.
 
 The driver asks the device which buttons, faders, encoders and LEDs it has and what each one
-is for (its "role": play, volume_3, mute_1, device_param_2...), hears presses and moves as
-EVENT messages, and drives the LEDs, fader pick-up and encoder rings from Zynthian's state.
-The device's notes and CCs keep reaching the chains as usual.
+is for (its "role": play, volume_3, mute_1, device_param_2, clip_1_1...), hears presses and
+moves as EVENT messages, and drives the LEDs, fader pick-up, encoder rings and display from
+Zynthian's state. Pads with clip_T_S roles are a window on zynpad's launcher grid (chains x
+phrases), launched the way zynpad launches pads. The device's notes and CCs keep reaching the
+chains as usual.
 
 Specs: gemifi protocol/daw-scripts.md and hosts/zynthian/README.md. The protocol, session
 and role logic in gemifi/ are the MIT reference code from gemifi's Ableton Live script;
@@ -39,7 +41,8 @@ import logging
 import threading
 
 from zyncoder.zyncore import lib_zyncore
-from zyngine.ctrldev.zynthian_ctrldev_base import zynthian_ctrldev_zynmixer
+from zyngine.ctrldev.zynthian_ctrldev_base import zynthian_ctrldev_zynpad, zynthian_ctrldev_zynmixer
+from zyngui import zynthian_gui_config
 from zyngine.ctrldev.gemifi import protocol as P
 from zyngine.ctrldev.gemifi.device import Device
 from zyngine.ctrldev.gemifi.zynthian_model import ZynSong, ZynMapping
@@ -47,7 +50,13 @@ from zyngine.ctrldev.gemifi.zynthian_model import ZynSong, ZynMapping
 TICK_SECONDS = 0.1      # the session's clock: request timeouts, retries, keep-alive, feedback
 
 
-class zynthian_ctrldev_gemifi(zynthian_ctrldev_zynmixer):
+def _switch_thresholds():
+	"""Zynthian's bold / long press times for its switches, in µs (read each time: the config
+	module sets them from the environment)."""
+	return zynthian_gui_config.zynswitch_bold_us, zynthian_gui_config.zynswitch_long_us
+
+
+class zynthian_ctrldev_gemifi(zynthian_ctrldev_zynpad, zynthian_ctrldev_zynmixer):
 
 	# Any port: the user picks "gemifi" for a device. HELLO confirms it's a gemifi device with
 	# host feedback; on anything else the driver stays idle and sends nothing but HELLO.
@@ -69,7 +78,9 @@ class zynthian_ctrldev_gemifi(zynthian_ctrldev_zynmixer):
 		self._thread = None
 		self._sleeping = False
 		self._logged_roles = set()
-		self.song = ZynSong(state_manager, lambda: self.chain_ids_filtered, self.midi_transport)
+		self.song = ZynSong(state_manager, lambda: self.chain_ids_filtered, self.midi_transport,
+							pad_press=self.on_pad_press, pad_release=self.on_pad_release,
+							switch_thresholds=_switch_thresholds)
 		self.device = Device(self._send)
 		self.mapping = ZynMapping(self.song, self.device.notify, log=self._log)
 		self.device.on_ready = self._on_ready
@@ -158,8 +169,10 @@ class zynthian_ctrldev_gemifi(zynthian_ctrldev_zynmixer):
 	# ---- Zynthian -> device ----
 
 	def refresh(self):
-		"""Chains changed, a snapshot loaded...: re-send everything."""
-		super().refresh()
+		"""Chains changed, a snapshot loaded, zynseq's state reloaded...: re-send everything."""
+		# Not zynpad's refresh(): it repaints pads through light_off() and update_pad(). The
+		# mapping draws the clip grid itself.
+		zynthian_ctrldev_zynmixer.refresh(self)
 		with self._lock:
 			if self.device.ready and not self._sleeping:
 				self.mapping.forget()
@@ -170,6 +183,17 @@ class zynthian_ctrldev_gemifi(zynthian_ctrldev_zynmixer):
 		with self._lock:
 			if self.device.ready and not self._sleeping:
 				self.mapping.refresh()
+
+	def update_seq_state(self, phrase=None, chan=None):
+		"""zynpad: a sequence's play state changed (SS_SEQ_PLAY_STATE). The mapping polls the grid
+		every tick anyway; this shows the change at once."""
+		self.update_mixer_strip(None, None, None)
+
+	def update_pad(self, row, col, pad_info):
+		pass	# the mapping draws the grid (see update_seq_state)
+
+	def pad_off(self, col, row):
+		pass	# no punch-in countdown flash on gemifi pads
 
 	def on_active_chain(self, active_chain_id):
 		super().on_active_chain(active_chain_id)

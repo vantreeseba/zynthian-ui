@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Benjamin Van Treese
-# Copied unchanged from gemifi (hosts/ableton-live/gemifi/mapping.py), MIT licensed.
+# Copied from gemifi (hosts/ableton-live/gemifi/mapping.py), MIT licensed (with strip_prev/next and
+# <host>.<command> roles, gemifi issue #21).
 # See LICENSE-MIT in this directory. The rest of the gemifi driver is GPL.
 """Roles -> behaviour (hosts/README.md, "Roles").
 
@@ -25,6 +26,7 @@ ENCODER_STEPS = 128           # encoder units for a parameter's full range
 PICKUP_WINDOW = V14 * 3 // 100  # an analog within 3 % of the target picks it up
 JUMP_BEATS = 4.0              # rewind / fast_forward step
 REPEAT_DELAY_TICKS = 3        # held rewind / fast_forward repeats after ~300 ms, then every tick
+HOST_NAMESPACE = "live."       # this script's <host>.<command> roles (none yet); other hosts' are ignored
 
 
 def to14(norm):
@@ -272,9 +274,13 @@ class Mapping(object):
                 table[c.index] = _ContBinding(c, target)
             # keys and displays: no roles in hosts/README.md yet
 
+    host_namespace = HOST_NAMESPACE
+
     def _unknown(self, c):
-        if not c.role.startswith("x_"):
-            self.unknown_roles.append((c.kind, c.index, c.role))
+        # x_ roles and another host's commands (<host>.<command>, daw-scripts.md 6): ignored quietly.
+        if c.role.startswith("x_") or ("." in c.role and not c.role.startswith(self.host_namespace)):
+            return
+        self.unknown_roles.append((c.kind, c.index, c.role))
 
     def forget(self):
         """Drop what was sent: the next refresh() sends everything (after ready / a release)."""
@@ -331,6 +337,10 @@ class Mapping(object):
         if role in ("bank_prev", "bank_next"):
             d = -1 if role == "bank_prev" else 1
             return _ButtonRole(press=lambda: self.bank_step(d),
+                               state=lambda: ON if self._can_bank_step(d) else OFF)
+        if role in ("strip_prev", "strip_next"):
+            d = -1 if role == "strip_prev" else 1
+            return _ButtonRole(press=lambda: self.bank_step(d, 1),
                                state=lambda: ON if self._can_bank_step(d) else OFF)
         base, n = _strip_role(role, ("mute", "solo", "arm", "select"))
         if base is not None:
@@ -430,9 +440,10 @@ class Mapping(object):
         n = len(self.song.bank_tracks())
         return self.bank_offset > 0 if d < 0 else self.bank_offset + STRIPS < n
 
-    def bank_step(self, d):
+    def bank_step(self, d, by=STRIPS):
+        """Move the strips by `by` tracks (bank_prev/next: 8, strip_prev/next: 1)."""
         if self._can_bank_step(d):
-            self.bank_offset = max(0, self.bank_offset + d * STRIPS)
+            self.bank_offset = max(0, self.bank_offset + d * by)
 
     def _device_bank_count(self):
         n = len(self.song.device_params())

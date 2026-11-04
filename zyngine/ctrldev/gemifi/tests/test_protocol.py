@@ -208,3 +208,77 @@ def test_feedback_vectors(vectors):
             seen.add("booted")
     assert {"booted", ("takeover", False), ("takeover", True), ("mode", False), ("mode", True),
             ("owner", False), ("owner", True)} <= seen
+
+
+# ---- issue #21: pads (kind 7), meters (kind 8), touch, EVENT types 5 and 7 ----
+
+def test_pad_component():
+    c = P.Component(P.KIND_PAD, 3, 32, "pad4_pads", "Pad 4", "clip_4_4", led=12)
+    payload = P.build_component_reply(c)
+    assert payload == (hx("00 07 03 00 20 00") + b"\x09pad4_pads" + b"\x05Pad 4" + b"\x08clip_4_4" + hx("0C 00"))
+    got = P.parse_component_reply(payload + hx("05 06"))      # bytes after `led` are ignored
+    assert (got.kind, got.index, got.count, got.role, got.led) == (P.KIND_PAD, 3, 32, "clip_4_4", 12)
+    assert got.has_led
+    assert not P.parse_component_reply(P.build_component_reply(
+        P.Component(P.KIND_PAD, 0, 1, led=P.NONE_INDEX))).has_led
+    with pytest.raises(P.ProtocolError):                    # `led` missing
+        P.parse_component_reply(payload[:-2])
+
+
+def test_meter_component():
+    c = P.Component(P.KIND_METER, 0, 1, "m1", "", "meter_1", segments=12, meter_type=P.METER_LED_BAR)
+    got = P.parse_component_reply(P.build_component_reply(c))
+    assert (got.kind, got.segments, got.meter_type, got.role) == (P.KIND_METER, 12, 1, "meter_1")
+
+
+def test_analog_touch_byte():
+    a = P.Component(P.KIND_ANALOG, 0, 1, takeover=P.TAKEOVER_NONE, touch=P.TOUCH_MOVEMENT)
+    assert P.build_component_reply(a)[-2:] == hx("00 02")
+    got = P.parse_component_reply(P.build_component_reply(a) + hx("7F"))    # extra byte ignored
+    assert (got.takeover, got.touch) == (P.TAKEOVER_NONE, P.TOUCH_MOVEMENT)
+    old = P.parse_component_reply(P.build_component_reply(P.Component(P.KIND_ANALOG, 0, 1, takeover=1)))
+    assert (old.takeover, old.touch) == (1, None)               # firmware from before `touch`
+    older = P.parse_component_reply(P.build_component_reply(P.Component(P.KIND_ANALOG, 0, 1)))
+    assert (older.takeover, older.touch) == (None, None)
+    assert P.Component(P.KIND_ANALOG, 0, 1, takeover=P.TAKEOVER_MOTOR).takes_value
+
+
+def test_touch_and_pad_events():
+    ev = P.parse_event(P.build_event(P.EV_TOUCH, 2, 1, 500))
+    assert (ev.type, ev.index, ev.value, ev.t_ms, ev.pressed) == (5, 2, 1, 500, True)
+    ev = P.parse_event(P.build_event(P.EV_PAD, 17, 16380, 9))
+    assert (ev.type, ev.index, ev.value, ev.pressed) == (7, 17, 16380, True)
+    assert not P.parse_event(P.build_event(P.EV_PAD, 17, 0)).pressed
+    assert P.parse_event(P.build_event(P.EV_PAD, 1, 4) + hx("01 02")).value == 4   # appended bytes ignored
+    with pytest.raises(P.ProtocolError):
+        P.parse_event(P.build_event(P.EV_PAD, 1, 4)[:-1])
+
+
+def test_t_ms_diff_wraps():
+    assert P.t_ms_diff(1300, 1000) == 300
+    assert P.t_ms_diff(100, P.T_MS_MASK - 199) == 300
+
+
+def test_fb_meter_payload():
+    assert P.fb_meter(2, 100, clip=True) == hx("02 00 64 01")
+    assert P.FB_METER == 0x27
+
+
+def test_daw_scripts_example_frames():
+    """The pad, touch and FB_METER examples in gemifi protocol/daw-scripts.md (issue #21)."""
+    f = P.parse_frame(hx("F0 7D 67 6D 01 51 51 24 00 00 07 1C 00 20 00 0B 70 61 64 5F 31 33 5F 70 61 64 73 06 50 61"
+                         " 64 20 31 33 08 63 6C 69 70 5F 31 5F 31 34 00 37 F7"))
+    c = P.parse_component_reply(f.payload)
+    assert (c.kind, c.index, c.count, c.id, c.role, c.led) == (P.KIND_PAD, 28, 32, "pad_13_pads", "clip_1_1", 52)
+    f = P.parse_frame(hx("F0 7D 67 6D 01 51 53 21 00 00 03 00 00 09 00 07 66 61 64 65 72 5F 31 07 46 61 64 65 72 20"
+                         " 31 08 76 6F 6C 75 6D 65 5F 31 01 02 58 F7"))
+    c = P.parse_component_reply(f.payload)
+    assert (c.takeover, c.touch) == (P.TAKEOVER_PICKUP, P.TOUCH_MOVEMENT)
+    evs = [P.parse_event(P.parse_frame(hx(h)).payload) for h in (
+        "F0 7D 67 6D 01 61 0A 09 00 05 02 00 01 00 08 27 00 00 2C F7",
+        "F0 7D 67 6D 01 61 0B 09 00 05 02 00 00 00 2C 2A 00 00 53 F7",
+        "F0 7D 67 6D 01 61 0C 09 00 07 1C 00 28 46 70 2E 00 00 26 F7",
+        "F0 7D 67 6D 01 61 0D 09 00 07 1C 00 00 00 40 2F 00 00 0A F7")]
+    assert [(e.type, e.index, e.value) for e in evs] == [(5, 2, 1), (5, 2, 0), (7, 28, 9000), (7, 28, 0)]
+    assert P.build_frame(P.FB_METER, 0, P.fb_meter(0, 100)) == hx("F0 7D 67 6D 01 27 00 04 00 00 00 64 00 10 F7")
+    assert P.build_frame(P.FB_METER, 0, P.fb_meter(8, 127, True)) == hx("F0 7D 67 6D 01 27 00 04 00 08 00 7F 01 34 F7")

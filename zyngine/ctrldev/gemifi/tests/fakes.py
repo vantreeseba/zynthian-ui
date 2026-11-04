@@ -101,8 +101,8 @@ class FakeDevice(object):
         payload = P.build_hello_reply(self.hello)[1:]
         self.out(P.build_frame(P.BOOTED, 5, payload))
 
-    def event(self, etype, index, value):
-        self.out(P.build_frame(P.EVENT, 0, P.build_event(etype, index, value, 1234)))
+    def event(self, etype, index, value, t_ms=1234):
+        self.out(P.build_frame(P.EVENT, 0, P.build_event(etype, index, value, t_ms)))
 
     def take(self, cmd=None):
         """Pop the notifications so far (optionally only `cmd`) as (cmd, payload bytes) pairs."""

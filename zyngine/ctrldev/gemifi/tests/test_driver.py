@@ -24,7 +24,7 @@ def _dev_send_midi_event(idev, msg, n):
 
 
 class _BaseStub(object):
-    """The parts of zynthian_ctrldev_zynmixer the driver relies on."""
+    """The parts of zynthian_ctrldev_base the driver relies on."""
 
     def __init__(self, state_manager, idev_in, idev_out=None):
         self.state_manager = state_manager
@@ -49,14 +49,41 @@ class _BaseStub(object):
         pass
 
 
+class _ZynmixerStub(_BaseStub):
+    pass
+
+
+class _ZynpadStub(_BaseStub):
+    """zynthian_ctrldev_zynpad: records pad presses (its toggle logic is Zynthian's own)."""
+
+    def __init__(self, state_manager, idev_in, idev_out=None):
+        super().__init__(state_manager, idev_in, idev_out)
+        self.pad_calls = []
+
+    def on_pad_press(self, phrase, midi_chan):
+        self.pad_calls.append(("press", phrase, midi_chan))
+
+    def on_pad_release(self, phrase, midi_chan):
+        self.pad_calls.append(("release", phrase, midi_chan))
+
+    def refresh(self):
+        raise AssertionError("the driver must not use zynpad's refresh (light_off + update_pad)")
+
+
+GUI_CONFIG = types.SimpleNamespace(zynswitch_bold_us=300 * 1000, zynswitch_long_us=2000 * 1000)
+
+
 def _load_driver():
     zyncore = types.ModuleType("zyncoder.zyncore")
     zyncore.lib_zyncore = types.SimpleNamespace(dev_send_midi_event=_dev_send_midi_event)
     sys.modules.setdefault("zyncoder", types.ModuleType("zyncoder"))
     sys.modules["zyncoder.zyncore"] = zyncore
     base = types.ModuleType("zyngine.ctrldev.zynthian_ctrldev_base")
-    base.zynthian_ctrldev_zynmixer = _BaseStub
+    base.zynthian_ctrldev_zynmixer = _ZynmixerStub
+    base.zynthian_ctrldev_zynpad = _ZynpadStub
     sys.modules["zyngine.ctrldev.zynthian_ctrldev_base"] = base
+    zyngui = sys.modules.setdefault("zyngui", types.ModuleType("zyngui"))
+    zyngui.zynthian_gui_config = GUI_CONFIG
     mod = importlib.import_module("zyngine.ctrldev.zynthian_ctrldev_gemifi")
     mod.TICK_SECONDS = 3600         # the tests tick by hand
     return mod
@@ -83,6 +110,8 @@ class FakeZctrl(object):
 class FakeChain(object):
     def __init__(self, chain_id):
         self.chain_id = chain_id
+        self.midi_chan = None if chain_id == 0 else chain_id - 1
+        self.clippy = None
         self.zynmixer_proc = types.SimpleNamespace(controllers_dict={
             "level": FakeZctrl(0.8), "balance": FakeZctrl(0.0, -1, 1),
             "mute": FakeZctrl(0, 0, 1, 1), "solo": FakeZctrl(0, 0, 1, 1), "record": FakeZctrl(0, 0, 1, 1)})
@@ -92,6 +121,9 @@ class FakeChain(object):
 
     def get_name(self):
         return "Main" if self.chain_id == 0 else "Pianoteq %d" % self.chain_id
+
+    def get_clippy_processor(self):
+        return self.clippy
 
 
 class FakeChainManager(object):
@@ -108,12 +140,21 @@ class FakeChainManager(object):
 
 
 class FakeZynseq(object):
-    def __init__(self):
+    """zynseq's launcher state as zynseq.state holds it: scenes -> phrases -> sequences[midi chan]
+    (33 per phrase in Zynthian; 32 here, the phrase launcher isn't used)."""
+
+    def __init__(self, phrases=4):
         self.tempo = 120.0
         self.zctrl_metro_mode = FakeZctrl(0, 0, 5, 1)
-        self.scene, self.phrase, self.phrases = 0, 0, 4
+        self.scene, self.phrase, self.phrases = 0, 0, phrases
         self.toggled = []
         self.libseq = types.SimpleNamespace(togglePlayState=lambda s, p, c: self.toggled.append((s, p, c)))
+        self.state = {"scenes": [{"phrases": [
+            {"sequences": [{"group": c, "repeat": 1, "state": 0, "nEvents": 0} for c in range(32)]}
+            for _p in range(phrases)]}]}
+
+    def seq(self, phrase, chan):
+        return self.state["scenes"][self.scene]["phrases"][phrase]["sequences"][chan]
 
     def get_tempo(self):
         return self.tempo
@@ -181,8 +222,8 @@ class Rig(object):
     def chain(self, cid):
         return self.sm.chain_manager.chains[cid]
 
-    def event(self, etype, index, value):
-        self.dev.event(etype, index, value)
+    def event(self, etype, index, value, t_ms=1234):
+        self.dev.event(etype, index, value, t_ms)
 
     def leds(self, notes=None):
         """{led: level} from the FB_LED / FB_LEDS notifications in `notes` (default: popped so far)."""
@@ -454,3 +495,370 @@ def test_no_output_port_sends_nothing():
     r.drv.init()
     assert not r.dev.requests
     r.drv.end()
+
+
+# ---- issue #21: clip grid, nav roles, zynthian.<cuia>, the param display ----
+
+from gemifi import zynthian_model as ZM
+
+TEAL, BLUE, BLACK = (0, 127, 127, 0), (0, 0, 127, 0), (0, 0, 0, 0)
+BLUE_BLINK = (0, 0, 127, 1)                 # a start or stop is queued
+PAD_LED0 = 3                        # pad k (1..16) has LED PAD_LED0 + k - 1
+
+
+def code61_pad_role(k):
+    """The Code 61's pad layer (contract §4): pad 1 bottom left, rows of 4, top row = scene 1."""
+    return "clip_%d_%d" % ((k - 1) % 4 + 1, 4 - (k - 1) // 4)
+
+
+def grid_components():
+    B, A, E, L, PAD = P.KIND_BUTTON, P.KIND_ANALOG, P.KIND_ENCODER, P.KIND_LED, P.KIND_PAD
+    return [
+        C(B, 0, "shift"),
+        C(B, 1, "grid_left", led=0),
+        C(B, 2, "grid_right", led=1),
+        C(B, 3, "grid_up"),
+        C(B, 4, "grid_down", led=2),
+        C(B, 5, "nav_back"),
+        C(B, 6, "nav_select"),
+        C(B, 7, "nav_home"),
+        C(B, 8, "nav_alt"),
+        C(B, 9, "nav_up"),
+        C(B, 10, "zynthian.toggle_audio_play"),
+        C(B, 11, "bitwig.launcher"),        # another host's command: ignored quietly
+        C(B, 12, "zynthian."),              # no command: unknown
+        C(B, 13, "strip_next"),
+        C(B, 14, "strip_prev"),
+        C(B, 15, "select_2"),
+        C(B, 16, "meter_1"),                # reserved: unknown
+        C(A, 0, "volume_1", takeover=P.TAKEOVER_NONE, touch=P.TOUCH_MOVEMENT),
+        C(E, 0, "pan_1", ring=0, mode=P.ENC_REL_TWOS),
+        C(E, 1, "nav_scroll", ring=0, mode=P.ENC_REL_TWOS),
+        C(E, 2, "tempo", ring=0, mode=P.ENC_REL_TWOS),
+        C(E, 3, "device_param_1", ring=0, mode=P.ENC_REL_TWOS),
+    ] + [C(PAD, k - 1, code61_pad_role(k), led=PAD_LED0 + k - 1) for k in range(1, 17)] + [
+        C(PAD, 16, "play", led=19),         # a pad twin with a button role
+        C(PAD, 17, ""),                     # a base pad: plays notes, no role
+    ] + [C(L, i, "", colours=3 if i >= PAD_LED0 else 1, owner=P.OWNER_HOST_THEN_LOCAL) for i in range(20)] + [
+        C(P.KIND_DISPLAY, 0, "param", cols=6, rows=1, display_type=1),
+        C(P.KIND_DISPLAY, 1, "time", cols=8, rows=1, display_type=1),
+    ]
+
+
+def rgbs(notes):
+    return dict((P.dec_u14(pl[0:2]), (pl[2], pl[3], pl[4], pl[5])) for cmd, pl in notes if cmd == P.FB_LED_RGB)
+
+
+def pad_led(t, s):
+    """LED of the pad with role clip_t_s."""
+    for k in range(1, 17):
+        if code61_pad_role(k) == "clip_%d_%d" % (t, s):
+            return PAD_LED0 + k - 1
+
+
+def pad_index(t, s):
+    return pad_led(t, s) - PAD_LED0
+
+
+@pytest.fixture
+def grid():
+    r = Rig(components=grid_components())
+    r.sm.zynseq = FakeZynseq(phrases=6)
+    r.drv.init()
+    yield r
+    r.drv.end()
+
+
+def test_code61_pad_roles_match_the_contract():
+    assert [code61_pad_role(k) for k in (1, 4, 5, 13, 16)] == [
+        "clip_1_4", "clip_4_4", "clip_1_3", "clip_1_1", "clip_4_1"]
+    assert ZM.clip_role("clip_3_2") == (3, 2)
+    for bad in ("clip_0_1", "clip_9_1", "clip_1", "clip_a_b", "clip_1_1_1", ""):
+        assert ZM.clip_role(bad) == (None, None)
+
+
+def test_grid_cells_follow_scroll(grid):
+    m = grid.drv.mapping
+    cb = m._clips[(P.KIND_PAD, pad_index(2, 3))]
+    track, phrase = m.clip_cell(cb)
+    assert (track.key, phrase) == (2, 2)                # column 2 = the 2nd chain, row 3 = phrase 2
+    m.grid_col, m.grid_row = 3, 1
+    track, phrase = m.clip_cell(cb)
+    assert (track.key, phrase) == (5, 3)
+
+
+def test_grid_leds_show_sequence_state(grid):
+    zs = grid.sm.zynseq
+    notes = grid.dev.take()
+    assert set(rgbs(notes).values()) == {BLACK}         # nothing recorded yet: all off
+    assert len(rgbs(notes)) == 16
+    zs.seq(0, 0)["nEvents"] = 5                         # chain 1 (MIDI chan 0), phrase 0: stopped
+    zs.seq(1, 1)["nEvents"] = 3                         # chain 2, phrase 1: playing
+    zs.seq(1, 1)["state"] = 1
+    zs.seq(2, 2)["nEvents"] = 3                         # starting: blue, blinking
+    zs.seq(2, 2)["state"] = 2
+    zs.seq(0, 3)["nEvents"] = 3                         # stopping at the next sync: the same
+    zs.seq(0, 3)["state"] = 5
+    zs.seq(1, 2)["nEvents"] = 3                         # recording: playing
+    zs.seq(1, 2)["state"] = 9
+    zs.seq(3, 3)["nEvents"] = 3                         # disabled (repeat 0): no sequence
+    zs.seq(3, 3)["repeat"] = 0
+    grid.drv.tick()
+    got = rgbs(grid.dev.take())
+    assert got == {pad_led(1, 1): TEAL, pad_led(2, 2): BLUE, pad_led(3, 3): BLUE_BLINK,
+                   pad_led(4, 1): BLUE_BLINK, pad_led(3, 2): BLUE}
+    grid.drv.tick()
+    assert not rgbs(grid.dev.take())                    # change-only
+
+
+def test_clippy_pads_lit_by_their_clip_file(grid):
+    chain = grid.chain(4)
+    clip = FakeZctrl(0)
+    chain.clippy = types.SimpleNamespace(controllers_dict={"file 1": types.SimpleNamespace(get_value=lambda: clip.value)})
+    grid.sm.zynseq.seq(0, 3)["group"] = 19              # a clippy sequence
+    grid.dev.take()
+    clip.value = "take1.wav"
+    grid.drv.tick()
+    assert rgbs(grid.dev.take()) == {pad_led(4, 1): TEAL}
+
+
+def test_seq_state_signal_refreshes_at_once(grid):
+    zs = grid.sm.zynseq
+    zs.seq(0, 0)["nEvents"] = 5
+    grid.drv.tick()
+    grid.dev.take()
+    zs.seq(0, 0)["state"] = 1
+    grid.drv.update_seq_state(phrase=0, chan=0)         # zynsigman SS_SEQ_PLAY_STATE, no tick
+    assert rgbs(grid.dev.take()) == {pad_led(1, 1): BLUE}
+
+
+def test_pad_press_launches_through_zynpad(grid):
+    grid.event(P.KIND_PAD, pad_index(3, 2), 9000)
+    grid.event(P.KIND_PAD, pad_index(3, 2), 0)
+    assert grid.drv.pad_calls == [("press", 1, 2), ("release", 1, 2)]   # phrase 1, chain 3's chan 2
+
+
+def test_pad_release_goes_to_the_pad_it_pressed(grid):
+    grid.event(P.KIND_PAD, pad_index(1, 1), 100)
+    grid.event(P.KIND_BUTTON, 2, 1)                     # grid_right while held
+    grid.event(P.KIND_PAD, pad_index(1, 1), 0)
+    assert grid.drv.pad_calls == [("press", 0, 0), ("release", 0, 0)]
+
+
+def test_pad_without_a_chain_does_nothing():
+    r = Rig(components=grid_components(), n_chains=2)
+    r.drv.init()
+    r.event(P.KIND_PAD, pad_index(3, 1), 100)           # column 3: only 2 chains
+    r.event(P.KIND_PAD, pad_index(3, 1), 0)
+    assert r.drv.pad_calls == []
+    r.drv.end()
+
+
+def test_audio_chain_has_no_launcher(grid):
+    grid.chain(1).midi_chan = None
+    grid.event(P.KIND_PAD, pad_index(1, 1), 100)
+    assert grid.drv.pad_calls == []
+
+
+def test_song_toggles_without_zynpad_callbacks():
+    sm = FakeStateManager(3)
+    song = ZM.ZynSong(sm, lambda: list(sm.chain_manager.chains))
+    track = song.bank_tracks()[1]
+    assert song.clip_press(track, 2)
+    assert sm.zynseq.toggled == [(0, 2, 1)]
+    assert not song.clip_press(track, 9)                # no such phrase
+
+
+def test_grid_scrolls_by_one_and_clamps(grid):
+    m = grid.drv.mapping
+    leds = grid.leds()
+    assert (leds[0], leds[1], leds[2]) == (0, 127, 127)  # can go right and down, not left
+    for _ in range(10):
+        grid.event(P.KIND_BUTTON, 2, 1)                 # grid_right
+    assert m.grid_col == 6                              # 10 chains, 4 columns
+    grid.event(P.KIND_BUTTON, 1, 1)                     # grid_left
+    assert m.grid_col == 5
+    for _ in range(5):
+        grid.event(P.KIND_BUTTON, 4, 1)                 # grid_down
+    assert m.grid_row == 2                              # 6 phrases, 4 rows
+    grid.event(P.KIND_BUTTON, 3, 1)                     # grid_up
+    assert m.grid_row == 1
+    grid.sm.zynseq.seq(1, 5)["nEvents"] = 1             # chain 6, phrase 1: now the top left pad
+    grid.drv.tick()
+    assert rgbs(grid.dev.take())[pad_led(1, 1)] == TEAL
+    grid.event(P.KIND_PAD, pad_index(1, 1), 50)
+    assert grid.drv.pad_calls[-1] == ("press", 1, 5)
+
+
+def test_grid_offset_clamped_when_chains_go(grid):
+    m = grid.drv.mapping
+    m.grid_col = 6
+    for cid in (7, 8, 9, 10):
+        del grid.sm.chain_manager.chains[cid]
+    grid.drv.refresh()
+    assert m.grid_col == 2
+
+
+def test_pad_with_a_button_role(grid):
+    grid.leds()
+    grid.event(P.KIND_PAD, 16, 3000)
+    grid.event(P.KIND_PAD, 16, 0)
+    assert grid.sm.cuias == [("TOGGLE_AUDIO_PLAY", None)]
+    grid.sm.status_audio_player = True
+    grid.drv.tick()
+    assert grid.leds().get(19) == 127
+
+
+def test_roles_logged_or_ignored(grid):
+    roles = [r for _k, _i, r in grid.drv.mapping.unknown_roles]
+    assert "zynthian." in roles and "meter_1" in roles and "time" in roles
+    assert "bitwig.launcher" not in roles
+    assert not [r for r in roles if r.startswith("clip_") or r.startswith("nav_") or r.startswith("grid_")]
+    assert "shift" not in roles and "zynthian.toggle_audio_play" not in roles and "pan_1" not in roles
+
+
+@pytest.mark.parametrize("button,switch", [(5, 1), (6, 3), (7, 0), (8, 2)])
+def test_nav_buttons_are_zynswitches(grid, button, switch):
+    grid.event(P.KIND_BUTTON, button, 1, t_ms=1000)
+    assert grid.sm.cuias == []                          # nothing until the release
+    grid.event(P.KIND_BUTTON, button, 0, t_ms=1120)
+    assert grid.sm.cuias == [("ZYNSWITCH", [switch, "S"])]
+
+
+@pytest.mark.parametrize("held,kind", [(0, "S"), (300, "S"), (301, "B"), (2000, "B"), (2001, "L")])
+def test_nav_press_type_from_t_ms(grid, held, kind):
+    grid.event(P.KIND_BUTTON, 5, 1, t_ms=P.T_MS_MASK - 100)      # across the u28 wrap
+    grid.event(P.KIND_BUTTON, 5, 0, t_ms=(P.T_MS_MASK - 100 + held) & P.T_MS_MASK)
+    assert grid.sm.cuias == [("ZYNSWITCH", [1, kind])]
+
+
+def test_nav_uses_zynthians_thresholds(grid, monkeypatch):
+    monkeypatch.setattr(GUI_CONFIG, "zynswitch_bold_us", 100 * 1000)
+    monkeypatch.setattr(GUI_CONFIG, "zynswitch_long_us", 500 * 1000)
+    for held in (150, 600):
+        grid.event(P.KIND_BUTTON, 6, 1, t_ms=0)
+        grid.event(P.KIND_BUTTON, 6, 0, t_ms=held)
+    assert grid.sm.cuias == [("ZYNSWITCH", [3, "B"]), ("ZYNSWITCH", [3, "L"])]
+
+
+def test_nav_release_without_press_is_ignored(grid):
+    grid.event(P.KIND_BUTTON, 5, 0, t_ms=500)
+    assert grid.sm.cuias == []
+
+
+def test_nav_arrows_repeat_while_held(grid):
+    grid.event(P.KIND_BUTTON, 9, 1)
+    assert grid.sm.cuias == [("ARROW_UP", None)]
+    for _ in range(4):
+        grid.drv.tick()
+    grid.event(P.KIND_BUTTON, 9, 0)
+    grid.drv.tick()
+    assert [c for c, _p in grid.sm.cuias] == ["ARROW_UP"] * 3   # repeats from the 3rd tick held
+
+
+def test_nav_scroll_is_the_select_zynpot(grid):
+    grid.event(P.KIND_ENCODER, 1, P.int_to_s14(-2))
+    grid.event(P.KIND_ENCODER, 1, P.int_to_s14(1))
+    assert grid.sm.cuias == [("ZYNPOT", [3, -2]), ("ZYNPOT", [3, 1])]
+
+
+def test_zynthian_cuia_role(grid):
+    grid.event(P.KIND_BUTTON, 10, 1)
+    grid.event(P.KIND_BUTTON, 10, 0)
+    grid.event(P.KIND_BUTTON, 11, 1)                    # bitwig.launcher: nothing
+    grid.event(P.KIND_BUTTON, 12, 1)                    # "zynthian.": nothing
+    assert grid.sm.cuias == [("TOGGLE_AUDIO_PLAY", None)]
+
+
+def test_shift_is_tracked(grid):
+    m = grid.drv.mapping
+    grid.event(P.KIND_BUTTON, 0, 1)
+    assert m.shift and grid.sm.cuias == []
+    grid.event(P.KIND_BUTTON, 0, 0)
+    assert not m.shift
+
+
+def test_strip_prev_next_move_the_bank_by_one(grid):
+    grid.event(P.KIND_BUTTON, 13, 1)
+    grid.event(P.KIND_BUTTON, 13, 1)
+    assert grid.drv.mapping.bank_offset == 2
+    grid.event(P.KIND_BUTTON, 14, 1)
+    assert grid.drv.mapping.bank_offset == 1
+    grid.event(P.KIND_ENCODER, 0, P.int_to_s14(2))      # pan_1 is chain 2 now
+    assert grid.chain(2).z("balance").value == pytest.approx(0.02)
+
+
+def test_param_display_shows_values_then_the_chain_name(grid):
+    assert grid.drv.mapping._text_cache == {0: "Pianot"}            # the time display isn't driven
+    grid.dev.take()
+    grid.event(P.KIND_ANALOG, 0, P.U14_MAX // 2)                    # volume_1, jump mode
+    assert _texts(grid.dev.take()) == [(0, 0, 0, "V1 50%")]
+    grid.event(P.KIND_ENCODER, 0, P.int_to_s14(-20))                # pan_1
+    assert _texts(grid.dev.take()) == [(0, 0, 0, "P1 L20")]
+    grid.event(P.KIND_ENCODER, 0, P.int_to_s14(-20))
+    assert _texts(grid.dev.take()) == [(0, 0, 0, "P1 L40")]
+    grid.chain(1).z("balance").set_value(-1.0)
+    grid.event(P.KIND_ENCODER, 0, P.int_to_s14(-1))
+    assert _texts(grid.dev.take()) == [(0, 0, 0, "L100  ")]         # "P1 L100" doesn't fit
+    grid.event(P.KIND_ENCODER, 2, P.int_to_s14(5))                  # tempo
+    assert _texts(grid.dev.take()) == [(0, 0, 0, "125bpm")]
+    for _ in range(ZM.TEXT_HOLD_TICKS - 1):
+        grid.drv.tick()
+    assert not _texts(grid.dev.take())                              # still held
+    grid.drv.tick()
+    assert _texts(grid.dev.take()) == [(0, 0, 0, "Pianot")]         # ~1.5 s later
+
+
+def test_param_display_zynpots_show_nothing(grid):
+    grid.dev.take()
+    grid.event(P.KIND_ENCODER, 3, P.int_to_s14(1))                  # device_param_1: Zynthian shows it
+    grid.event(P.KIND_ENCODER, 1, P.int_to_s14(1))                  # nav_scroll
+    assert not _texts(grid.dev.take())
+
+
+def test_param_display_selection_and_bank_show_the_name(grid):
+    grid.dev.take()
+    grid.event(P.KIND_ANALOG, 0, 0)
+    assert _texts(grid.dev.take()) == [(0, 0, 0, "V1 0% ")]
+    grid.event(P.KIND_BUTTON, 15, 1)                                # select_2: name at once
+    assert _texts(grid.dev.take()) == [(0, 0, 0, "Pianot")]
+    grid.sm.chain_manager.chains[2].get_name = lambda: "EP"
+    grid.event(P.KIND_ANALOG, 0, 0)
+    grid.dev.take()
+    grid.event(P.KIND_BUTTON, 13, 1)                                # strip_next: bank changed
+    assert _texts(grid.dev.take()) == [(0, 0, 0, "EP    ")]
+
+
+def test_display_text_clipped_to_cols():
+    assert ZM._display_text("Grand Piano", 6) == "Grand "
+    assert ZM._display_text("Grand Piano", 16) == "Grand Piano     "
+    assert ZM._display_text("125bpm", 3) == "125"
+
+
+def test_touch_events_ignored(grid):
+    grid.dev.take()
+    grid.event(P.EV_TOUCH, 0, 1)
+    grid.event(P.EV_TOUCH, 0, 0)
+    assert not grid.dev.take() and grid.sm.cuias == []
+
+
+def test_sleep_turns_pads_off_and_wake_restores(grid):
+    grid.sm.zynseq.seq(0, 0)["nEvents"] = 1
+    grid.drv.tick()
+    grid.dev.take()
+    grid.drv.sleep_on()
+    assert pad_led(1, 1) in grid.leds(grid.dev.take())              # FB_LED 0 for every LED
+    grid.drv.tick()
+    assert not grid.dev.take()
+    grid.drv.sleep_off()
+    assert rgbs(grid.dev.take())[pad_led(1, 1)] == TEAL
+
+
+def test_driver_reuses_the_zynpad_base():
+    assert issubclass(DRIVER.zynthian_ctrldev_gemifi, _ZynpadStub)
+    assert issubclass(DRIVER.zynthian_ctrldev_gemifi, _ZynmixerStub)
+
+
+def test_param_labels():
+    assert [ZM.param_label(r) for r in ("volume_3", "pan_8", "master_volume", "track_volume", "track_pan",
+                                         "tempo", "device_param_1")] == ["V3", "P8", "M", "V", "P", "", ""]

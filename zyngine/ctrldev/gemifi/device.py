@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Benjamin Van Treese
-# Copied unchanged from gemifi (hosts/ableton-live/gemifi/device.py), MIT licensed.
+# Copied from gemifi (hosts/ableton-live/gemifi/device.py), MIT licensed (channel_left/right ->
+# strip_prev/next, gemifi issue #21).
 # See LICENSE-MIT in this directory. The rest of the gemifi driver is GPL.
 """State machine for one gemifi device on the script's port (protocol/sysex.md 4.6).
 
@@ -34,8 +35,8 @@ MCU_ROLE_MAP = {
     "master": "master_volume",
     "bank_left": "bank_prev",
     "bank_right": "bank_next",
-    "channel_left": "track_prev",
-    "channel_right": "track_next",
+    "channel_left": "strip_prev",
+    "channel_right": "strip_next",
     "cycle": "loop",
     "click": "metronome",
 }
@@ -70,7 +71,7 @@ class Device(object):
     Callbacks (assign after construction):
       on_ready(device)  - components are known and EVENTs are on; drive feedback now
       on_lost(device)   - the device stopped answering (or rebooted); feedback state is gone
-      on_event(event)   - a protocol.Event (button / key / analog / encoder)
+      on_event(event)   - a protocol.Event (button / key / analog / encoder / touch / pad)
       on_log(text)      - diagnostics for the script's log
     """
 
