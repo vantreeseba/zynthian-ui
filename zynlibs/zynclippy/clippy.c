@@ -722,6 +722,33 @@ const char* getJackname() {
     return jack_get_client_name(jack_client);
 }
 
+// Free a clip that no player or recorder pointer can reach any more
+static uint8_t freeClip(Clip* clip) {
+    if (clip) {
+        for (int i = 0; i < clip->channels; i++)
+            free(clip->alloc[i]);
+        free(clip);
+    }
+    return ERROR_SUCCESS;
+}
+
+// A clip slot is being replaced or emptied: abort a recording into it, and stop its
+// latency tail capture before the slot's clip buffer is freed
+static void stopRecordTarget(uint8_t channel, uint8_t id) {
+    if ((g_recorder.state == REC_ARMED || g_recorder.state == REC_RECORDING) && g_recorder.channel == channel && g_recorder.clip_id == id) {
+        getMutex();
+        g_recorder.state = REC_ABORTED;
+        releaseMutex();
+    }
+    if (g_recorder.state == REC_FINISHING && g_recorder.channel == channel && g_recorder.clip_id == id) {
+        getMutex();
+        g_recorder.tail[0] = NULL;
+        g_recorder.tail[1] = NULL;
+        g_recorder.state = REC_DONE;
+        releaseMutex();
+    }
+}
+
 uint8_t addPlayer(uint8_t channel) {
     if (channel >= 16) {
         for (channel = 0; channel < 16; ++channel) {
@@ -1204,18 +1231,29 @@ uint8_t loadClip(uint8_t channel, uint8_t note, const char* path, uint16_t nbeat
     clip->tempo_lock = tempo_lock;
     clip->state = STATE_READY;
 
-    // Re-sync if playing
-    uint8_t curclip = (id == player->current_clip_id);
-    unloadClip(channel, note);
+    // Swap the new clip in place (upstream #1815), so a playing pad doesn't drop out.
+    // Taking the mutex waits out a cycle already using the old clip.
+    stopRecordTarget(channel, id);
+    getMutex();
+    Clip* old_clip = player->clips[id];
     player->clips[id] = clip;
-    if (curclip) {
-        getMutex();
+    // A pad queued to launch the old clip launches the new one
+    if (old_clip && player->starting_clip == old_clip)
+        player->starting_clip = clip;
+    if (id == player->current_clip_id || (old_clip && player->current_clip == old_clip)) {
         player->current_clip = clip;
         player->current_clip_id = id;
+        // The new clip may be shorter
+        if (player->play_pos >= clip->frames)
+            player->play_pos = 0;
+        // Re-sync if playing
         if (player->state == STATE_IDLE)
             player->state = STATE_SYNCYNG;
-        releaseMutex();
     }
+    if (old_clip && old_clip == g_recorder.committed_clip)
+        g_recorder.committed_clip = NULL;
+    releaseMutex();
+    freeClip(old_clip);
     //fprintf(stderr, "loadClip(channel=%u, note=%u, path=%s) id=%u\n", channel, note, path, id);
     return note;
 }
@@ -1229,20 +1267,7 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
     uint8_t id = note - 1;
     if(id >= MAX_CLIPS)
         return ERROR_RANGE;
-    // Abort any recording targeting this clip slot
-    if ((g_recorder.state == REC_ARMED || g_recorder.state == REC_RECORDING) && g_recorder.channel == channel && g_recorder.clip_id == id) {
-        getMutex();
-        g_recorder.state = REC_ABORTED;
-        releaseMutex();
-    }
-    // Stop any latency tail capture before its clip buffer is freed below
-    if (g_recorder.state == REC_FINISHING && g_recorder.channel == channel && g_recorder.clip_id == id) {
-        getMutex();
-        g_recorder.tail[0] = NULL;
-        g_recorder.tail[1] = NULL;
-        g_recorder.state = REC_DONE;
-        releaseMutex();
-    }
+    stopRecordTarget(channel, id);
     Clip* clip = player->clips[id];
     if(clip == NULL)
         return ERROR_RANGE;
@@ -1263,10 +1288,7 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
         g_recorder.committed_clip = NULL;
     player->clips[id] = NULL;
     releaseMutex();
-    for (int i=0; i < clip->channels; i++)
-        free(clip->alloc[i]);
-    free(clip);
-    return ERROR_SUCCESS;
+    return freeClip(clip);
 }
 
 static void prefaultBuffer(float* buffer, size_t frames) {

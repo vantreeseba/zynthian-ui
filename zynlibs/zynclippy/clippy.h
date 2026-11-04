@@ -18,7 +18,8 @@ enum STATE {
     STATE_STARTING, // Switch sndfile
     STATE_PLAYING,  // Buffer in use for playback (may be from preload or ring buffer)
     STATE_STOPPING,  // Fade to avoid stop clitch
-    STATE_SYNCYNG
+    STATE_SYNCYNG,
+    STATE_COUNT
 };
 
 enum ERROR {
@@ -31,7 +32,8 @@ enum ERROR {
     ERROR_SAMPLERATE,   // Wrong samplerate
     ERROR_ACTIVATE,     // Cannot activate jack
     ERROR_SRC,          // Error during samplerate conversion
-    ERROR_STRETCH       // Error during time stretch
+    ERROR_STRETCH,      // Error during time stretch
+    ERROR_NULL,         // Null pointer error
 };
 
 enum REC_STATE {
