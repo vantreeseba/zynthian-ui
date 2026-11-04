@@ -221,7 +221,24 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         self.list_data.append((self.set_clip_record_latency, 0, f"Clip Record Latency ({zynthian_gui_config.clip_record_latency} ms)",
                                ["Extra latency offset applied when aligning recorded clips, added to the capture latency reported by JACK.\n\nIncrease if recorded loops play late relative to the beat, decrease (negative) if they play early.", "audio_recording.png"]))
         self.list_data.append((self.set_clip_rewarp_delay, 0, f"Clip Rewarp Delay ({zynthian_gui_config.clip_rewarp_delay} ms)",
-                               ["How long to wait after the last tempo change before time-stretching clips to the new tempo.\n\nClips keep playing at the old tempo until they are stretched. Shorter follows tempo changes sooner; longer avoids stretching again and again while the tempo is still being changed.", "audio_recording.png"]))
+                               ["How long to wait after the last tempo change before time-stretching clips to the new tempo.\n\nShorter follows tempo changes sooner; longer avoids stretching again and again while the tempo is still being changed.", "audio_recording.png"]))
+        if zynthian_gui_config.clip_rewarp_play:
+            self.list_data.append((self.toggle_clip_rewarp_play, 0, "\u2612 Play Clips While Rewarping",
+                                   ["After a tempo change, clips keep playing at the old tempo until they are time-stretched, then crossfade to the new version in time.", "audio_recording.png"]))
+        else:
+            self.list_data.append((self.toggle_clip_rewarp_play, 0, "\u2610 Play Clips While Rewarping",
+                                   ["After a tempo change, clips are silenced until they are time-stretched, then re-sync to the beat.", "audio_recording.png"]))
+        self.list_data.append((self.set_clip_rewarp_threads, 0, f"Rewarp Clips At Once ({zynthian_gui_config.clip_rewarp_threads})",
+                               ["How many clips to time-stretch at the same time after a tempo change.\n\nMore finishes sooner on a multi-core device but uses more CPU while rewarping. Audio is not affected; the UI may feel slower meanwhile.", "audio_recording.png"]))
+        quality = "Fast" if zynthian_gui_config.clip_stretch_fast else "High"
+        self.list_data.append((self.toggle_clip_stretch_fast, 0, f"Clip Stretch Quality ({quality})",
+                               ["High uses Rubber Band's finer engine: best sound, slowest.\n\nFast uses its faster engine: several times quicker to stretch, with more artifacts on some material.", "audio_recording.png"]))
+        if zynthian_gui_config.clip_keep_source:
+            self.list_data.append((self.toggle_clip_keep_source, 0, "\u2612 Keep Clip Source Audio in RAM",
+                                   ["Each time-stretched clip keeps its original audio in RAM, so rewarping skips reading and resampling the file.\n\nUses as much RAM again per stretched clip.", "audio_recording.png"]))
+        else:
+            self.list_data.append((self.toggle_clip_keep_source, 0, "\u2610 Keep Clip Source Audio in RAM",
+                                   ["Rewarping reads each clip's file again (and resamples it if needed). Uses less RAM.", "audio_recording.png"]))
         self.list_data.append((self.show_tts, 0, "ZynVoice", ["Text to speech accessibility options", "audio_options.png"]))
         if self.state_manager.allow_rbpi_headphones():
             if zynthian_gui_config.rbpi_headphones:
@@ -718,6 +735,43 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         logging.info(f"Clip Recording in RAM => {zynthian_gui_config.clip_record_ram}")
         zynconf.save_config({
             "ZYNTHIAN_CLIP_RECORD_RAM": str(int(zynthian_gui_config.clip_record_ram))
+        })
+        self.update_list()
+
+    def set_clip_rewarp_threads(self, t='S'):
+        logging.info("Rewarp clips at once")
+        self.enable_param_editor(self, "Rewarp Clips At Once",
+                {'value_min': 1, 'value_max': 8, 'value': zynthian_gui_config.clip_rewarp_threads},
+                self.set_clip_rewarp_threads_cb)
+
+    def set_clip_rewarp_threads_cb(self, value):
+        zynthian_gui_config.clip_rewarp_threads = int(value)
+        zynconf.save_config({
+            "ZYNTHIAN_CLIP_REWARP_THREADS": str(zynthian_gui_config.clip_rewarp_threads)
+        })
+        self.update_list()
+
+    def toggle_clip_stretch_fast(self):
+        zynthian_gui_config.clip_stretch_fast = not zynthian_gui_config.clip_stretch_fast
+        logging.info(f"Clip Stretch Fast => {zynthian_gui_config.clip_stretch_fast}")
+        zynconf.save_config({
+            "ZYNTHIAN_CLIP_STRETCH_FAST": str(int(zynthian_gui_config.clip_stretch_fast))
+        })
+        self.update_list()
+
+    def toggle_clip_keep_source(self):
+        zynthian_gui_config.clip_keep_source = not zynthian_gui_config.clip_keep_source
+        logging.info(f"Keep Clip Source Audio => {zynthian_gui_config.clip_keep_source}")
+        zynconf.save_config({
+            "ZYNTHIAN_CLIP_KEEP_SOURCE": str(int(zynthian_gui_config.clip_keep_source))
+        })
+        self.update_list()
+
+    def toggle_clip_rewarp_play(self):
+        zynthian_gui_config.clip_rewarp_play = not zynthian_gui_config.clip_rewarp_play
+        logging.info(f"Play Clips While Rewarping => {zynthian_gui_config.clip_rewarp_play}")
+        zynconf.save_config({
+            "ZYNTHIAN_CLIP_REWARP_PLAY": str(int(zynthian_gui_config.clip_rewarp_play))
         })
         self.update_list()
 

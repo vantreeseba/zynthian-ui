@@ -29,7 +29,7 @@ import math
 import time
 import ctypes
 import logging
-from threading import Timer, Thread, Lock, get_native_id
+from threading import Timer, Thread, Lock, get_native_id, current_thread
 from collections import deque
 
 import zynautoconnect
@@ -134,6 +134,14 @@ class zynthian_engine_clippy(zynthian_engine):
         self.libclippy.setClipBeats.restype = None
         self.libclippy.prewarmRecordBuffer.argtypes = [ctypes.c_uint8, ctypes.c_uint32]
         self.libclippy.prewarmRecordBuffer.restype = ctypes.c_uint8
+        self.libclippy.cancelRewarp.restype = None
+        self.libclippy.setRewarpThreads.argtypes = [ctypes.c_uint8]
+        self.libclippy.setRewarpThreads.restype = None
+        self.libclippy.setStretchFast.argtypes = [ctypes.c_uint8]
+        self.libclippy.setStretchFast.restype = None
+        self.libclippy.setKeepSource.argtypes = [ctypes.c_uint8]
+        self.libclippy.setKeepSource.restype = None
+        self.apply_stretch_config()
         self.jackname = self.libclippy.getJackname().decode("utf-8")
         self.zynseq.clippy = self
         self.refresh_monitor_routing()
@@ -425,6 +433,7 @@ class zynthian_engine_clippy(zynthian_engine):
 
                 #logging.debug(f"LOAD SAMPLE ({beats_value} BEATS): [{crop_start} - {crop_end}] {tempo}BPM => {fpath}")
                 # Setup clippy note
+                self.apply_stretch_config()
                 new_note = self.libclippy.loadClip(clip_channel, note, bytes(fpath, "utf-8"), beats_value,
                                                    crop_start, crop_end, quality, ctypes.c_float(tempo), tempo_lock)
                 if new_note == 0:
@@ -599,17 +608,30 @@ class zynthian_engine_clippy(zynthian_engine):
 
         if self.tempo_timer:
             self.tempo_timer.cancel()
-        # Rewarp once the tempo has settled. Playing clips keep playing meanwhile: clippy
-        # swaps each rewarped clip in at the beat clock's position, with a short crossfade.
+        # Stop a rewarp still running for an older tempo
+        self.libclippy.cancelRewarp()
+        # Rewarp once the tempo has settled. If enabled, playing clips keep playing meanwhile:
+        # clippy swaps each rewarped clip in at the beat clock's position, with a short crossfade.
         delay = max(0, zynthian_gui_config.clip_rewarp_delay) / 1000
         self.tempo_timer = Timer(delay, self.tempo_timer_cb)
         self.tempo_timer.start()
+        if not zynthian_gui_config.clip_rewarp_play:
+            # Silence (IDLE) players that need to rewarp. They re-sync when rewarped.
+            self.libclippy.idlePlayers()
 
     def tempo_timer_cb(self):
-        if self.tempo_timer:
-            self.tempo_timer.cancel()
+        self.apply_stretch_config()
+        # Blocks until every clip is rewarped, or a newer tempo change cancels the pass
         self.libclippy.changeTempo(ctypes.c_float(self.last_tempo_change))
-        self.tempo_timer = None
+        # A newer tempo change may have started another timer meanwhile => keep that one
+        if self.tempo_timer is current_thread():
+            self.tempo_timer = None
+
+    def apply_stretch_config(self):
+        """Pass the admin time-stretch settings to clippy (read when used, like record latency)"""
+        self.libclippy.setRewarpThreads(max(1, min(8, int(zynthian_gui_config.clip_rewarp_threads))))
+        self.libclippy.setStretchFast(1 if zynthian_gui_config.clip_stretch_fast else 0)
+        self.libclippy.setKeepSource(1 if zynthian_gui_config.clip_keep_source else 0)
 
     def rewarp_phrase(self, phrase):
         for proc in self.processors:

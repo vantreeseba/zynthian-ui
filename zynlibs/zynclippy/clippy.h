@@ -63,6 +63,28 @@ enum MIDI_COMMANDS {
 */
 void changeTempo(float tempo);
 
+/** @brief Stop a running changeTempo() pass early (call on every tempo change)
+    @note   Clips already rewarped keep the new version, the rest keep their old tempo
+            until the next changeTempo()
+*/
+void cancelRewarp();
+
+/** @brief Set how many clips a changeTempo() pass time-stretches in parallel
+    @param  threads Quantity of clips at once (1-8)
+*/
+void setRewarpThreads(uint8_t threads);
+
+/** @brief Select the time stretch engine
+    @param  fast 1 for Rubber Band's faster engine (lower quality), 0 for the finer engine
+*/
+void setStretchFast(uint8_t fast);
+
+/** @brief Keep each stretched clip's source audio (decoded, resampled) in RAM
+    @param  keep 1 to keep it => rewarps skip reading and resampling the file
+    @note   Costs as much RAM again as the clip's source audio
+*/
+void setKeepSource(uint8_t keep);
+
 /** @brief Change clip tempo (timestretch)
     @param  channel MIDI channel
     @param  id Clip index

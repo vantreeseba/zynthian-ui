@@ -34,6 +34,7 @@
 #include <samplerate.h> // provides samplerate convertor
 #include <rubberband/rubberband-c.h> // provides time stretch
 #include <math.h> // provides pow for dB calcs
+#include <pthread.h> // provides rewarp worker threads and clip slot locks
 
 
 #define FX_NONE 0
@@ -56,6 +57,11 @@ typedef struct {
     char path[256];         // Loaded file path and filename
     float *data[2];         // Processed sample data for each channel (L,R) - may be offset into alloc[]
     float *alloc[2];        // Base pointers of the allocations backing data[] (used for free)
+    float *src[2];          // Source audio before time stretch (decoded, cropped, resampled), reused when
+                            // rewarping. May alias alloc[] (clip not stretched). NULL if not kept.
+    uint32_t src_frames;    // Quantity of frames in src[]
+    uint32_t src_rate;      // Samplerate src[] was resampled to
+    uint32_t req_end;       // End frame as requested on load (0 = end of file), to match src[] on reload
 } Clip;
 
 typedef struct {
@@ -141,6 +147,19 @@ static void inline getMutex() {
 static void inline releaseMutex() {
     atomic_flag_clear(&mutex);
 }
+
+#define MAX_REWARP_THREADS 8
+
+// Serialises loading / unloading of each clip slot. Held for a whole load (decode + stretch),
+// never taken by the RT thread.
+static pthread_mutex_t slot_lock[16][MAX_CLIPS];
+// Bumped by every tempo change => a rewarp pass for an outdated tempo stops early
+static atomic_uint g_rewarp_gen = 0;
+// Only one rewarp pass at a time
+static pthread_mutex_t g_rewarp_lock = PTHREAD_MUTEX_INITIALIZER;
+static volatile uint8_t g_rewarp_threads = 2; // Clips time-stretched in parallel by a rewarp pass
+static volatile uint8_t g_stretch_fast = 0;   // 1 to use Rubber Band's faster (lower quality) engine
+static volatile uint8_t g_keep_source = 1;    // 1 to keep each stretched clip's source audio for rewarps
 
 float* out_buff_a[16];
 float* out_buff_b[16];
@@ -607,35 +626,107 @@ void reset() {
     releaseMutex();
 }
 
+static void rewarpClip(uint8_t channel, uint8_t id, float tempo, uint8_t global, unsigned gen);
+
+typedef struct {
+    struct { uint8_t channel; uint8_t id; } jobs[16 * MAX_CLIPS];
+    int njobs;
+    atomic_int next;  // Index of the next job to take
+    float tempo;
+    unsigned gen;     // Tempo change generation this pass is for
+} RewarpPass;
+
+static void* rewarpWorker(void* arg) {
+    RewarpPass* pass = arg;
+    while (atomic_load(&g_rewarp_gen) == pass->gen) {
+        int j = atomic_fetch_add(&pass->next, 1);
+        if (j >= pass->njobs)
+            break;
+        rewarpClip(pass->jobs[j].channel, pass->jobs[j].id, pass->tempo, 1, pass->gen);
+    }
+    return NULL;
+}
+
+void cancelRewarp() {
+    atomic_fetch_add(&g_rewarp_gen, 1);
+}
+
 void changeTempo(float tempo) {
-    // Start by playing ones
+    // A newer tempo change stops this pass (and any older one still running)
+    unsigned gen = atomic_fetch_add(&g_rewarp_gen, 1) + 1;
+    pthread_mutex_lock(&g_rewarp_lock);
+    if (atomic_load(&g_rewarp_gen) != gen) {
+        pthread_mutex_unlock(&g_rewarp_lock);
+        return;
+    }
+    RewarpPass* pass = malloc(sizeof(RewarpPass));
+    if (!pass) {
+        pthread_mutex_unlock(&g_rewarp_lock);
+        return;
+    }
+    pass->njobs = 0;
+    atomic_init(&pass->next, 0);
+    pass->tempo = tempo;
+    pass->gen = gen;
+
+    // Queue every loaded clip, starting with the playing ones: each channel's current
+    // clip first, then the clips after it
     int ids[16];
     for (uint8_t ch = 0; ch < 16; ch++) {
         Player* player = players[ch];
-        if (!player) {
+        if (!player)
             ids[ch] = -1;
-            continue;
-        }
-        if (player->current_clip_id >= 0) {
+        else if (player->current_clip_id >= 0)
             ids[ch] = player->current_clip_id;
-        } else {
+        else
             ids[ch] = 0;
-        }
     }
-    // Reload all clips, recalculating timestretch with new tempo
     for (uint8_t i = 0; i < MAX_CLIPS; i++) {
         for (uint8_t ch = 0; ch < 16; ch++) {
             Player* player = players[ch];
             if (!player || ids[ch] < 0)
                 continue;
             uint8_t id = (ids[ch] + i) % MAX_CLIPS;
-            Clip* clip = player->clips[id];
-            // Don't process clips with tempo=0 (no timestretch), locked tempo or no file (recorded, unsaved).
-            if (clip && clip->path[0] && !clip->tempo_lock && clip->tempo > 0 && tempo != clip->tempo) {
-                loadClip(ch, id + 1, clip->path, clip->nbeats, clip->start, clip->end, clip->quality, tempo, clip->tempo_lock);
+            if (player->clips[id]) {
+                pass->jobs[pass->njobs].channel = ch;
+                pass->jobs[pass->njobs].id = id;
+                pass->njobs++;
             }
         }
     }
+
+    // Stretch g_rewarp_threads clips at a time (this thread is one of the workers)
+    int nthreads = g_rewarp_threads;
+    if (nthreads > pass->njobs)
+        nthreads = pass->njobs;
+    pthread_t threads[MAX_REWARP_THREADS];
+    int started = 0;
+    for (int t = 1; t < nthreads; t++) {
+        if (pthread_create(&threads[started], NULL, rewarpWorker, pass) == 0)
+            started++;
+    }
+    rewarpWorker(pass);
+    for (int t = 0; t < started; t++)
+        pthread_join(threads[t], NULL);
+
+    free(pass);
+    pthread_mutex_unlock(&g_rewarp_lock);
+}
+
+void setRewarpThreads(uint8_t threads) {
+    if (threads < 1)
+        threads = 1;
+    if (threads > MAX_REWARP_THREADS)
+        threads = MAX_REWARP_THREADS;
+    g_rewarp_threads = threads;
+}
+
+void setStretchFast(uint8_t fast) {
+    g_stretch_fast = fast ? 1 : 0;
+}
+
+void setKeepSource(uint8_t keep) {
+    g_keep_source = keep ? 1 : 0;
 }
 
 void idlePlayers() {
@@ -651,14 +742,9 @@ void idlePlayers() {
 }
 
 void changeClipTempo(uint8_t channel, uint8_t id, float tempo) {
-    if (channel > 16 || id >= MAX_CLIPS) return;
-    Player* player = players[channel];
-    if (!player) return;
-    Clip* clip = player->clips[id];
-    if (clip && clip->path[0] && tempo != clip->tempo) {
-        // Reload clip, recalculating timestretch with new tempo
-        loadClip(channel, id + 1, clip->path, clip->nbeats, clip->start, clip->end, clip->quality, tempo, clip->tempo_lock);
-    }
+    if (channel >= 16 || id >= MAX_CLIPS) return;
+    // Reload clip, recalculating timestretch with new tempo
+    rewarpClip(channel, id, tempo, 0, 0);
 }
 
 void setClipTempoLock(uint8_t channel, uint8_t id, uint8_t tempo_lock) {
@@ -716,6 +802,9 @@ int init() {
     // Initialise players
     for (uint8_t i = 0; i < 16; ++i)
         players[i] = NULL;
+    for (uint8_t i = 0; i < 16; ++i)
+        for (uint8_t id = 0; id < MAX_CLIPS; ++id)
+            pthread_mutex_init(&slot_lock[i][id], NULL);
 
     // Create jack client
     jack_status_t status;
@@ -763,8 +852,11 @@ const char* getJackname() {
 // Free a clip that no player or recorder pointer can reach any more
 static uint8_t freeClip(Clip* clip) {
     if (clip) {
-        for (int i = 0; i < clip->channels; i++)
+        for (int i = 0; i < clip->channels; i++) {
+            if (clip->src[i] != clip->alloc[i])
+                free(clip->src[i]);
             free(clip->alloc[i]);
+        }
         free(clip);
     }
     return ERROR_SUCCESS;
@@ -850,9 +942,7 @@ uint8_t removePlayer(uint8_t channel) {
         if (player->clips[id]) {
             if (player->clips[id] == g_recorder.committed_clip)
                 g_recorder.committed_clip = NULL;
-            for (int i=0; i < player->clips[id]->channels; i++)
-                free(player->clips[id]->alloc[i]);
-            free(player->clips[id]);
+            freeClip(player->clips[id]);
         }
     }
     jack_port_unregister(jack_client, player->jack_out_a);
@@ -981,57 +1071,42 @@ uint16_t getClipBeats(uint8_t channel, uint8_t clip) {
     return player->clips[clip]->nbeats;
 }
 
-uint8_t loadClip(uint8_t channel, uint8_t note, const char* path, uint16_t nbeats,
-                 uint32_t start, uint32_t end, uint8_t quality, float tempo,
-                 uint8_t tempo_lock) {
+// Source audio of a clip before time stretch
+typedef struct {
+    float* data[2];   // Deinterleaved sample data (first 2 channels at most)
+    uint8_t channels;
+    uint32_t frames;
+    uint32_t end;     // End frame in the file (resolved)
+    uint8_t stolen;   // data[] taken over from a clip's kept source (given back on abort)
+} Source;
 
-    if (channel >= 16) {
-        fprintf(stderr,"loadClip(): Channel/note out of range.\n");
-        return 0;
+static void freeSource(Source* src) {
+    for (int ch = 0; ch < 2; ch++) {
+        free(src->data[ch]);
+        src->data[ch] = NULL;
     }
-    Player* player = players[channel];
-    if (!player) {
-        fprintf(stderr,"loadClip(): No player in channel %d.\n", channel);
-        return 0;
-    }
+}
 
-    if (note == 0) {
-        // Find next available note
-        for (note = 0; note < MAX_CLIPS; ++ note) {
-            if (!player->clips[note])
-                break;
-        }
-        note++;
-    }
-    if (note >= MAX_CLIPS) {
-        fprintf(stderr,"loadClip(): Note %d out of range.\n", note);
-        return 0;
-    }
-
-    uint8_t error = 0;
-
-    // --------------------------------------------------------------
-    // Read data and deinterleave
-    // --------------------------------------------------------------
-
-    // Read source file into interleaved float buffer data_in
+// Read a file's audio, cropped to [start, end) and resampled to the JACK samplerate
+static uint8_t readSource(const char* path, uint32_t start, uint32_t end, uint8_t quality, Source* src) {
     SF_INFO sf_info;
     memset(&sf_info, 0, sizeof(sf_info));
+    memset(src, 0, sizeof(Source));
     SNDFILE* sndfile = sf_open(path, SFM_READ, &sf_info);
     if (!sndfile || sf_info.samplerate < 11000 || sf_info.channels < 1 || sf_info.frames < MIN_FRAMES) {
         fprintf(stderr,"loadClip(): Wrong sample file.\n");
-        sf_close(sndfile);
+        if (sndfile)
+            sf_close(sndfile);
         return 0;
     }
-    int channels = sf_info.channels;
+    int file_channels = sf_info.channels;
     sf_count_t frames = sf_info.frames;
     if (end == 0)
         end = frames;
     int dur = end - start;
     if (dur < frames && dur > 0)
         frames = dur;
-    uint8_t src = samplerate != sf_info.samplerate;
-    size_t size = frames * sf_info.channels * sizeof(float);
+    size_t size = frames * file_channels * sizeof(float);
     if (size == 0) {
         fprintf(stderr,"loadClip(): Sample file has no data.\n");
         sf_close(sndfile);
@@ -1047,81 +1122,225 @@ uint8_t loadClip(uint8_t channel, uint8_t note, const char* path, uint16_t nbeat
     sf_seek(sndfile, start, SEEK_SET);
     sf_count_t count = sf_readf_float(sndfile, data_in, frames);
     sf_close(sndfile);
-
     if (count != frames) {
         fprintf(stderr,"loadClip(): Error reading %lld frames of sample data.\n", (long long)frames);
         free(data_in);
         return 0;
     }
 
-    // Deinterleave source audio into array of buffers data_deinterleaved[]
-    float* data_deinterleaved[channels];
-    for (int ch = 0; ch < channels; ch++) {
-        data_deinterleaved[ch] = malloc(frames * sizeof(float));
-        for (sf_count_t i = 0; i < frames; i++) {
-            data_deinterleaved[ch][i] = data_in[i * channels + ch];
+    // Deinterleave the channels a clip plays (L, R) => extra channels are never processed
+    src->channels = file_channels > 2 ? 2 : file_channels;
+    for (int ch = 0; ch < src->channels; ch++) {
+        src->data[ch] = malloc(frames * sizeof(float));
+        if (!src->data[ch]) {
+            fprintf(stderr,"loadClip(): Can't reserve memory to load sample data.\n");
+            free(data_in);
+            freeSource(src);
+            return 0;
         }
+        for (sf_count_t i = 0; i < frames; i++)
+            src->data[ch][i] = data_in[i * file_channels + ch];
     }
     free(data_in);
+    src->frames = frames;
+    src->end = end;
 
-    // --------------------------------------------------------------
     // Re-sample
-    // --------------------------------------------------------------
-
-    if (samplerate != sf_info.samplerate) {
-        // SRC each channel into array of buffers data_resampled[]
+    if (samplerate != (jack_nframes_t)sf_info.samplerate) {
         double resample_ratio = (double)samplerate / sf_info.samplerate;
         sf_count_t max_resampled_frames = frames * resample_ratio + 1;
-
-        float* data_resampled[channels];
-        sf_count_t resampled_frames = 0;
-
-        int ch;
-        for (ch = 0; ch < channels; ++ch) {
-            data_resampled[ch] = malloc(max_resampled_frames * sizeof(float));
-
+        long resampled_frames = 0;
+        if (quality > 4)
+            quality = 4;
+        for (int ch = 0; ch < src->channels; ++ch) {
+            float* data_resampled = malloc(max_resampled_frames * sizeof(float));
+            if (!data_resampled) {
+                fprintf(stderr, "loadClip(): Can't reserve memory to resample sample data.\n");
+                freeSource(src);
+                return 0;
+            }
             SRC_DATA src_data = {
-                .data_in = data_deinterleaved[ch],
-                .data_out = data_resampled[ch],
+                .data_in = src->data[ch],
+                .data_out = data_resampled,
                 .input_frames = frames,
                 .output_frames = max_resampled_frames,
                 .src_ratio = resample_ratio,
                 .end_of_input = SF_TRUE
             };
-
-            if (quality > 4)
-                quality = 4;
-
             int err;
-            SRC_STATE *src = src_new(quality, 1, &err);
-            if (!src) {
-                free(data_resampled[ch]);
-                error = ERROR_SRC;
+            SRC_STATE *src_state = src_new(quality, 1, &err);
+            if (!src_state) {
                 fprintf(stderr, "loadClip(): SRC init error: %s\n", src_strerror(err));
-                break;
-            }
-
-            if ((err = src_process(src, &src_data))) {
-                src_delete(src);
-                free(data_resampled[ch]);
-                error = ERROR_SRC;
+            } else if ((err = src_process(src_state, &src_data))) {
                 fprintf(stderr, "loadClip(): SRC process error: %s\n", src_strerror(err));
-                break;
             }
-
-            src_delete(src);
-            free(data_deinterleaved[ch]);
-            data_deinterleaved[ch] = data_resampled[ch];
-            if (ch == channels - 1)
-                frames = src_data.output_frames_gen;
+            if (src_state)
+                src_delete(src_state);
+            if (!src_state || err) {
+                free(data_resampled);
+                freeSource(src);
+                return 0;
+            }
+            free(src->data[ch]);
+            src->data[ch] = data_resampled;
+            resampled_frames = src_data.output_frames_gen;
         }
+        src->frames = resampled_frames;
+    }
+    return 1;
+}
 
-        if (error) {
-            for (int i = ch; i < channels; ++i)
-                free(data_deinterleaved[i]);
-            return 0;
+// Take the source audio kept by the clip being replaced, if it is the same file, crop
+// and samplerate => skips reading and resampling the file again
+static uint8_t takeKeptSource(Clip* old, const char* path, uint32_t start, uint32_t end, uint8_t quality, Source* src) {
+    memset(src, 0, sizeof(Source));
+    if (!old || !old->src[0] || old->src_rate != samplerate || old->start != start
+            || old->req_end != end || old->quality != quality || strcmp(old->path, path))
+        return 0;
+    src->channels = old->channels;
+    src->frames = old->src_frames;
+    src->end = old->end;
+    if (old->src[0] != old->alloc[0]) {
+        // Kept apart from the played data => take it over. The RT thread only reads data[].
+        for (int ch = 0; ch < src->channels; ch++) {
+            src->data[ch] = old->src[ch];
+            old->src[ch] = NULL;
+        }
+        src->stolen = 1;
+    } else {
+        // The old clip plays its source unstretched => copy it
+        for (int ch = 0; ch < src->channels; ch++) {
+            src->data[ch] = malloc(src->frames * sizeof(float));
+            if (!src->data[ch]) {
+                freeSource(src);
+                return 0;
+            }
+            memcpy(src->data[ch], old->src[ch], src->frames * sizeof(float));
         }
     }
+    return 1;
+}
+
+// Loading failed or was cancelled => give a taken source back to its clip, else free it
+static void releaseSource(Clip* old, Source* src) {
+    if (src->stolen && old) {
+        for (int ch = 0; ch < src->channels; ch++) {
+            old->src[ch] = src->data[ch];
+            src->data[ch] = NULL;
+        }
+    }
+    freeSource(src);
+}
+
+static uint8_t isCancelled(unsigned gen) {
+    return gen && atomic_load(&g_rewarp_gen) != gen;
+}
+
+// Time stretch the source by ratio (off-line processing) into out[]
+static uint8_t stretchSource(const Source* src, float ratio, unsigned gen, float* out[2], uint32_t* out_frames) {
+    uint32_t rb_options =
+        RubberBandOptionProcessOffline |
+        //RubberBandOptionTransientsCrisp |   // Default
+        //RubberBandOptionDetectorCompound |  // Default
+        //RubberBandOptionPhaseLaminar |      // Default
+        RubberBandOptionPitchHighQuality |
+        RubberBandOptionFormantPreserved |
+        RubberBandOptionThreadingAuto;
+    rb_options |= g_stretch_fast ? RubberBandOptionEngineFaster : RubberBandOptionEngineFiner;
+
+    int channels = src->channels;
+    sf_count_t frames = src->frames;
+    out[0] = out[1] = NULL;
+
+    // Create and setup rubberband stretcher object
+    RubberBandState rb = rubberband_new(samplerate, channels, rb_options, ratio, 1.0); // No pitch change
+    rubberband_set_expected_input_duration(rb, frames);
+    // Study stage (off-line processing)
+    rubberband_study(rb, (const float* const*)src->data, frames, 1);
+
+    // Calculate result size and setup an array for the result
+    const int block_size = MIN_FRAMES;
+    sf_count_t max_stretched_frames = (sf_count_t)(frames * ratio) + block_size;
+    uint8_t ok = 1;
+    for (int ch = 0; ch < channels; ch++) {
+        out[ch] = malloc(max_stretched_frames * sizeof(float));
+        if (!out[ch])
+            ok = 0;
+    }
+
+    sf_count_t frames_stretched = 0;
+    for (sf_count_t i = 0; ok && i < frames; i += block_size) {
+        // A newer tempo change => stop, this result is outdated
+        if (isCancelled(gen)) {
+            ok = 0;
+            break;
+        }
+        int n, final = 0;
+        if (i + block_size >= frames) {
+            n = frames - i;
+            final = 1;
+        } else {
+            n = block_size;
+        }
+        float* block_in[channels];
+        for (int ch = 0; ch < channels; ch++)
+            block_in[ch] = src->data[ch] + i;
+        rubberband_process(rb, (const float* const*)block_in, n, final);
+        // Retrieve everything available. After the final block, keep going until the
+        // stretcher reports the end (-1): its worker threads may still be finishing.
+        int available;
+        while ((available = rubberband_available(rb)) != -1) {
+            if (available == 0) {
+                if (!final)
+                    break;
+                if (isCancelled(gen)) {
+                    ok = 0;
+                    break;
+                }
+                usleep(1000);
+                continue;
+            }
+            if (available > max_stretched_frames - frames_stretched)
+                available = max_stretched_frames - frames_stretched;
+            if (available <= 0)
+                break;
+            float *block_out[channels];
+            for (int ch = 0; ch < channels; ch++)
+                block_out[ch] = out[ch] + frames_stretched;
+            frames_stretched += rubberband_retrieve(rb, block_out, available);
+        }
+    }
+    rubberband_delete(rb);
+    //printf("Stretched frames => %lld (calc %d)\n", (long long)frames_stretched, (int)(frames * ratio));
+    if (!ok || frames_stretched == 0) {
+        free(out[0]);
+        free(out[1]);
+        out[0] = out[1] = NULL;
+        return 0;
+    }
+    *out_frames = frames_stretched;
+    return 1;
+}
+
+// Load (or reload) a clip into a slot. The caller holds slot_lock[channel][id].
+// expect: rewarp => only replace this clip (discard the result if the slot changed meanwhile)
+// gen: rewarp pass generation => stop if a newer tempo change arrives (0 = not cancellable)
+static uint8_t loadClipLocked(Player* player, uint8_t channel, uint8_t id, const char* path, uint16_t nbeats,
+                              uint32_t start, uint32_t end, uint8_t quality, float tempo,
+                              uint8_t tempo_lock, Clip* expect, unsigned gen) {
+
+    // --------------------------------------------------------------
+    // Source audio: kept by the clip being replaced, else read from file
+    // --------------------------------------------------------------
+
+    Source src;
+    Clip* source_clip = player->clips[id];
+    if (!takeKeptSource(source_clip, path, start, end, quality, &src)) {
+        source_clip = NULL;
+        if (!readSource(path, start, end, quality, &src))
+            return 0;
+    }
+    uint32_t frames = src.frames;
 
     // --------------------------------------------------------------
     // Time stretch
@@ -1143,131 +1362,74 @@ uint8_t loadClip(uint8_t channel, uint8_t note, const char* path, uint16_t nbeat
             timestretch = (fabs(ratio - 1.0) > 0.0001);
         }
     }
-
     //printf("loadClip('%s', %d BEATS at %f BPM) => RATIO=%f (%d)\n", path, nbeats, tempo, ratio, timestretch);
 
+    float* data[2] = {src.data[0], src.data[1]};
     if (timestretch) {
-        // Rubberband Options
-        uint32_t rb_options =
-            //RubberBandOptionEngineFaster |
-            RubberBandOptionEngineFiner |
-            RubberBandOptionProcessOffline |
-            //RubberBandOptionProcessRealTime |
-            // Transients Options => Only affect Faster Engine
-            //RubberBandOptionTransientsCrisp |   // Default
-            //RubberBandOptionTransientsMixed |
-            //RubberBandOptionTransientsSmooth |
-            //RubberBandOptionDetectorCompound |  // Default
-            //RubberBandOptionDetectorSoft |
-            //RubberBandOptionDetectorPercussive |
-            //RubberBandOptionPhaseLaminar |      // Default
-            //RubberBandOptionPhaseIndependent |
-            //RubberBandOptionPitchHighSpeed |    // Default
-            RubberBandOptionPitchHighQuality |
-            //RubberBandOptionFormantShifted |    // Default
-            RubberBandOptionFormantPreserved |
-            RubberBandOptionThreadingAuto;
-
-        // Create and setup rubberband stretcher object
-        RubberBandState rb = rubberband_new(
-            samplerate,
-            channels,
-            rb_options,
-            ratio,
-            1.0  // No pitch change
-        );
-        rubberband_set_expected_input_duration(rb, frames);
-        // Study stage (off-line processing)
-        //printf("Rubberband Study ...\n");
-        rubberband_study(rb, (const float* const*)data_deinterleaved, frames, 1);
-
-        // Calculate result size and setup an array for the result
-        const int block_size = MIN_FRAMES;
-        sf_count_t max_stretched_frames = (int)(frames * ratio) + block_size;
-        float* data_stretched[channels];
-        for (int ch = 0; ch < channels; ch++)
-            data_stretched[ch] = malloc(max_stretched_frames * sizeof(float));
-
-        // Timestretch the sample data (off-line processing)
-        //rubberband_set_max_process_size(rb, block_size);
-        sf_count_t frames_stretched = 0;
-        for (sf_count_t i = 0; i < frames; i += block_size) {
-            int n, final = 0;
-            if (i + block_size >= frames) {
-                n = frames - i;
-                final = 1;
-            } else {
-                n = block_size;
-            }
-            float* block_in[channels];
-            for (int ch = 0; ch < channels; ch++)
-                block_in[ch] = data_deinterleaved[ch] + i;
-
-            rubberband_process(rb, (const float* const*)block_in, n, final);
-            int available = rubberband_available(rb);
-            if (available > 0) {
-                float *block_out[channels];
-                for (int ch = 0; ch < channels; ch++)
-                    block_out[ch] = data_stretched[ch] + frames_stretched;
-                rubberband_retrieve(rb, block_out, available);
-                frames_stretched += available;
-            }
+        uint32_t stretched_frames = 0;
+        if (!stretchSource(&src, ratio, gen, data, &stretched_frames)) {
+            if (!isCancelled(gen))
+                fprintf(stderr, "loadClip(): Time stretch failed.\n");
+            releaseSource(source_clip, &src);
+            return 0;
         }
-        //printf("Stretched frames => %d (calc %d)\n", frames_stretched, (int)(frames * ratio));
-        // Move the result array to the right place
-        for (int ch = 0; ch < channels; ch++) {
-            free(data_deinterleaved[ch]);
-            data_deinterleaved[ch] = data_stretched[ch];
-        }
-        frames = frames_stretched;    // = (int)(frames * ratio) =>  Offline processing. With RT processing this is not true.
-
-        rubberband_delete(rb);
+        frames = stretched_frames;
+        // Not keeping the source => drop it now
+        if (!g_keep_source)
+            freeSource(&src);
     }
 
     //---------------------------------------------------------------
     // Create & setup new clip with the processed sample data
     //---------------------------------------------------------------
 
-    uint8_t id = note - 1;
-
-    // Create a new clip instance
-    Clip* clip = NULL;
-    clip = malloc(sizeof(Clip));
+    Clip* clip = calloc(1, sizeof(Clip));
     if (!clip) {
         fprintf(stderr, "loadClip(): Clippy error: failed to create new clip object\n");
-        sf_close(sndfile);
+        if (data[0] != src.data[0]) {
+            free(data[0]);
+            free(data[1]);
+        }
+        releaseSource(source_clip, &src);
         return 0;
     }
-    // Setup Clip parameters
     clip->gain = 1.0f;
-    strcpy(clip->path, path);
-    if (channels <= 2)
-        clip->channels = channels;
-    else
-        clip->channels = 2;
-    for (int i = 0; i < channels; i++) {
-        if (i < clip->channels) {
-            // Assign channel data to the clip
-            clip->data[i] = data_deinterleaved[i];
-            clip->alloc[i] = data_deinterleaved[i];
-        } else {
-            // Free uneeded channel data => TODO Limit this above in the process!!
-            free(data_deinterleaved[i]);
-            data_deinterleaved[i] = NULL;
-        }
+    snprintf(clip->path, sizeof(clip->path), "%s", path);
+    clip->channels = src.channels;
+    for (int i = 0; i < clip->channels; i++) {
+        clip->data[i] = data[i];
+        clip->alloc[i] = data[i];
+        clip->src[i] = src.data[i]; // NULL if not kept, same as data[i] if not stretched
     }
     if (clip->channels == 1) {
         clip->data[1] = clip->data[0];
         clip->alloc[1] = NULL;
     }
+    clip->src_frames = src.frames;
+    clip->src_rate = samplerate;
     clip->frames = frames;
     clip->nbeats = nbeats;
     clip->start = start;
-    clip->end = end;
+    clip->end = src.end;
+    clip->req_end = end;
     clip->quality = quality;
     clip->tempo = tempo;
     clip->tempo_lock = tempo_lock;
     clip->state = STATE_READY;
+
+    if (expect) {
+        // Rewarp => same clip at a new tempo: keep its gain. Discard if the slot changed
+        // meanwhile (clip moved or replaced) or a newer tempo change arrived.
+        getMutex();
+        uint8_t stale = player->clips[id] != expect || isCancelled(gen);
+        if (!stale)
+            clip->gain = expect->gain;
+        releaseMutex();
+        if (stale) {
+            freeClip(clip);
+            return 0;
+        }
+    }
 
     // Swap the new clip in place (upstream #1815), so a playing pad doesn't drop out.
     // Taking the mutex waits out a cycle already using the old clip.
@@ -1311,7 +1473,63 @@ uint8_t loadClip(uint8_t channel, uint8_t note, const char* path, uint16_t nbeat
     }
     freeClip(old_clip);
     //fprintf(stderr, "loadClip(channel=%u, note=%u, path=%s) id=%u\n", channel, note, path, id);
-    return note;
+    return id + 1;
+}
+
+
+uint8_t loadClip(uint8_t channel, uint8_t note, const char* path, uint16_t nbeats,
+                 uint32_t start, uint32_t end, uint8_t quality, float tempo,
+                 uint8_t tempo_lock) {
+
+    if (channel >= 16) {
+        fprintf(stderr,"loadClip(): Channel/note out of range.\n");
+        return 0;
+    }
+    Player* player = players[channel];
+    if (!player) {
+        fprintf(stderr,"loadClip(): No player in channel %d.\n", channel);
+        return 0;
+    }
+
+    if (note == 0) {
+        // Find next available note
+        for (note = 0; note < MAX_CLIPS; ++ note) {
+            if (!player->clips[note])
+                break;
+        }
+        note++;
+    }
+    if (note >= MAX_CLIPS) {
+        fprintf(stderr,"loadClip(): Note %d out of range.\n", note);
+        return 0;
+    }
+
+    uint8_t id = note - 1;
+    pthread_mutex_lock(&slot_lock[channel][id]);
+    uint8_t res = loadClipLocked(player, channel, id, path, nbeats, start, end, quality, tempo, tempo_lock, NULL, 0);
+    pthread_mutex_unlock(&slot_lock[channel][id]);
+    //fprintf(stderr, "loadClip(channel=%u, note=%u, path=%s) => %u\n", channel, note, path, res);
+    return res;
+}
+
+// Reload a clip at a new tempo (re-stretch).
+// global: global tempo change => skip clips with locked tempo or not stretched (tempo 0)
+// gen: rewarp pass generation, 0 if not cancellable
+static void rewarpClip(uint8_t channel, uint8_t id, float tempo, uint8_t global, unsigned gen) {
+    Player* player = players[channel];
+    if (!player || id >= MAX_CLIPS)
+        return;
+    pthread_mutex_lock(&slot_lock[channel][id]);
+    Clip* clip = player->clips[id];
+    // Don't process clips with no file (recorded, unsaved)
+    if (clip && clip->path[0] && tempo != clip->tempo && !isCancelled(gen)
+            && (!global || (!clip->tempo_lock && clip->tempo > 0))) {
+        char path[sizeof(clip->path)];
+        memcpy(path, clip->path, sizeof(path));
+        loadClipLocked(player, channel, id, path, clip->nbeats, clip->start, clip->req_end,
+                       clip->quality, tempo, clip->tempo_lock, clip, gen);
+    }
+    pthread_mutex_unlock(&slot_lock[channel][id]);
 }
 
 uint8_t unloadClip(uint8_t channel, uint8_t note) {
@@ -1323,10 +1541,14 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
     uint8_t id = note - 1;
     if(id >= MAX_CLIPS)
         return ERROR_RANGE;
+    // Wait for a load or rewarp of this slot to finish
+    pthread_mutex_lock(&slot_lock[channel][id]);
     stopRecordTarget(channel, id);
     Clip* clip = player->clips[id];
-    if(clip == NULL)
+    if(clip == NULL) {
+        pthread_mutex_unlock(&slot_lock[channel][id]);
         return ERROR_RANGE;
+    }
     // Detach the clip from every pointer the RT thread can reach before freeing it.
     // Taking the mutex also waits out a process cycle already using it, so a pad
     // cleared (or a session reset) while the clip plays cannot free it mid-period
@@ -1344,6 +1566,7 @@ uint8_t unloadClip(uint8_t channel, uint8_t note) {
         g_recorder.committed_clip = NULL;
     player->clips[id] = NULL;
     releaseMutex();
+    pthread_mutex_unlock(&slot_lock[channel][id]);
     return freeClip(clip);
 }
 
@@ -1556,9 +1779,7 @@ uint8_t disarmRecord() {
         g_recorder.pending_clip = NULL;
     }
     if (g_recorder.old_clip) {
-        for (int i = 0; i < g_recorder.old_clip->channels; i++)
-            free(g_recorder.old_clip->alloc[i]);
-        free(g_recorder.old_clip);
+        freeClip(g_recorder.old_clip);
         g_recorder.old_clip = NULL;
     }
     return ERROR_SUCCESS;

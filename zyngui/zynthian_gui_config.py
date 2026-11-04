@@ -758,6 +758,16 @@ clip_record_ram_dir = "/dev/shm/zynthian-capture"
 clip_record_latency = get_env_int('ZYNTHIAN_CLIP_RECORD_LATENCY', 0)
 # Wait in ms after the last tempo change before rewarping (time-stretching) clips
 clip_rewarp_delay = get_env_int('ZYNTHIAN_CLIP_REWARP_DELAY', 500)
+# Keep clips playing at the old tempo while they are rewarped (crossfaded to the new
+# version when ready), else silence them until the rewarped version is ready
+clip_rewarp_play = get_env_int('ZYNTHIAN_CLIP_REWARP_PLAY', 1)
+# Quantity of clips time-stretched in parallel after a tempo change (1-8)
+clip_rewarp_threads = get_env_int('ZYNTHIAN_CLIP_REWARP_THREADS', 2)
+# Time-stretch clips with Rubber Band's faster (lower quality) engine
+clip_stretch_fast = get_env_int('ZYNTHIAN_CLIP_STRETCH_FAST', 0)
+# Keep each stretched clip's source audio in RAM => rewarps skip reading and resampling
+# the file, at the cost of as much RAM again
+clip_keep_source = get_env_int('ZYNTHIAN_CLIP_KEEP_SOURCE', 1)
 # Join the Ableton Link session at startup, sharing tempo and bar phase with peers
 # on the local network
 link_enabled = get_env_int('ZYNTHIAN_LINK_ENABLED', 0)
