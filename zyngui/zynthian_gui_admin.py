@@ -220,6 +220,8 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
                                    ["Clip takes are recorded to the capture directory on disk.", "audio_recording.png"]))
         self.list_data.append((self.set_clip_record_latency, 0, f"Clip Record Latency ({zynthian_gui_config.clip_record_latency} ms)",
                                ["Extra latency offset applied when aligning recorded clips, added to the capture latency reported by JACK.\n\nIncrease if recorded loops play late relative to the beat, decrease (negative) if they play early.", "audio_recording.png"]))
+        self.list_data.append((self.set_clip_rewarp_delay, 0, f"Clip Rewarp Delay ({zynthian_gui_config.clip_rewarp_delay} ms)",
+                               ["How long to wait after the last tempo change before time-stretching clips to the new tempo.\n\nClips keep playing at the old tempo until they are stretched. Shorter follows tempo changes sooner; longer avoids stretching again and again while the tempo is still being changed.", "audio_recording.png"]))
         self.list_data.append((self.show_tts, 0, "ZynVoice", ["Text to speech accessibility options", "audio_options.png"]))
         if self.state_manager.allow_rbpi_headphones():
             if zynthian_gui_config.rbpi_headphones:
@@ -502,6 +504,20 @@ class zynthian_gui_admin(zynthian_gui_selector_info):
         zynthian_gui_config.clip_record_latency = value
         zynconf.save_config({
             "ZYNTHIAN_CLIP_RECORD_LATENCY": str(zynthian_gui_config.clip_record_latency)
+        })
+        self.update_list()
+
+    def set_clip_rewarp_delay(self, t='S'):
+        logging.info("Clip rewarp delay")
+        self.enable_param_editor(self, "Clip Rewarp Delay (ms)",
+                {'value_min': 0, 'value_max': 5000, 'value': zynthian_gui_config.clip_rewarp_delay,
+                 'nudge_factor': 50, 'nudge_factor_fine': 10},
+                self.set_clip_rewarp_delay_cb)
+
+    def set_clip_rewarp_delay_cb(self, value):
+        zynthian_gui_config.clip_rewarp_delay = int(value)
+        zynconf.save_config({
+            "ZYNTHIAN_CLIP_REWARP_DELAY": str(zynthian_gui_config.clip_rewarp_delay)
         })
         self.update_list()
 

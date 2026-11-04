@@ -73,6 +73,9 @@ typedef struct {
     int current_clip_id;     // Index of currently playing clip
     Clip* starting_clip;     // Pointer to the starting clip
     int starting_clip_id;    // Index of starting clip
+    jack_nframes_t beat_time; // JACK frame time of the last beat tick (or clip start)
+    Clip* volatile xfade_clip; // Clip replaced whilst playing (rewarp): faded out next cycle, then freed by loadClip()
+    uint32_t xfade_pos;      // Play position in xfade_clip
     volatile uint8_t monitor; // 1 to mix capture input ports into the player output (live input monitoring)
 } Player;
 
@@ -201,6 +204,27 @@ jack_nframes_t process_clip(uint8_t channel, Clip* clip, jack_nframes_t frames, 
     return frames;
 }
 
+// Play position in the player's (just rewarped) current clip that matches where the
+// beat clock is now: the last beat tick's beat in the clip plus the frames since it.
+// Without beat ticks (none for more than two beats) => the same fraction of the clip.
+static uint32_t rewarpPos(Player* player) {
+    Clip* clip = player->current_clip;
+    Clip* old = player->xfade_clip;
+    uint64_t pos;
+    uint32_t nbeats = clip->nbeats;
+    uint64_t beat_frames = nbeats ? clip->frames / nbeats : 0;
+    jack_nframes_t elapsed = jack_last_frame_time(jack_client) - player->beat_time;
+    if (beat_frames && elapsed < 2 * beat_frames) {
+        uint32_t beat = player->beat ? (player->beat - 1) % nbeats : 0;
+        pos = beat * beat_frames + elapsed;
+    } else if (old && old->frames) {
+        pos = (uint64_t)player->xfade_pos * clip->frames / old->frames;
+    } else {
+        pos = player->play_pos;
+    }
+    return clip->frames ? (uint32_t)(pos % clip->frames) : 0;
+}
+
 static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
     Player* player;
 
@@ -293,6 +317,7 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                                     player->starting_clip_id = clip_id;
                                     player->start_frame = event.time;
                                     player->beat = 0;
+                                    player->beat_time = jack_last_frame_time(jack_client) + event.time;
                                     player->state = STATE_PLAYING;
                                 }
                                 // else if the clip is NULL => STOP
@@ -341,6 +366,7 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
                     //printf("SYNCYNG AT => %d / %d (NUM BEATS = %d)\n", player->play_pos, player->current_clip->frames, player->current_clip->nbeats);
                 }
                 player->beat++;
+                player->beat_time = jack_last_frame_time(jack_client) + event.time;
                 //printf("Beat => %d\n", player->beat);
                 break;
         }
@@ -502,6 +528,18 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
             }
         }
 
+        // Clip replaced whilst playing (rewarped to a new tempo) => fade the old version out
+        // and the new one in at the same musical position
+        uint8_t xfade_in = 0;
+        if (player->xfade_clip) {
+            if (player->state == STATE_PLAYING && player->current_clip && !player->starting_clip) {
+                process_clip(channel, player->xfade_clip, frames, player->xfade_pos, FX_FADE_OUT);
+                player->play_pos = rewarpPos(player);
+                xfade_in = 1;
+            }
+            player->xfade_clip = NULL; // loadClip() frees it
+        }
+
         // New clip starting => Cross-fade exiting and starting clips
         if (player->starting_clip) {
             // Stop current clip if any => fade-out
@@ -520,7 +558,7 @@ static int process(jack_nframes_t frames, __attribute__((unused)) void* arg) {
             uint8_t fx;
             switch (player->state) {
                 case STATE_PLAYING:
-                    fx = FX_NONE;
+                    fx = xfade_in ? FX_FADE_IN : FX_NONE;
                     break;
                 case STATE_STOPPING:
                     player->state = STATE_READY;
@@ -1240,12 +1278,19 @@ uint8_t loadClip(uint8_t channel, uint8_t note, const char* path, uint16_t nbeat
     // A pad queued to launch the old clip launches the new one
     if (old_clip && player->starting_clip == old_clip)
         player->starting_clip = clip;
+    uint8_t handover = 0;
     if (id == player->current_clip_id || (old_clip && player->current_clip == old_clip)) {
         player->current_clip = clip;
         player->current_clip_id = id;
-        // The new clip may be shorter
-        if (player->play_pos >= clip->frames)
+        if (old_clip && player->state == STATE_PLAYING && !player->xfade_clip) {
+            // Playing => the next cycle fades the old version out and this one in, in time
+            player->xfade_clip = old_clip;
+            player->xfade_pos = player->play_pos;
+            handover = 1;
+        } else if (player->play_pos >= clip->frames) {
+            // The new clip may be shorter
             player->play_pos = 0;
+        }
         // Re-sync if playing
         if (player->state == STATE_IDLE)
             player->state = STATE_SYNCYNG;
@@ -1253,6 +1298,17 @@ uint8_t loadClip(uint8_t channel, uint8_t note, const char* path, uint16_t nbeat
     if (old_clip && old_clip == g_recorder.committed_clip)
         g_recorder.committed_clip = NULL;
     releaseMutex();
+    if (handover) {
+        // Wait for the RT thread to finish with the old clip (one cycle). If JACK stops
+        // calling process(), take it back under the mutex after ~0.5s.
+        for (int i = 0; i < 500 && player->xfade_clip; ++i)
+            usleep(1000);
+        if (player->xfade_clip) {
+            getMutex();
+            player->xfade_clip = NULL;
+            releaseMutex();
+        }
+    }
     freeClip(old_clip);
     //fprintf(stderr, "loadClip(channel=%u, note=%u, path=%s) id=%u\n", channel, note, path, id);
     return note;

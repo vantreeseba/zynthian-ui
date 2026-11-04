@@ -756,6 +756,8 @@ clip_record_ram_dir = "/dev/shm/zynthian-capture"
 # Extra clip record latency offset in ms, added to the JACK-reported capture latency
 # when aligning recorded clips (may be negative)
 clip_record_latency = get_env_int('ZYNTHIAN_CLIP_RECORD_LATENCY', 0)
+# Wait in ms after the last tempo change before rewarping (time-stretching) clips
+clip_rewarp_delay = get_env_int('ZYNTHIAN_CLIP_REWARP_DELAY', 500)
 # Join the Ableton Link session at startup, sharing tempo and bar phase with peers
 # on the local network
 link_enabled = get_env_int('ZYNTHIAN_LINK_ENABLED', 0)

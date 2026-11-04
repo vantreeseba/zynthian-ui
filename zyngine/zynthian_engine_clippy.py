@@ -599,10 +599,11 @@ class zynthian_engine_clippy(zynthian_engine):
 
         if self.tempo_timer:
             self.tempo_timer.cancel()
-        self.tempo_timer = Timer(0.5, self.tempo_timer_cb)
+        # Rewarp once the tempo has settled. Playing clips keep playing meanwhile: clippy
+        # swaps each rewarped clip in at the beat clock's position, with a short crossfade.
+        delay = max(0, zynthian_gui_config.clip_rewarp_delay) / 1000
+        self.tempo_timer = Timer(delay, self.tempo_timer_cb)
         self.tempo_timer.start()
-        # Silence (IDLE) players that need to rewarp:
-        self.libclippy.idlePlayers()
 
     def tempo_timer_cb(self):
         if self.tempo_timer:
