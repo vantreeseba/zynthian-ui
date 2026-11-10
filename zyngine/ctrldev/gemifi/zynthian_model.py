@@ -599,19 +599,23 @@ class ZynSong(Song):
         # A take into this pad's pattern from the MIDI recorder (zynthian_gui_mixer shows it so)
         if getattr(self.sm, "midi_record_pad", None) == (phrase, chan):
             return CLIP_RECORDING, group
-        if info.get("repeat", 1) == 0 or not self._filled(track, phrase, info):
+        if info.get("repeat", 1) == 0:
             return CLIP_NONE, group
+        # A take shows whether or not the pad holds anything yet: a clippy pad has no clip file
+        # until the take is saved, after punch-out (as zynthian_ctrldev_launchpad_x draws it).
         state = info.get("state", SEQ_STOPPED)
+        if state == SEQ_RECORDING:
+            return CLIP_RECORDING, group
+        if state in SEQ_REC_QUEUED:
+            return CLIP_REC_QUEUED, group
+        if not self._filled(track, phrase, info):
+            return CLIP_NONE, group
         if state == SEQ_STOPPED:
             return CLIP_STOPPED, group
         if state == SEQ_STARTING:
             return CLIP_STARTING, group
         if state in SEQ_STOPPING:
             return CLIP_STOPPING, group
-        if state == SEQ_RECORDING:
-            return CLIP_RECORDING, group
-        if state in SEQ_REC_QUEUED:
-            return CLIP_REC_QUEUED, group
         return CLIP_PLAYING, group
 
     def clip_state(self, track, phrase):

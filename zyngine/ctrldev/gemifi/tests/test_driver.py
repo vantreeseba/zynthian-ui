@@ -724,6 +724,43 @@ def test_grid_pad_recording_midi_is_red(grid):
     assert rgbs(grid.dev.take()) == {pad_led(3, 2): RECORDING}
 
 
+def test_grid_clippy_take_shows_before_the_clip_exists(grid):
+    """A clippy pad has no clip file until its take is saved: arming and recording still show."""
+    chain = grid.chain(4)
+    clip = FakeZctrl(0)
+    chain.clippy = types.SimpleNamespace(controllers_dict={"file 1": types.SimpleNamespace(get_value=lambda: clip.value)})
+    seq = grid.sm.zynseq.seq(0, 3)
+    seq["group"] = 19
+    grid.drv.tick()
+    grid.dev.take()
+    steps = [(10, REC_QUEUED),              # armed, waiting for the bar to punch in
+             (9, RECORDING),                # recording, still no file
+             (11, REC_QUEUED)]              # punch-out queued
+    for state, rgb in steps:
+        seq["state"] = state
+        grid.drv.update_seq_state(phrase=0, chan=3)
+        grid.drv.flush()
+        assert rgbs(grid.dev.take()) == {pad_led(4, 1): rgb}, state
+    seq["state"] = 1                        # take saved, playing
+    clip.value = "take1.wav"
+    grid.drv.tick()
+    assert rgbs(grid.dev.take()) == {pad_led(4, 1): full(19)}
+    seq["repeat"], seq["state"] = 0, 9      # a disabled pad stays off, as on a Launchpad
+    grid.drv.tick()
+    assert rgbs(grid.dev.take()) == {pad_led(4, 1): BLACK}
+
+
+def test_grid_empty_midi_pad_recording_is_red(grid):
+    grid.dev.take()
+    grid.sm.midi_record_pad = (0, 0)        # session record on an empty MIDI pad
+    grid.drv.update_seq_state(phrase=0, chan=0)
+    grid.drv.flush()
+    assert rgbs(grid.dev.take()) == {pad_led(1, 1): RECORDING}
+    grid.sm.midi_record_pad = None          # stopped with nothing captured: off again
+    grid.drv.tick()
+    assert rgbs(grid.dev.take()) == {pad_led(1, 1): BLACK}
+
+
 def test_grid_colours_without_zynthians_table():
     sm = FakeStateManager(3)
     song = ZM.ZynSong(sm, lambda: list(sm.chain_manager.chains))     # no launcher_colour
