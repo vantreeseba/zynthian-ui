@@ -110,6 +110,27 @@ def test_busy_reply_is_resent():
     assert len(sets) == 3 and len(set(f.seq for f in sets)) == 1
 
 
+def test_unknown_or_locked_status_is_logged_not_raised():
+    for status in (P.LOCKED, 99):
+        fake = FakeDevice()
+        real = fake.answer
+        fake.answer = lambda f, real=real, status=status: bytes([status]) if f.cmd == P.SET_PARAM else real(f)
+        dev = connect(fake)
+        dev.start()
+        assert dev.state == D.UNSUPPORTED
+        assert dev.log[-1] == "SET_PARAM debug.events -> %s" % P.status_name(status)
+
+
+def test_raw_and_unlocked_are_ignored():
+    fake = FakeDevice()
+    dev = connect(fake)
+    dev.start()
+    assert dev.ready
+    for cmd, payload in ((P.RAW, bytes([3]) + P.u14(0) + bytes([1]) + P.u14(1234)), (P.UNLOCKED, bytes([1]))):
+        assert dev.receive(P.build_frame(cmd, 0, payload))
+    assert dev.ready and not dev.events and not dev.lost_calls
+
+
 def test_no_device_gives_up_then_rescans():
     fake = FakeDevice()
     fake.silent = True

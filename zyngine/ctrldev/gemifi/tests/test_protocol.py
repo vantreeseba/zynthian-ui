@@ -187,6 +187,41 @@ def test_added_component_fields():
     assert not P.Component(P.KIND_LED, 0, 1).local_only
 
 
+def test_analog_calibration_fields():
+    """adc_min / adc_max after `touch` (2026-11-05); a reply without them still parses."""
+    a = P.Component(P.KIND_ANALOG, 0, 1, takeover=P.TAKEOVER_PICKUP, touch=P.TOUCH_NONE, adc_min=4000, adc_max=100)
+    raw = P.build_component_reply(a)
+    assert raw[-6:] == hx("01 00") + P.u14(4000) + P.u14(100)
+    got = P.parse_component_reply(raw)
+    assert (got.takeover, got.touch, got.adc_min, got.adc_max) == (P.TAKEOVER_PICKUP, P.TOUCH_NONE, 4000, 100)
+    older = P.parse_component_reply(raw[:-4])
+    assert (older.touch, older.adc_min, older.adc_max) == (P.TOUCH_NONE, None, None)
+    assert P.parse_component_reply(raw + hx("05 06")).adc_max == 100   # later bytes ignored
+
+
+def test_sign_magnitude_encoder_is_relative():
+    assert not P.Component(P.KIND_ENCODER, 0, 1, mode=P.ENC_REL_SIGN_MAG).takes_value
+    assert not P.Component(P.KIND_ENCODER, 0, 1, mode=9).takes_value    # a mode added later
+    assert P.Component(P.KIND_ENCODER, 0, 1, mode=P.ENC_ABSOLUTE).takes_value
+
+
+def test_status_names(vectors):
+    assert vectors["unlock"]["status_locked"] == P.LOCKED == 12
+    assert P.status_name(P.LOCKED) == "LOCKED" and P.status_name(P.BUSY) == "BUSY"
+    assert P.status_name(40) == "status 40" and P.status_name(None) == "no reply"
+    assert (P.CAP_LAYOUT, P.CAP_MONITOR, P.CAP_UNLOCK) == (
+        vectors["layout"]["cap_layout"], vectors["monitor"]["cap_monitor"], vectors["unlock"]["cap_unlock"])
+
+
+def test_new_unsolicited_frames_are_unsolicited(vectors):
+    """RAW and UNLOCKED (2026-11-05) parse as unsolicited frames a DAW script can ignore."""
+    frames = [v for v in vectors["monitor"]["frames"] + vectors["unlock"]["frames"] if v["cmd"] in (P.RAW, P.UNLOCKED)]
+    assert {v["cmd"] for v in frames} == {P.RAW, P.UNLOCKED}
+    for v in frames:
+        f = P.parse_frame(hx(v["frame"]))
+        assert f.is_unsolicited and not f.is_reply
+
+
 def test_feedback_vectors(vectors):
     """The GET_COMPONENT replies and BOOTED in protocol/test-vectors.json's feedback section."""
     seen = set()

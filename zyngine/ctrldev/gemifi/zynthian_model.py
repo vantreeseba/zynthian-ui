@@ -43,18 +43,27 @@ NUM_ZYNPOTS = 4
 METRO_AUTO = 1              # zynseq metronome mode: click while the transport rolls
 TEMPO_MIN, TEMPO_MAX = 10.0, 500.0
 
-# zynseq play states (zynseq.SEQ_*): stopped, or playing / recording, or waiting for the sync
-# point to start or stop (queued: STARTING, STOPPING, FORCED_STOP, STOPPING_SYNC, CHILD_STOPPING,
-# STARTING_RECORD, STOPPING_RECORD).
-SEQ_STOPPED = 0
-SEQ_QUEUED = frozenset((2, 3, 4, 5, 8, 10, 11))
+# zynseq play states (zynseq.SEQ_*).
+SEQ_STOPPED, SEQ_STARTING, SEQ_RECORDING = 0, 2, 9
+SEQ_STOPPING = frozenset((3, 4, 5, 8))      # STOPPING, FORCED_STOP, STOPPING_SYNC, CHILD_STOPPING
+SEQ_REC_QUEUED = frozenset((10, 11))        # STARTING_RECORD, STOPPING_RECORD
 SEQ_GROUP_CLIPPY = 16       # sequences in groups >= 16 are clippy (audio clip) pads
 
-# Clip grid LEDs (FB_LED_RGB r, g, b, blink): no sequence, a stopped one, a playing one, and
-# one whose start or stop is queued (blue, blinking, as daw-scripts.md 5.9 suggests).
-CLIP_NONE, CLIP_STOPPED, CLIP_PLAYING, CLIP_QUEUED = 0, 1, 2, 3
-CLIP_RGB = {CLIP_NONE: (0, 0, 0, False), CLIP_STOPPED: (0, 127, 127, False),
-            CLIP_PLAYING: (0, 0, 127, False), CLIP_QUEUED: (0, 0, 127, True)}
+# What a clip grid pad shows. Playing covers PLAYING, CHILD_PLAYING and states this driver
+# doesn't know.
+(CLIP_NONE, CLIP_STOPPED, CLIP_PLAYING, CLIP_STARTING, CLIP_STOPPING, CLIP_RECORDING,
+ CLIP_REC_QUEUED) = range(7)
+
+# Clip grid LEDs (FB_LED_RGB, 0..127 a channel), as Zynthian's pad controllers and mixer
+# launchers draw them: the sequence's group colour (zynthian_gui_config.LAUNCHER_COLOUR), dim
+# while stopped and full while playing; green blinking while a start is queued, red blinking
+# while a stop is; red while recording, blinking while a punch in or out is queued. gemifi's
+# rgb_serial LEDs (the Code 61's pads) show the colour as given; other LEDs light from it as
+# sysex.md 4.6.2 says. The colours below stand in when Zynthian's can't be read.
+BLACK = (0, 0, 0, False)
+CLIP_IDLE_SCALE = 0.35      # a stopped pad: its colour this bright
+DEFAULT_GROUP_RGB = (0, 127, 127)           # teal
+DEFAULT_RGB = {"starting": (0, 72, 0), "stopping": (104, 0, 0), "recording": (127, 16, 16)}
 
 # Zynthian's switches (zynthian_gui.zynswitch_short / _bold / _long): 0 the layer / home switch,
 # 1 back, 2 snapshot / alt, 3 select. The press type comes from the hold time measured by the
@@ -138,6 +147,26 @@ def _display_text(text, cols):
     text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
     text = "".join(ch if " " <= ch <= "~" else " " for ch in text).strip()
     return text[:cols].ljust(cols)
+
+
+def rgb7(colour):
+    """'#RRGGBB' or (r, g, b) 0..255 -> (r, g, b) 0..127; None if it isn't one."""
+    try:
+        if isinstance(colour, str):
+            s = colour.lstrip("#")
+            if len(s) != 6:
+                return None
+            colour = (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+        r, g, b = (min(255, max(0, int(v))) >> 1 for v in colour)
+    except (TypeError, ValueError):
+        return None
+    return r, g, b
+
+
+def dim(rgb, scale):
+    """`rgb` at `scale` brightness; a channel that was lit stays at least 1, so a dark colour
+    doesn't go out."""
+    return tuple(max(1, int(round(v * scale))) if v else 0 for v in rgb)
 
 
 def _denorm(zctrl, norm):
@@ -345,10 +374,12 @@ class ZynSong(Song):
     `midi_transport` True drives the MIDI (SMF) player/recorder instead of the audio ones."""
 
     def __init__(self, state_manager, chain_ids, midi_transport=False, pad_press=None, pad_release=None,
-                 switch_thresholds=None):
+                 switch_thresholds=None, launcher_colour=None):
         """`pad_press(phrase, midi_chan)` / `pad_release(...)`: how a clip pad launches, normally the
         zynpad base class's on_pad_press / on_pad_release (record modes, hold-to-clear). Without
-        them a press just toggles the sequence. `switch_thresholds()` -> (bold_us, long_us)."""
+        them a press just toggles the sequence. `switch_thresholds()` -> (bold_us, long_us).
+        `launcher_colour(key)` -> '#RRGGBB' or None: a sequence group's colour (key an int) or
+        "starting" / "stopping" / "recording", from Zynthian's launcher colours."""
         self.sm = state_manager
         self.chain_ids = chain_ids
         self.midi_transport = midi_transport
@@ -356,6 +387,8 @@ class ZynSong(Song):
         self._pad_press = pad_press
         self._pad_release = pad_release
         self._switch_thresholds = switch_thresholds
+        self._launcher_colour = launcher_colour
+        self._colours = {}              # launcher_colour key -> (r, g, b) 0..127
         self._params_sig = None         # device_params() cache: what it was built from ...
         self._params = []               # ... and the list
 
@@ -554,21 +587,66 @@ class ZynSong(Song):
                 return False
         return info.get("nEvents", 0) > 0
 
-    def clip_state(self, track, phrase):
-        """CLIP_NONE (no sequence there: empty or disabled), CLIP_STOPPED, CLIP_PLAYING or
-        CLIP_QUEUED (playing or stopped, waiting for the sync point to change)."""
+    def _clip(self, track, phrase):
+        """(CLIP_*, the sequence's group) for the pad at `track`, `phrase`."""
         if not 0 <= phrase < self.grid_rows():
-            return CLIP_NONE
+            return CLIP_NONE, 0
         seq = self._sequence(track, phrase)
         if seq is None:
-            return CLIP_NONE
-        _chan, info = seq
+            return CLIP_NONE, 0
+        chan, info = seq
+        group = info.get("group", 0)
+        # A take into this pad's pattern from the MIDI recorder (zynthian_gui_mixer shows it so)
+        if getattr(self.sm, "midi_record_pad", None) == (phrase, chan):
+            return CLIP_RECORDING, group
         if info.get("repeat", 1) == 0 or not self._filled(track, phrase, info):
-            return CLIP_NONE
+            return CLIP_NONE, group
         state = info.get("state", SEQ_STOPPED)
         if state == SEQ_STOPPED:
-            return CLIP_STOPPED
-        return CLIP_QUEUED if state in SEQ_QUEUED else CLIP_PLAYING
+            return CLIP_STOPPED, group
+        if state == SEQ_STARTING:
+            return CLIP_STARTING, group
+        if state in SEQ_STOPPING:
+            return CLIP_STOPPING, group
+        if state == SEQ_RECORDING:
+            return CLIP_RECORDING, group
+        if state in SEQ_REC_QUEUED:
+            return CLIP_REC_QUEUED, group
+        return CLIP_PLAYING, group
+
+    def clip_state(self, track, phrase):
+        """CLIP_NONE (no sequence there: empty or disabled), CLIP_STOPPED, CLIP_PLAYING,
+        CLIP_STARTING / CLIP_STOPPING (waiting for the sync point), CLIP_RECORDING or
+        CLIP_REC_QUEUED (a punch in or out waiting for the sync point)."""
+        return self._clip(track, phrase)[0]
+
+    def colour(self, key):
+        """(r, g, b) 0..127 for a launcher_colour key, from Zynthian's colours, else ours."""
+        rgb = self._colours.get(key)
+        if rgb is None:
+            got = None
+            if self._launcher_colour is not None:
+                try:
+                    got = rgb7(self._launcher_colour(key))
+                except Exception:
+                    got = None
+            rgb = got or DEFAULT_RGB.get(key, DEFAULT_GROUP_RGB)
+            self._colours[key] = rgb
+        return rgb
+
+    def clip_rgb(self, track, phrase):
+        """The pad's FB_LED_RGB: (r, g, b, blink)."""
+        state, group = self._clip(track, phrase)
+        if state == CLIP_NONE:
+            return BLACK
+        if state == CLIP_STARTING:
+            return self.colour("starting") + (True,)
+        if state == CLIP_STOPPING:
+            return self.colour("stopping") + (True,)
+        if state in (CLIP_RECORDING, CLIP_REC_QUEUED):
+            return self.colour("recording") + (state == CLIP_REC_QUEUED,)
+        rgb = self.colour(group)
+        return (dim(rgb, CLIP_IDLE_SCALE) if state == CLIP_STOPPED else rgb) + (False,)
 
     def clip_press(self, track, phrase):
         """Launch / stop the pad, as zynpad does (returns False when there's no launcher there)."""
@@ -611,12 +689,16 @@ class ZynMapping(Mapping):
 
     `device_bank` is the device page, in units of PARAMS_PER_PAGE: device_param_N is parameter
     device_bank * 4 + N - 1. `live(component)` says whether a component takes its physical
-    control now (Device.is_live: layer twins only while their mode is on)."""
+    control now (Device.is_live: layer twins only while their mode is on).
+
+    A `param` display's text is sent by refresh(), so a knob swept fast sends one FB_TEXT per
+    refresh (the latest), not one per EVENT."""
 
     # False: a fader sets its parameter as soon as it moves (jump). True: it waits until it
     # reaches the parameter's value (pick-up, in the device and in Mapping._analog).
     fader_pickup = True
     host_namespace = HOST_NAMESPACE
+    CACHED_READS = Mapping.CACHED_READS + ("grid_rows", "master_track", "device_name")
 
     def __init__(self, song, notify, log=None, live=None):
         Mapping.__init__(self, song, notify, log)
@@ -624,6 +706,7 @@ class ZynMapping(Mapping):
         self._displays = []         # every display with a name role or `param`
         self._param_displays = []
         self._text_cache = {}
+        self._param_text = {}       # display index -> the text a moved knob put there
         self._text_hold = 0         # ticks until a param display goes back to the chain name
         self._name_ctx = None       # (selected chain, bank offset) the name was last shown for
         self._clips = {}            # (kind, index) -> _ClipBinding
@@ -678,6 +761,8 @@ class ZynMapping(Mapping):
         self._text_cache = {}
         self._rgb_cache = {}
         self._name_ctx = None
+        self._param_text = {}
+        self._text_hold = 0
 
     def release(self):
         Mapping.release(self)
@@ -737,7 +822,7 @@ class ZynMapping(Mapping):
     def _button_role(self, role):
         if role in UNSUPPORTED_BUTTON_ROLES:
             return None
-        s = self.song
+        s = self._reads
         if role == "stop":
             return _ButtonRole(press=s.stop, momentary=True)
         if role == "master_mute":
@@ -789,7 +874,8 @@ class ZynMapping(Mapping):
     def _grid_max(self):
         """The largest column and row offsets that still show something."""
         cols, rows = self._grid_size()
-        return (max(0, len(self.song.bank_tracks()) - cols), max(0, self.song.grid_rows() - rows))
+        s = self._reads
+        return (max(0, len(s.bank_tracks()) - cols), max(0, s.grid_rows() - rows))
 
     def _can_grid_step(self, dc, dr):
         max_col, max_row = self._grid_max()
@@ -809,10 +895,10 @@ class ZynMapping(Mapping):
 
     def clip_cell(self, cb, tracks=None):
         """(track, phrase) under clip binding `cb` at the current scroll, or None."""
-        tracks = self.song.bank_tracks() if tracks is None else tracks
+        tracks = self._reads.bank_tracks() if tracks is None else tracks
         col = self.grid_col + cb.t - 1
         phrase = self.grid_row + cb.s - 1
-        if not 0 <= col < len(tracks) or not 0 <= phrase < self.song.grid_rows():
+        if not 0 <= col < len(tracks) or not 0 <= phrase < self._reads.grid_rows():
             return None
         return tracks[col], phrase
 
@@ -831,9 +917,9 @@ class ZynMapping(Mapping):
             if cb.led is None:
                 continue
             if tracks is None:
-                tracks = self.song.bank_tracks()
+                tracks = self._reads.bank_tracks()
             cell = self.clip_cell(cb, tracks)
-            rgb = CLIP_RGB[self.song.clip_state(*cell) if cell is not None else CLIP_NONE]
+            rgb = self.song.clip_rgb(*cell) if cell is not None else BLACK
             if self._rgb_cache.get(cb.led) != rgb:
                 self._rgb_cache[cb.led] = rgb
                 self.notify(P.FB_LED_RGB, P.fb_led_rgb(cb.led, *rgb))
@@ -845,24 +931,26 @@ class ZynMapping(Mapping):
             self._text_hold -= 1        # at 0, the refresh below puts the chain name back
         Mapping.tick(self)
 
-    def refresh(self):
+    def _refresh(self):
         self._clamp_grid()
-        Mapping.refresh(self)
+        Mapping._refresh(self)
         self._refresh_clips()
-        t = self.song.selected_track()
+        t = self._reads.selected_track()
         ctx = (t.key if t is not None else None, self.bank_offset)
         if ctx != self._name_ctx:
             self._name_ctx = ctx
             self._text_hold = 0         # another chain or bank: its name, at once
         name = t.name if t is not None else ""
         for c in self._displays:
-            if self._text_hold == 0 or c not in self._param_displays:
+            if self._text_hold and c.index in self._param_text:
+                self._show_text(c, self._param_text[c.index])
+            else:
                 self._show_text(c, name)
 
     def _show_value(self, p, role):
         """A knob with `role` moved `p`: "<short name> <value>" on the param displays (just the
         value when both don't fit; a processor parameter's name is cut to fit instead), for
-        TEXT_HOLD_TICKS."""
+        TEXT_HOLD_TICKS. The next refresh sends it."""
         if not self._param_displays:
             return
         value = p.display_text() if hasattr(p, "display_text") else "%d" % round(p.get_norm() * 100)
@@ -875,22 +963,25 @@ class ZynMapping(Mapping):
             else:
                 both = "%s %s" % (label, value)
                 text = both if label and len(both) <= c.cols else value
-            self._show_text(c, text)
+            self._param_text[c.index] = text
         self._text_hold = TEXT_HOLD_TICKS
+        self._dirty()
 
     def _hold_text(self, text):
-        """`text` on the param displays for TEXT_HOLD_TICKS, then the chain name again."""
+        """`text` on the param displays for TEXT_HOLD_TICKS, then the chain name again. The next
+        refresh sends it (a button press refreshes at once)."""
         if not self._param_displays:
             return
         for c in self._param_displays:
-            self._show_text(c, text)
+            self._param_text[c.index] = text
         self._text_hold = TEXT_HOLD_TICKS
+        self._dirty()
 
     # ---- device pages (device_param_N, device_bank_prev / next) ----
 
     def _device_bank_count(self):
         """Pages of PARAMS_PER_PAGE parameters (the base class counts banks of 8)."""
-        n = len(self.song.device_params())
+        n = len(self._reads.device_params())
         return (n + PARAMS_PER_PAGE - 1) // PARAMS_PER_PAGE
 
     def device_page_step(self):
@@ -914,10 +1005,10 @@ class ZynMapping(Mapping):
         page's first parameter (or the processor's name)."""
         last = max(0, self._device_bank_count() - 1)
         self.device_bank = min(last, max(0, self.device_bank + d * self.device_page_step()))
-        params = self.song.device_params()
+        params = self._reads.device_params()
         k = self.device_bank * PARAMS_PER_PAGE
         p = params[k] if k < len(params) else None
-        self._hold_text(p.name_label if p is not None else self.song.device_name())
+        self._hold_text(p.name_label if p is not None else self._reads.device_name())
 
     def blank_displays(self):
         """Every display blank (sleep). Like all_leds_off, the cache then says blank."""
@@ -941,7 +1032,7 @@ class ZynMapping(Mapping):
         n = device_param_number(role)
         if n is not None:
             def target(i=n - 1):
-                params = self.song.device_params()
+                params = self._reads.device_params()
                 k = self.device_bank * PARAMS_PER_PAGE + i
                 return params[k] if 0 <= k < len(params) else None
             return target
@@ -961,16 +1052,14 @@ class ZynMapping(Mapping):
             return
         Mapping._refresh_analog(self, b)
 
-    def _refresh_encoder(self, b):
+    def _refresh_encoder(self, b, value=True):
         c = b.component
         if isinstance(b.target(), ZynpotTarget):
+            # Zynthian owns a zynpot's value: no FB_VALUE, ring off.
             self._value_cache[(P.KIND_ENCODER, c.index)] = None
-            ring = (P.RING_WRAP, 0, False, True)
-            if c.ring and self._ring_cache.get(c.index) != ring:
-                self._ring_cache[c.index] = ring
-                self.notify(P.FB_RING, P.fb_ring(c.index, ring[0], ring[1], ring[2], ring[3]))
+            self._send_ring(c, P.RING_WRAP, 0, False, True)
             return
-        Mapping._refresh_encoder(self, b)
+        Mapping._refresh_encoder(self, b, value)
 
     def all_leds_off(self, components):
         """Every LED the script may drive, off (sleep). The cache then says off, so the next
@@ -992,4 +1081,4 @@ class ZynMapping(Mapping):
             start = end + 1
         for cb in self._clips.values():
             if cb.led is not None:
-                self._rgb_cache[cb.led] = CLIP_RGB[CLIP_NONE]
+                self._rgb_cache[cb.led] = BLACK

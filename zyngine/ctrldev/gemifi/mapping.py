@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Benjamin Van Treese
 # Copied from gemifi (hosts/ableton-live/gemifi/mapping.py), MIT licensed (with strip_prev/next and
-# <host>.<command> roles, gemifi issue #21).
+# <host>.<command> roles, gemifi issue #21; the per-refresh read cache and the deferred encoder
+# FB_VALUE from gemifi 98d560f; FB_RING sent only when its lit LEDs change, daw-scripts.md 5.12).
 # See LICENSE-MIT in this directory. The rest of the gemifi driver is GPL.
 """Roles -> behaviour (hosts/README.md, "Roles").
 
@@ -15,6 +16,10 @@ State is polled, not listened to: refresh() (called every tick, ~100 ms) reads e
 state, compares it with what was last sent, and sends only the differences. That keeps the
 script free of per-track / per-parameter listener bookkeeping, and a lost notification is
 fixed by the next change (sysex.md 4.6.2 says feedback is idempotent).
+
+Output the device can't show is left out (daw-scripts.md 5.12): an encoder EVENT moves the ring
+at once but leaves FB_VALUE to the next refresh, and FB_RING goes out only when the LEDs it
+lights change. `on_dirty()`, when set, is called when something waits for the next refresh.
 """
 
 from . import protocol as P
@@ -35,6 +40,15 @@ def to14(norm):
     if norm >= 1.0:
         return V14
     return int(round(norm * V14))
+
+
+def ring_lit(ring, mode, value):
+    """What an encoder's `ring` LEDs show for `value`, as the firmware draws them
+    (daw-scripts.md 5.12): the position p for dot, boost/cut and wrap, the half-width w for
+    spread. Two values with the same result light the same LEDs."""
+    if mode == P.RING_SPREAD:
+        return value * (ring // 2) // V14
+    return (value * max(0, ring - 1) + 8191) // V14
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +177,43 @@ class Song(object):
         pass
 
 
+class _Reads(object):
+    """The song as the bindings see it. Inside refresh() each read in CACHED is done once and
+    kept until the refresh ends: many bindings ask for the same tracks or device parameters.
+    Everything else, and every read outside refresh(), goes straight to the song."""
+
+    CACHED = ("bank_tracks", "nav_tracks", "selected_track", "device_key", "device_params",
+              "device_on_param", "can_device_step", "can_scene_step")
+
+    def __init__(self, song, cached=CACHED):
+        self._song = song
+        self._cached = frozenset(cached)
+        self._memo = None
+
+    def begin(self):
+        self._memo = {}
+
+    def end(self):
+        self._memo = None
+
+    def __getattr__(self, name):
+        attr = getattr(self._song, name)
+        if name not in self._cached:
+            return attr
+
+        def read(*args):
+            memo = self._memo
+            if memo is None:
+                return attr(*args)
+            key = (name,) + args
+            try:
+                return memo[key]
+            except KeyError:
+                value = memo[key] = attr(*args)
+                return value
+        return read
+
+
 # ---------------------------------------------------------------------------
 # Bindings
 # ---------------------------------------------------------------------------
@@ -217,10 +268,14 @@ def _strip_role(role, prefixes):
 
 
 class Mapping(object):
+    CACHED_READS = _Reads.CACHED
+
     def __init__(self, song, notify, log=None):
         self.song = song
+        self._reads = _Reads(song, self.CACHED_READS)   # what bindings read through
         self.notify = notify
         self.log = log
+        self.on_dirty = None          # () -> None: output waits for the next refresh
         self.bank_offset = 0
         self.device_bank = 0
         self._device_key = None
@@ -297,7 +352,7 @@ class Mapping(object):
     # ---- role tables ----
 
     def _button_role(self, role):
-        s = self.song
+        s = self._reads
         flag_roles = {"record": "record", "loop": "loop", "metronome": "metronome", "overdub": "overdub",
                       "session_record": "session_record", "automation_arm": "automation_arm"}
         if role == "play":
@@ -400,7 +455,7 @@ class Mapping(object):
 
     def _cont_role(self, role):
         """role -> () -> Param or None."""
-        s = self.song
+        s = self._reads
         sel = {"track_volume": "volume", "track_pan": "pan", "send_a": "send_a", "send_b": "send_b"}
         if role in sel:
             name = sel[role]
@@ -432,12 +487,12 @@ class Mapping(object):
     # ---- navigation ----
 
     def strip_track(self, i):
-        tracks = self.song.bank_tracks()
+        tracks = self._reads.bank_tracks()
         k = self.bank_offset + i
         return tracks[k] if 0 <= k < len(tracks) else None
 
     def _can_bank_step(self, d):
-        n = len(self.song.bank_tracks())
+        n = len(self._reads.bank_tracks())
         return self.bank_offset > 0 if d < 0 else self.bank_offset + STRIPS < n
 
     def bank_step(self, d, by=STRIPS):
@@ -446,7 +501,7 @@ class Mapping(object):
             self.bank_offset = max(0, self.bank_offset + d * by)
 
     def _device_bank_count(self):
-        n = len(self.song.device_params())
+        n = len(self._reads.device_params())
         return (n + STRIPS - 1) // STRIPS
 
     def _can_device_bank_step(self, d):
@@ -457,10 +512,10 @@ class Mapping(object):
             self.device_bank += d
 
     def _track_index(self):
-        cur = self.song.selected_track()
+        cur = self._reads.selected_track()
         if cur is None:
             return None, []
-        tracks = self.song.nav_tracks()
+        tracks = self._reads.nav_tracks()
         for i, t in enumerate(tracks):
             if t.same(cur):
                 return i, tracks
@@ -500,8 +555,11 @@ class Mapping(object):
             if b is not None:
                 p = b.target()
                 if p is not None and ev.delta:
-                    p.nudge(ev.delta)
-                    self._refresh_encoder(b)
+                    p.nudge(ev.delta)       # the whole delta: accelerated turns are already scaled
+                    # The ring follows at once; FB_VALUE waits for the next refresh, so a fast
+                    # turn isn't echoed back one FB_VALUE per EVENT.
+                    self._refresh_encoder(b, value=False)
+                    self._dirty()
         # keys (type 2) and reserved types: not mapped
 
     def _analog(self, b, raw):
@@ -532,15 +590,28 @@ class Mapping(object):
 
     # ---- feedback ----
 
+    def _dirty(self):
+        if self.on_dirty is not None:
+            self.on_dirty()
+
     def refresh(self):
-        dk = self.song.device_key()
+        """Send what changed. Every read the bindings make is done once per refresh."""
+        self._reads.begin()
+        try:
+            self._refresh()
+        finally:
+            self._reads.end()
+
+    def _refresh(self):
+        s = self._reads
+        dk = s.device_key()
         if dk != self._device_key:
             self._device_key = dk
             self.device_bank = 0
         n = self._device_bank_count()
         if self.device_bank >= max(1, n):
             self.device_bank = max(0, n - 1)
-        n = len(self.song.bank_tracks())
+        n = len(s.bank_tracks())
         if self.bank_offset and self.bank_offset >= n:
             self.bank_offset = max(0, ((n - 1) // STRIPS) * STRIPS)
         self._refresh_leds()
@@ -585,21 +656,34 @@ class Mapping(object):
             if b.component.takes_value:         # takeover: none ignores FB_VALUE (sysex.md 4.6.2)
                 self.notify(P.FB_VALUE, P.fb_value(P.KIND_ANALOG, b.component.index, now[1]))
 
-    def _refresh_encoder(self, b):
+    def _refresh_encoder(self, b, value=True):
+        """value=False: the ring only (FB_VALUE and its cache are left for the next refresh)."""
         c = b.component
+        if not value and not c.ring:
+            return
         p = b.target()
         k = (P.KIND_ENCODER, c.index)
         if p is None:
-            ring = (P.RING_WRAP, 0, False, True)    # nothing mapped: ring off (flags bit 1)
-            self._value_cache[k] = None
+            if value:
+                self._value_cache[k] = None
+            self._send_ring(c, P.RING_WRAP, 0, False, True)     # nothing mapped: ring off
+            return
+        v = to14(p.get_norm())
+        now = (p.key, v)
+        if value and self._value_cache.get(k) != now:
+            self._value_cache[k] = now
+            if c.takes_value:                   # a relative encoder ignores FB_VALUE (sysex.md 4.6.2)
+                self.notify(P.FB_VALUE, P.fb_value(P.KIND_ENCODER, c.index, v))
+        if p.bipolar:
+            self._send_ring(c, P.RING_BOOST_CUT, v, True, False)
         else:
-            v = to14(p.get_norm())
-            now = (p.key, v)
-            if self._value_cache.get(k) != now:
-                self._value_cache[k] = now
-                if c.takes_value:               # a relative encoder ignores FB_VALUE (sysex.md 4.6.2)
-                    self.notify(P.FB_VALUE, P.fb_value(P.KIND_ENCODER, c.index, v))
-            ring = (P.RING_BOOST_CUT, v, True, False) if p.bipolar else (P.RING_WRAP, v, False, False)
-        if c.ring and self._ring_cache.get(c.index) != ring:
-            self._ring_cache[c.index] = ring
-            self.notify(P.FB_RING, P.fb_ring(c.index, ring[0], ring[1], ring[2], ring[3]))
+            self._send_ring(c, P.RING_WRAP, v, False, False)
+
+    def _send_ring(self, c, mode, value, centre, off):
+        """FB_RING to encoder `c`, only when the LEDs it lights would change."""
+        if not c.ring:
+            return
+        shown = (mode, 0 if off else ring_lit(c.ring, mode, value), centre, off)
+        if self._ring_cache.get(c.index) != shown:
+            self._ring_cache[c.index] = shown
+            self.notify(P.FB_RING, P.fb_ring(c.index, mode, value, centre, off))

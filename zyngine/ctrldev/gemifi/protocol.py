@@ -2,7 +2,9 @@
 # Copyright (c) 2026 Benjamin Van Treese
 # Copied from gemifi (hosts/ableton-live/gemifi/protocol.py), MIT licensed, with pads (kind 7),
 # meters (kind 8), the analog touch byte and EVENT types 5 / 7 added (gemifi issue #21), and the
-# GET_COMPONENT `layer` byte and EVENT type 8 (layer on / off) for encoder modes.
+# GET_COMPONENT `layer` byte and EVENT type 8 (layer on / off) for encoder modes; synced with
+# gemifi v0.37 (2026-11-10): status LOCKED, the layout / monitor / unlock command numbers, the
+# analog adc_min / adc_max fields and encoder mode 4.
 # See LICENSE-MIT in this directory. The rest of the gemifi driver is GPL.
 """gemifi SysEx protocol v1 codec, the parts a DAW script needs (protocol/sysex.md).
 
@@ -23,13 +25,19 @@ HELLO = 0x01
 GET_PARAM = 0x03
 SET_PARAM = 0x04
 GET_COMPONENT = 0x11
+GET_LAYOUT = 0x14               # sysex.md 4.7 (caps bit 8): drawing a device; not used by DAW scripts
+MONITOR = 0x15                  # sysex.md 4.8 (caps bit 9): raw readings for an input tester
+UNLOCK = 0x16                   # sysex.md 4.9 (caps bit 10): physical unlock before flashing
 REPLY = 0x40
 NOTIFY_FIRST, NOTIFY_LAST = 0x20, 0x3F
 UNSOLICITED_FIRST = 0x60
 LOG = 0x60
 EVENT = 0x61
 PARAM_CHANGED = 0x62
+PRESET_CHANGED = 0x63
 BOOTED = 0x64                   # sysex.md 4.6.3: HELLO's fields, sent once after the device starts
+RAW = 0x65                      # only while a host keeps MONITOR running
+UNLOCKED = 0x66                 # the physical unlock window opened / closed
 
 # Host feedback notifications (sysex.md 4.6.2). Never answered.
 FB_LED = 0x20
@@ -45,13 +53,25 @@ RELEASE_ALL, RELEASE_LEDS, RELEASE_VALUES, RELEASE_TEXT = 0, 1, 2, 3
 RING_DOT, RING_BOOST_CUT, RING_WRAP, RING_SPREAD = 0, 1, 2, 3
 
 (OK, BAD_CHECKSUM, BAD_CMD, BAD_LEN, BAD_STATE, BAD_ADDR, FLASH_ERR, BAD_IMAGE, BAD_BOARD, BUSY,
- BAD_PARAM, BAD_VALUE) = range(12)
+ BAD_PARAM, BAD_VALUE, LOCKED) = range(13)
 STATUS_NAMES = ("OK", "BAD_CHECKSUM", "BAD_CMD", "BAD_LEN", "BAD_STATE", "BAD_ADDR", "FLASH_ERR",
-                "BAD_IMAGE", "BAD_BOARD", "BUSY", "BAD_PARAM", "BAD_VALUE")
+                "BAD_IMAGE", "BAD_BOARD", "BUSY", "BAD_PARAM", "BAD_VALUE", "LOCKED")
+
+
+def status_name(status):
+    """A reply status for the log; a number for one this codec doesn't know (or None: no reply)."""
+    if status is None:
+        return "no reply"
+    return STATUS_NAMES[status] if 0 <= status < len(STATUS_NAMES) else "status %d" % status
+
 
 CAP_FW, CAP_CONFIG, CAP_LOG, CAP_EVENT = 1, 2, 4, 8
 CAP_PRESETS = 1 << 5
 CAP_FEEDBACK = 1 << 6           # sysex.md 4.1 bit 6
+CAP_GEMIFI_BOOT = 1 << 7        # REBOOT(1) leads to a gemifi bootloader
+CAP_LAYOUT = 1 << 8             # GET_LAYOUT
+CAP_MONITOR = 1 << 9            # MONITOR and RAW
+CAP_UNLOCK = 1 << 10            # physical unlock: some requests may reply LOCKED
 
 PARAM_DEBUG_EVENTS = 13         # sysex.md 4.3 / 4.6 step 3
 
@@ -73,7 +93,9 @@ NONE_INDEX = 0x3FFF             # "no LED" in GET_COMPONENT replies
 TAKEOVER_NONE, TAKEOVER_PICKUP, TAKEOVER_MOTOR = 0, 1, 2   # 2 reserved: FB_VALUE moves the fader
 TOUCH_NONE, TOUCH_SENSOR, TOUCH_MOVEMENT = 0, 1, 2            # analog `touch` byte
 METER_LED_BAR, METER_RING, METER_DISPLAY_ROW = 1, 2, 3        # meter `type` byte (reserved)
-ENC_ABSOLUTE, ENC_REL_TWOS, ENC_REL_OFFSET, ENC_MCU = 0, 1, 2, 3
+# Encoder `mode`: only 0 is absolute (it also covers the 14-bit and (N)RPN absolute modes); every
+# other value, including ones added later, is relative and ignores FB_VALUE.
+ENC_ABSOLUTE, ENC_REL_TWOS, ENC_REL_OFFSET, ENC_MCU, ENC_REL_SIGN_MAG = 0, 1, 2, 3, 4
 OWNER_HOST_THEN_LOCAL, OWNER_HOST, OWNER_LOCAL = 0, 1, 2
 
 U14_MAX = 0x3FFF
@@ -375,7 +397,8 @@ class Component(object):
 
     def __init__(self, kind, index, count, id="", name="", role="", led=NONE_INDEX, keys=0, first_note=0,
                  ring=0, center=NONE_INDEX, colours=1, cols=0, rows=0, display_type=0, takeover=None,
-                 mode=None, owner=None, touch=None, segments=0, meter_type=0, layer=None):
+                 mode=None, owner=None, touch=None, segments=0, meter_type=0, layer=None,
+                 adc_min=None, adc_max=None):
         self.kind = kind
         self.index = index
         self.count = count
@@ -392,9 +415,11 @@ class Component(object):
         self.rows = rows
         self.display_type = display_type
         self.takeover = takeover        # analog: 0 none, 1 pick-up; None = not reported (older firmware)
-        self.mode = mode                # encoder: 0 absolute, 1/2 relative, 3 Mackie V-Pot; None = not reported
+        self.mode = mode                # encoder: 0 absolute, 1/2/4 relative, 3 Mackie V-Pot; None = not reported
         self.owner = owner              # LED: 0 host_then_local, 1 host, 2 local; None = not reported
         self.touch = touch              # analog: 0 none, 1 sensor, 2 from movement; None = not reported
+        self.adc_min = adc_min          # analog: the YAML's calibration, 0..4095 (min > max = reversed);
+        self.adc_max = adc_max          # None = not reported (firmware before 2026-11-05)
         self.segments = segments        # meter (reserved)
         self.meter_type = meter_type    # meter: 1 LED bar, 2 encoder ring, 3 display row
         # button, encoder, LED, pad: 0 always there; n = a twin in mode n - 1, live only while that
@@ -472,6 +497,8 @@ def parse_component_reply(payload):
     elif kind == KIND_ANALOG:
         c.takeover = rest[0] if len(rest) > 0 else None
         c.touch = rest[1] if len(rest) > 1 else None
+        if len(rest) >= 6:
+            c.adc_min, c.adc_max = dec_u14(rest[2:4]), dec_u14(rest[4:6])
     elif kind == KIND_ENCODER:
         need(3)
         c.ring, c.center = rest[0], dec_u14(rest[1:3])
@@ -510,6 +537,8 @@ def build_component_reply(c):
     elif c.kind == KIND_ANALOG:
         out += b"" if c.takeover is None else bytes([c.takeover])
         out += b"" if c.takeover is None or c.touch is None else bytes([c.touch])
+        if c.takeover is not None and c.touch is not None and c.adc_min is not None:
+            out += u14(c.adc_min) + u14(c.adc_max)
     elif c.kind == KIND_ENCODER:
         mode = c.mode if c.mode is not None or c.layer is None else ENC_ABSOLUTE
         out += bytes([c.ring]) + u14(c.center) + (b"" if mode is None else bytes([mode]) + layer)
@@ -535,7 +564,9 @@ class Event(object):
 
     @property
     def delta(self):
-        """Encoder events: `value` is a signed delta, 14-bit two's complement."""
+        """Encoder events: `value` is a signed delta in steps, 14-bit two's complement. One step
+        per detent, more on a quick turn when the encoder has acceleration (the device has
+        already scaled it): use it whole."""
         return s14_to_int(self.value)
 
     @property

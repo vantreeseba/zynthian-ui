@@ -242,7 +242,7 @@ class Device(object):
             return                                    # stale or stray reply
         status = frame.status
         if status in (P.BAD_CHECKSUM, P.BUSY):
-            self._resend_or_fail(r, P.STATUS_NAMES[status])
+            self._resend_or_fail(r, P.status_name(status))
             return
         self._finish(r, frame)
 
@@ -276,6 +276,8 @@ class Device(object):
                 self._enable_events()
         elif frame.cmd == P.BOOTED:
             self._on_booted(frame)
+        # PRESET_CHANGED, RAW (another host's MONITOR) and UNLOCKED (another host flashing it):
+        # nothing for a DAW script to do.
 
     def _on_booted(self, frame):
         """sysex.md 4.6.3: the device restarted, so every FB_* state and debug.events are gone.
@@ -354,8 +356,7 @@ class Device(object):
             elif status is None:
                 self._lost("GET_COMPONENT timed out")
             else:
-                self._log("GET_COMPONENT (%d, %d) -> %s; skipping the kind"
-                          % (kind, index, P.STATUS_NAMES[status] if status < len(P.STATUS_NAMES) else status))
+                self._log("GET_COMPONENT (%d, %d) -> %s; skipping the kind" % (kind, index, P.status_name(status)))
                 self._enum_next_kind()
 
         self._request(P.GET_COMPONENT, P.req_get_component(kind, index), ok, err)
@@ -394,7 +395,7 @@ class Device(object):
             if status is None:
                 self._lost("SET_PARAM debug.events timed out")
             else:
-                self._log("SET_PARAM debug.events -> %s" % P.STATUS_NAMES[status])
+                self._log("SET_PARAM debug.events -> %s" % P.status_name(status))
                 self.state = UNSUPPORTED
 
         self._request(P.SET_PARAM, P.req_set_param(P.PARAM_DEBUG_EVENTS, 0, 1), ok, err)

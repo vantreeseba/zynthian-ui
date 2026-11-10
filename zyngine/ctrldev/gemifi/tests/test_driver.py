@@ -70,7 +70,14 @@ class _ZynpadStub(_BaseStub):
         raise AssertionError("the driver must not use zynpad's refresh (light_off + update_pad)")
 
 
-GUI_CONFIG = types.SimpleNamespace(zynswitch_bold_us=300 * 1000, zynswitch_long_us=2000 * 1000)
+# Launcher colours as zynthian_gui_config has them: groups 0..4 red, green, blue, yellow,
+# magenta, the rest teal; the state colours are Zynthian's.
+LAUNCHER_HEX = ["#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF"] + ["#3F94A2"] * 28
+GUI_CONFIG = types.SimpleNamespace(
+    zynswitch_bold_us=300 * 1000, zynswitch_long_us=2000 * 1000,
+    LAUNCHER_COLOUR=[{"rgb": h} for h in LAUNCHER_HEX],
+    LAUNCHER_STARTING_COLOUR={"rgb": "#009000"}, LAUNCHER_STOPPING_COLOUR={"rgb": "#D00000"},
+    LAUNCHER_REC_COLOUR={"rgb": "#FF2020"})
 
 
 def _load_driver():
@@ -86,6 +93,9 @@ def _load_driver():
     zyngui.zynthian_gui_config = GUI_CONFIG
     mod = importlib.import_module("zyngine.ctrldev.zynthian_ctrldev_gemifi")
     mod.TICK_SECONDS = 3600         # the tests tick by hand
+    # ... and flush by hand: the session thread only waits for end()
+    mod.real_run = mod.zynthian_ctrldev_gemifi._run
+    mod.zynthian_ctrldev_gemifi._run = lambda self: self._stop.wait()
     return mod
 
 
@@ -318,8 +328,62 @@ def test_level_changed_on_screen_moves_pickup_target(pickup_rig):
     rig.chain(1).z("level").set_value(0.25)
     rig.chain(2).z("level").set_value(0.25)
     rig.drv.update_mixer_strip(0, "level", 0.25)
+    rig.drv.flush()
     vals = _values(rig.dev.take(), P.KIND_ANALOG)
     assert vals == [(0, round(0.25 * P.U14_MAX))]       # fader_2 has no pick-up: nothing
+
+
+def test_mixer_signals_coalesce_into_one_refresh(pickup_rig):
+    rig = pickup_rig
+    rig.dev.take()
+    for i in range(1, 21):                              # a fader sweep on the touchscreen
+        rig.chain(1).z("level").set_value(i / 20.0)
+        rig.drv.update_mixer_strip(0, "level", i / 20.0)
+    assert not rig.dev.take()                           # nothing until the flush
+    rig.drv.flush()
+    assert _values(rig.dev.take(), P.KIND_ANALOG) == [(0, P.U14_MAX)]   # one FB_VALUE, the last level
+    rig.drv.flush()
+    assert not rig.dev.take()                           # nothing dirty: nothing sent
+
+
+def test_session_thread_flushes_soon_after_a_signal(monkeypatch):
+    """The real session loop: a mixer signal is sent within a few FLUSH_SECONDS, without a tick."""
+    import time
+    monkeypatch.setattr(DRIVER.zynthian_ctrldev_gemifi, "_run", DRIVER.real_run)
+    r = Rig(fader_pickup=True)
+    r.drv.init()
+    try:
+        r.dev.take()
+        r.chain(1).z("level").set_value(0.5)
+        r.drv.update_mixer_strip(0, "level", 0.5)
+        deadline = time.monotonic() + 2.0
+        got = []
+        while not got and time.monotonic() < deadline:
+            time.sleep(0.01)
+            got = _values(r.dev.take(), P.KIND_ANALOG)
+        assert got == [(0, round(0.5 * P.U14_MAX))]
+    finally:
+        r.drv.end()
+    assert r.drv._thread is None
+
+
+def test_one_refresh_reads_the_chains_once(rig):
+    calls = []
+    real = rig.drv.song.bank_tracks
+    rig.drv.song.bank_tracks = lambda: calls.append(1) or real()
+    rig.drv.tick()
+    assert len(calls) == 1                              # strips, bank LEDs, master: one read
+    rig.event(P.KIND_BUTTON, 3, 1)                      # mute_1: the press reads, then a refresh
+    assert len(calls) <= 3
+
+
+def test_flush_is_quiet_while_asleep(rig):
+    rig.drv.sleep_on()
+    rig.dev.take()
+    rig.chain(1).z("mute").set_value(1)
+    rig.drv.update_mixer_strip(0, "mute", 1)
+    rig.drv.flush()
+    assert not rig.dev.take()
 
 
 def test_jump_mode_releases_targets_and_sends_none(rig):
@@ -328,6 +392,7 @@ def test_jump_mode_releases_targets_and_sends_none(rig):
     assert not _values(notes, P.KIND_ANALOG)
     rig.chain(1).z("level").set_value(0.25)
     rig.drv.update_mixer_strip(0, "level", 0.25)
+    rig.drv.flush()
     assert not _values(rig.dev.take(), P.KIND_ANALOG)
 
 
@@ -416,10 +481,33 @@ def test_select_sets_active_chain(rig):
 
 def test_pan_encoder_nudges_balance_with_boost_cut_ring(rig):
     rig.dev.take()
-    rig.event(P.KIND_ENCODER, 0, P.int_to_s14(3))
-    assert rig.chain(1).z("balance").value == pytest.approx(0.03)
+    rig.event(P.KIND_ENCODER, 0, P.int_to_s14(20))
+    assert rig.chain(1).z("balance").value == pytest.approx(0.2)
     rings = [pl for cmd, pl in rig.dev.take() if cmd == P.FB_RING]
     assert rings and rings[-1][2] == P.RING_BOOST_CUT and rings[-1][5] & 1
+
+
+def test_ring_sent_only_when_its_leds_change(rig):
+    rig.dev.take()
+    rig.event(P.KIND_ENCODER, 0, P.int_to_s14(3))       # balance 0.03: the 11-LED ring still shows centre
+    assert rig.chain(1).z("balance").value == pytest.approx(0.03)
+    assert not [pl for cmd, pl in rig.dev.take() if cmd == P.FB_RING]
+    rig.event(P.KIND_ENCODER, 0, P.int_to_s14(7))       # 0.1: one LED to the right
+    rings = [pl for cmd, pl in rig.dev.take() if cmd == P.FB_RING]
+    assert len(rings) == 1 and P.dec_u14(rings[0][3:5]) == round(0.55 * P.U14_MAX)
+
+
+def test_ring_lit_follows_the_firmware():
+    from gemifi.mapping import ring_lit
+    assert [ring_lit(11, P.RING_WRAP, v) for v in (0, 818, 820, 8192, P.U14_MAX)] == [0, 0, 1, 5, 10]
+    assert [ring_lit(15, P.RING_SPREAD, v) for v in (0, 2340, 2341, P.U14_MAX)] == [0, 0, 1, 7]
+
+
+def test_accelerated_turn_moves_by_the_whole_delta(rig):
+    rig.event(P.KIND_ENCODER, 0, P.int_to_s14(-12))     # a quick turn: 12 steps in one EVENT
+    assert rig.chain(1).z("balance").value == pytest.approx(-0.12)
+    rig.event(P.KIND_ENCODER, 2, P.int_to_s14(9))       # tempo: 9 BPM
+    assert rig.sm.zynseq.tempo == 129
 
 
 def test_zynpot_roles_drive_zynpots(rig):
@@ -502,9 +590,20 @@ def test_no_output_port_sends_nothing():
 
 from gemifi import zynthian_model as ZM
 
-TEAL, BLUE, BLACK = (0, 127, 127, 0), (0, 0, 127, 0), (0, 0, 0, 0)
-BLUE_BLINK = (0, 0, 127, 1)                 # a start or stop is queued
+BLACK = (0, 0, 0, 0)
+STARTING, STOPPING = (0, 72, 0, 1), (104, 0, 0, 1)         # Zynthian's #009000 / #D00000, blinking
+RECORDING, REC_QUEUED = (127, 16, 16, 0), (127, 16, 16, 1)  # #FF2020
 PAD_LED0 = 3                        # pad k (1..16) has LED PAD_LED0 + k - 1
+
+
+def full(group):
+    """A playing pad of `group`: its launcher colour."""
+    return ZM.rgb7(LAUNCHER_HEX[group]) + (0,)
+
+
+def idle(group):
+    """A stopped pad of `group`: its launcher colour, dimmed."""
+    return ZM.dim(ZM.rgb7(LAUNCHER_HEX[group]), ZM.CLIP_IDLE_SCALE) + (0,)
 
 
 def code61_pad_role(k):
@@ -593,23 +692,55 @@ def test_grid_leds_show_sequence_state(grid):
     notes = grid.dev.take()
     assert set(rgbs(notes).values()) == {BLACK}         # nothing recorded yet: all off
     assert len(rgbs(notes)) == 16
-    zs.seq(0, 0)["nEvents"] = 5                         # chain 1 (MIDI chan 0), phrase 0: stopped
-    zs.seq(1, 1)["nEvents"] = 3                         # chain 2, phrase 1: playing
+    zs.seq(0, 0)["nEvents"] = 5                         # chain 1 (MIDI chan 0, group 0), phrase 0: stopped
+    zs.seq(1, 1)["nEvents"] = 3                         # chain 2 (group 1), phrase 1: playing
     zs.seq(1, 1)["state"] = 1
-    zs.seq(2, 2)["nEvents"] = 3                         # starting: blue, blinking
+    zs.seq(2, 2)["nEvents"] = 3                         # starting: green, blinking
     zs.seq(2, 2)["state"] = 2
-    zs.seq(0, 3)["nEvents"] = 3                         # stopping at the next sync: the same
+    zs.seq(0, 3)["nEvents"] = 3                         # stopping at the next sync: red, blinking
     zs.seq(0, 3)["state"] = 5
-    zs.seq(1, 2)["nEvents"] = 3                         # recording: playing
+    zs.seq(1, 2)["nEvents"] = 3                         # recording: red
     zs.seq(1, 2)["state"] = 9
+    zs.seq(2, 1)["nEvents"] = 3                         # punch-in queued: red, blinking
+    zs.seq(2, 1)["state"] = 10
+    zs.seq(3, 1)["nEvents"] = 3                         # child playing: as playing
+    zs.seq(3, 1)["state"] = 6
     zs.seq(3, 3)["nEvents"] = 3                         # disabled (repeat 0): no sequence
     zs.seq(3, 3)["repeat"] = 0
     grid.drv.tick()
     got = rgbs(grid.dev.take())
-    assert got == {pad_led(1, 1): TEAL, pad_led(2, 2): BLUE, pad_led(3, 3): BLUE_BLINK,
-                   pad_led(4, 1): BLUE_BLINK, pad_led(3, 2): BLUE}
+    assert got == {pad_led(1, 1): idle(0), pad_led(2, 2): full(1), pad_led(3, 3): STARTING,
+                   pad_led(4, 1): STOPPING, pad_led(3, 2): RECORDING, pad_led(2, 3): REC_QUEUED,
+                   pad_led(2, 4): full(1)}
+    assert idle(0) == (44, 0, 0, 0) and full(1) == (0, 127, 0, 0)
     grid.drv.tick()
     assert not rgbs(grid.dev.take())                    # change-only
+
+
+def test_grid_pad_recording_midi_is_red(grid):
+    grid.dev.take()
+    grid.sm.midi_record_pad = (1, 2)                    # phrase 1, chain 3: even while empty
+    grid.drv.tick()
+    assert rgbs(grid.dev.take()) == {pad_led(3, 2): RECORDING}
+
+
+def test_grid_colours_without_zynthians_table():
+    sm = FakeStateManager(3)
+    song = ZM.ZynSong(sm, lambda: list(sm.chain_manager.chains))     # no launcher_colour
+    track = song.bank_tracks()[0]
+    sm.zynseq.seq(0, 0)["nEvents"] = 1
+    assert song.clip_rgb(track, 0) == ZM.dim(ZM.DEFAULT_GROUP_RGB, ZM.CLIP_IDLE_SCALE) + (False,)
+    sm.zynseq.seq(0, 0)["state"] = 3
+    assert song.clip_rgb(track, 0) == ZM.DEFAULT_RGB["stopping"] + (True,)
+    bad = ZM.ZynSong(sm, lambda: list(sm.chain_manager.chains), launcher_colour=lambda k: "nope")
+    assert bad.clip_rgb(bad.bank_tracks()[0], 0) == ZM.DEFAULT_RGB["stopping"] + (True,)
+
+
+def test_colour_helpers():
+    assert ZM.rgb7("#FF8000") == (127, 64, 0) and ZM.rgb7((255, 0, 2)) == (127, 0, 1)
+    assert ZM.rgb7("FF8000") == (127, 64, 0)
+    assert ZM.rgb7(None) is None and ZM.rgb7("#12") is None and ZM.rgb7("#GG0000") is None
+    assert ZM.dim((127, 2, 0), 0.25) == (32, 1, 0)      # a lit channel stays lit
 
 
 def test_clippy_pads_lit_by_their_clip_file(grid):
@@ -620,17 +751,18 @@ def test_clippy_pads_lit_by_their_clip_file(grid):
     grid.dev.take()
     clip.value = "take1.wav"
     grid.drv.tick()
-    assert rgbs(grid.dev.take()) == {pad_led(4, 1): TEAL}
+    assert rgbs(grid.dev.take()) == {pad_led(4, 1): idle(19)}
 
 
-def test_seq_state_signal_refreshes_at_once(grid):
+def test_seq_state_signal_refreshes_on_the_next_flush(grid):
     zs = grid.sm.zynseq
     zs.seq(0, 0)["nEvents"] = 5
     grid.drv.tick()
     grid.dev.take()
     zs.seq(0, 0)["state"] = 1
     grid.drv.update_seq_state(phrase=0, chan=0)         # zynsigman SS_SEQ_PLAY_STATE, no tick
-    assert rgbs(grid.dev.take()) == {pad_led(1, 1): BLUE}
+    grid.drv.flush()
+    assert rgbs(grid.dev.take()) == {pad_led(1, 1): full(0)}
 
 
 def test_pad_press_launches_through_zynpad(grid):
@@ -686,7 +818,7 @@ def test_grid_scrolls_by_one_and_clamps(grid):
     assert m.grid_row == 1
     grid.sm.zynseq.seq(1, 5)["nEvents"] = 1             # chain 6, phrase 1: now the top left pad
     grid.drv.tick()
-    assert rgbs(grid.dev.take())[pad_led(1, 1)] == TEAL
+    assert rgbs(grid.dev.take())[pad_led(1, 1)] == idle(5)
     grid.event(P.KIND_PAD, pad_index(1, 1), 50)
     assert grid.drv.pad_calls[-1] == ("press", 1, 5)
 
@@ -793,15 +925,21 @@ def test_param_display_shows_values_then_the_chain_name(grid):
     assert grid.drv.mapping._text_cache == {0: "Pianot"}            # the time display isn't driven
     grid.dev.take()
     grid.event(P.KIND_ANALOG, 0, P.U14_MAX // 2)                    # volume_1, jump mode
+    assert not _texts(grid.dev.take())                              # the next flush sends it
+    grid.drv.flush()
     assert _texts(grid.dev.take()) == [(0, 0, 0, "V1 50%")]
     grid.event(P.KIND_ENCODER, 0, P.int_to_s14(-20))                # pan_1
+    grid.drv.flush()
     assert _texts(grid.dev.take()) == [(0, 0, 0, "P1 L20")]
     grid.event(P.KIND_ENCODER, 0, P.int_to_s14(-20))
+    grid.drv.flush()
     assert _texts(grid.dev.take()) == [(0, 0, 0, "P1 L40")]
     grid.chain(1).z("balance").set_value(-1.0)
     grid.event(P.KIND_ENCODER, 0, P.int_to_s14(-1))
+    grid.drv.flush()
     assert _texts(grid.dev.take()) == [(0, 0, 0, "L100  ")]         # "P1 L100" doesn't fit
     grid.event(P.KIND_ENCODER, 2, P.int_to_s14(5))                  # tempo
+    grid.drv.flush()
     assert _texts(grid.dev.take()) == [(0, 0, 0, "125bpm")]
     for _ in range(ZM.TEXT_HOLD_TICKS - 1):
         grid.drv.tick()
@@ -810,21 +948,32 @@ def test_param_display_shows_values_then_the_chain_name(grid):
     assert _texts(grid.dev.take()) == [(0, 0, 0, "Pianot")]         # ~1.5 s later
 
 
+def test_param_display_sends_the_latest_text_once_per_flush(grid):
+    grid.dev.take()
+    for v in range(0, P.U14_MAX, P.U14_MAX // 40):                  # a fast fader sweep: 41 EVENTs
+        grid.event(P.KIND_ANALOG, 0, v)
+    grid.drv.flush()
+    assert _texts(grid.dev.take()) == [(0, 0, 0, "100%  ")]         # one FB_TEXT, the last value
+
+
 def test_param_display_zynpots_show_nothing(grid):
     grid.dev.take()
     grid.event(P.KIND_ENCODER, 3, P.int_to_s14(1))                  # zynthian.zynpot_1: Zynthian shows it
     grid.event(P.KIND_ENCODER, 1, P.int_to_s14(1))                  # nav_scroll
+    grid.drv.flush()
     assert not _texts(grid.dev.take())
 
 
 def test_param_display_selection_and_bank_show_the_name(grid):
     grid.dev.take()
     grid.event(P.KIND_ANALOG, 0, 0)
+    grid.drv.flush()
     assert _texts(grid.dev.take()) == [(0, 0, 0, "V1 0% ")]
     grid.event(P.KIND_BUTTON, 15, 1)                                # select_2: name at once
     assert _texts(grid.dev.take()) == [(0, 0, 0, "Pianot")]
     grid.sm.chain_manager.chains[2].get_name = lambda: "EP"
     grid.event(P.KIND_ANALOG, 0, 0)
+    grid.drv.flush()
     grid.dev.take()
     grid.event(P.KIND_BUTTON, 13, 1)                                # strip_next: bank changed
     assert _texts(grid.dev.take()) == [(0, 0, 0, "EP    ")]
@@ -852,7 +1001,7 @@ def test_sleep_turns_pads_off_and_wake_restores(grid):
     grid.drv.tick()
     assert not grid.dev.take()
     grid.drv.sleep_off()
-    assert rgbs(grid.dev.take())[pad_led(1, 1)] == TEAL
+    assert rgbs(grid.dev.take())[pad_led(1, 1)] == idle(0)
 
 
 def test_driver_reuses_the_zynpad_base():
@@ -1095,6 +1244,7 @@ def test_page_resets_when_the_processor_or_chain_changes(enc):
     enc.chain(2).current_processor = synth()
     enc.sm.chain_manager.set_active_chain_by_id(2)
     enc.drv.on_active_chain(2)
+    enc.drv.flush()
     assert m.device_bank == 0
     turn(enc, DP_ZYN, 1)
     assert zc(enc, "volume", chain=2).value == 101 and zc(enc, "volume", chain=1).value == 100
@@ -1121,14 +1271,18 @@ def test_no_processor_maps_nothing():
 def test_param_display_shows_the_controllers_name_and_value(enc):
     enc.dev.take()
     turn(enc, DP_ZYN + 1, 1)                    # tune 65
+    enc.drv.flush()
     assert _texts(enc.dev.take()) == [(0, 0, 0, "Tun 65")]
     turn(enc, DP_ZYN + 2, 1)                    # osc: its label
+    enc.drv.flush()
     assert _texts(enc.dev.take()) == [(0, 0, 0, "Pulse ")]    # no room for the name
     turn(enc, DP_ZYN + 3, 10)                   # glide: a float
+    enc.drv.flush()
     assert _texts(enc.dev.take()) == [(0, 0, 0, "G 0.60")]
     zc(enc, "volume").value = 127
     turn(enc, DP_ZYN, 100)                      # clamped at 127
     assert zc(enc, "volume").value == 127
+    enc.drv.flush()
     assert _texts(enc.dev.take()) == [(0, 0, 0, "Vo 127")]
     for _ in range(ZM.TEXT_HOLD_TICKS):
         enc.drv.tick()
@@ -1154,6 +1308,17 @@ def test_absolute_twins_get_the_value_and_follow_the_page(enc):
     assert vals[DP_ZYN] == round(64 / 127 * P.U14_MAX)          # now Filter / cutoff
     enc.drv.tick()
     assert not _values(enc.dev.take(), P.KIND_ENCODER)          # change-only
+
+
+def test_encoder_value_echo_waits_for_the_flush(enc):
+    enc.dev.take()
+    for _ in range(10):                                         # a fast turn: 10 EVENTs
+        turn(enc, DP_ZYN, 1)
+    assert zc(enc, "volume").value == 110
+    assert not _values(enc.dev.take(), P.KIND_ENCODER)          # no FB_VALUE per EVENT
+    enc.drv.flush()
+    v = round(110 / 127 * P.U14_MAX)
+    assert _values(enc.dev.take(), P.KIND_ENCODER) == [(DP_ZYN, v), (DP_DEV, v)]   # both device_param_1 twins
 
 
 def test_device_param_on_a_fader_sets_the_value():
