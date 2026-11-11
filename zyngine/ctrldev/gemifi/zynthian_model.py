@@ -31,8 +31,10 @@ are the selected chain's current processor's parameters (its control screens, 4 
 the clip grid is zynpad's launcher grid: columns are chains (in mixer order), rows are phrases.
 """
 
+import logging
 import os
 import re
+import time
 import unicodedata
 
 from . import protocol as P
@@ -78,7 +80,10 @@ _CUIA_ROLE = re.compile(r"^zynthian\.([a-z0-9_]+)$")
 _CLIP_ROLE = re.compile(r"^clip_([1-8])_([1-8])$")
 _ZYNPOT_ROLE = re.compile(r"^zynthian\.zynpot_([1-%d])$" % NUM_ZYNPOTS)
 _DEVICE_PARAM_ROLE = re.compile(r"^device_param_([1-8])$")
-PARAMS_PER_PAGE = 4         # a control screen's controllers: device pages are in units of 4
+PARAMS_PER_PAGE = 4         # a control screen's controllers: each screen is padded to 4
+PAGE_UNIT = 2               # device pages are in units of 2 parameters (half a screen)
+PRESET_REST = 0.2           # device_preset / _bank: load the pick once the encoder rests this long (s)
+PRESET_ROLES = ("device_preset", "device_preset_bank")
 GRID_STEPS = {"grid_left": (-1, 0), "grid_right": (1, 0), "grid_up": (0, -1), "grid_down": (0, 1)}
 TEXT_HOLD_TICKS = 15        # a knob's value stays on the display ~1.5 s, then the chain name
 DISPLAY_NAME_ROLES = ("", "track_name")     # show the selected chain's name
@@ -281,6 +286,48 @@ class ProcParam(ZctrlParam):
             self.zctrl.nudge(int(delta))
 
 
+def preset_selectable(entry, bank):
+    """A bank or preset list entry the encoder may land on: not a separator (None id, as
+    zynthian_gui_selector marks them), named, and for banks not the favourites entry."""
+    try:
+        return entry[0] is not None and bool(entry[2]) and not (bank and entry[0] == "*FAVS*")
+    except (IndexError, TypeError):
+        return False
+
+
+def preset_entry_name(entry):
+    name = str(entry[2] or "")
+    return name[2:] if name.startswith("\u2764 ") else name    # the favourite marker
+
+
+class PresetParam(Param):
+    """device_preset (bank False) / device_preset_bank (bank True): the current processor's
+    preset in its bank, or its bank, one entry a detent (ZynSong.preset_step). The pick is
+    loaded once the encoder rests (ZynSong.preset_tick); the display shows its name meanwhile."""
+
+    def __init__(self, song, bank):
+        self.song = song
+        self.bank = bank
+
+    @property
+    def key(self):
+        return ("preset", self.bank, self.song.device_key())
+
+    def display_text(self):
+        return self.song.preset_name(self.bank)
+
+    def get_norm(self):
+        _proc, entries, cur = self.song.preset_entries(self.bank)
+        n = len(entries)
+        return float(cur) / (n - 1) if n > 1 and 0 <= cur < n else 0.0
+
+    def set_norm(self, value):
+        self.song.preset_pick(self.bank, value)
+
+    def nudge(self, delta):
+        self.song.preset_step(self.bank, delta)
+
+
 class TempoParam(Param):
     """zynseq's tempo, 1 BPM per encoder detent."""
 
@@ -391,6 +438,8 @@ class ZynSong(Song):
         self._colours = {}              # launcher_colour key -> (r, g, b) 0..127
         self._params_sig = None         # device_params() cache: what it was built from ...
         self._params = []               # ... and the list
+        self._preset_pending = None     # (processor, bank, index, time): a pick not loaded yet
+        self.clock = time.monotonic
 
     @property
     def chains(self):
@@ -543,6 +592,88 @@ class ZynSong(Song):
             name = None
         return name or getattr(proc, "name", "") or ""
 
+    # ---- the current processor's preset and bank: device_preset, device_preset_bank ----
+
+    def preset_entries(self, bank):
+        """(processor, its bank_list or preset_list, the current index) for device_preset_bank
+        (bank True) or device_preset; a pick not loaded yet counts as current. (None, [], -1)
+        without a processor."""
+        _chain, proc = self.current_processor()
+        if proc is None:
+            return None, [], -1
+        entries = list(getattr(proc, "bank_list" if bank else "preset_list", None) or [])
+        pend = self._preset_pending
+        if pend is not None and pend[0] is proc and pend[1] == bank:
+            return proc, entries, pend[2]
+        try:
+            cur = proc.get_bank_index() if bank else proc.get_preset_index()
+        except Exception:
+            cur = -1
+        return proc, entries, cur if isinstance(cur, int) else -1
+
+    def _preset_set_pending(self, proc, bank, index):
+        # Another kind's pick (a preset, then the bank) is dropped: the bank starts at its first.
+        self._preset_pending = (proc, bank, index, self.clock())
+
+    def preset_step(self, bank, delta):
+        """Move the pick by `delta` selectable entries, clamped (no wrap)."""
+        proc, entries, cur = self.preset_entries(bank)
+        delta = int(delta)
+        if proc is None or not entries or not delta:
+            return
+        step = 1 if delta > 0 else -1
+        i, left, pick = min(max(cur, -1), len(entries)), abs(delta), None
+        while left:
+            i += step
+            if not 0 <= i < len(entries):
+                break
+            if preset_selectable(entries[i], bank):
+                pick, left = i, left - 1
+        if pick is not None and pick != cur:
+            self._preset_set_pending(proc, bank, pick)
+
+    def preset_pick(self, bank, value):
+        """An absolute move (an analog): the selectable entry nearest `value` (0..1)."""
+        proc, entries, cur = self.preset_entries(bank)
+        ok = [k for k, e in enumerate(entries) if preset_selectable(e, bank)]
+        if proc is None or not ok:
+            return
+        target = min(1.0, max(0.0, value)) * (len(entries) - 1)
+        pick = min(ok, key=lambda k: abs(k - target))
+        if pick != cur:
+            self._preset_set_pending(proc, bank, pick)
+
+    def preset_name(self, bank):
+        _proc, entries, cur = self.preset_entries(bank)
+        return preset_entry_name(entries[cur]) if 0 <= cur < len(entries) else ""
+
+    def preset_tick(self):
+        """Load the pick once the encoder has rested PRESET_REST s (a bank: then its first
+        preset), and redraw Zynthian's screens. True when it loaded something."""
+        pend = self._preset_pending
+        if pend is None or self.clock() - pend[3] < PRESET_REST:
+            return False
+        self._preset_pending = None
+        proc, bank, index = pend[:3]
+        if self.current_processor()[1] is not proc:
+            return False                # another chain or processor meanwhile: drop it
+        try:
+            if bank:
+                if getattr(proc, "show_fav_presets", False) and hasattr(proc, "set_show_fav_presets"):
+                    proc.set_show_fav_presets(False)
+                if proc.set_bank(index) is not False:
+                    proc.load_preset_list()
+                    first = next((k for k, e in enumerate(proc.preset_list or [])
+                                  if preset_selectable(e, False)), None)
+                    if first is not None:
+                        proc.set_preset(first)
+            else:
+                proc.set_preset(index)
+        except Exception as e:
+            logging.warning("gemifi: can't set the %s => %s", "bank" if bank else "preset", e)
+        self.cuia("refresh_screen", ["control", "bank", "preset", "mixer"])
+        return True
+
     # ---- zynpots, switches ----
 
     def zynpot(self, index):
@@ -684,15 +815,15 @@ class _ClipBinding(object):
 class ZynMapping(Mapping):
     """mapping.Mapping with Zynthian's differences: stop and record behave like Zynthian's
     transport, zynthian.zynpot_1..4 drive the zynpots, device_param_N the current processor's
-    parameters (paged by device_bank_prev / next, by as many pages of 4 as there are live
-    device_param controls), master_mute mutes the main chain, faders can jump instead of
+    parameters (paged by device_bank_prev / next, by as many pages of 2 as there are live
+    device_param controls), device_preset / device_preset_bank its preset and bank, master_mute mutes the main chain, faders can jump instead of
     picking up, displays show the active chain's name (and a `param` display the value being
     moved), clip_T_S pads show and launch zynpad's grid, nav_* drive Zynthian's switches and
     arrows, zynthian.<cuia> runs a CUIA, and roles Zynthian has no use for are left unbound (and
     so logged as unknown).
 
-    `device_bank` is the device page, in units of PARAMS_PER_PAGE: device_param_N is parameter
-    device_bank * 4 + N - 1. `live(component)` says whether a component takes its physical
+    `device_bank` is the device page, in units of PAGE_UNIT: device_param_N is parameter
+    device_bank * 2 + N - 1. `live(component)` says whether a component takes its physical
     control now (Device.is_live: layer twins only while their mode is on).
 
     A `param` display's text is sent by refresh(), so a knob swept fast sends one FB_TEXT per
@@ -933,11 +1064,14 @@ class ZynMapping(Mapping):
     def tick(self):
         if self._text_hold > 0:
             self._text_hold -= 1        # at 0, the refresh below puts the chain name back
+        self.song.preset_tick()         # a preset / bank pick, once its encoder rests
         Mapping.tick(self)
 
     def _refresh(self):
         self._clamp_grid()
         Mapping._refresh(self)
+        if self.device_bank > self._device_bank_last():
+            self.device_bank = self._device_bank_last()     # the screens shrank
         self._refresh_clips()
         t = self._reads.selected_track()
         ctx = (t.key if t is not None else None, self.bank_offset)
@@ -984,33 +1118,39 @@ class ZynMapping(Mapping):
     # ---- device pages (device_param_N, device_bank_prev / next) ----
 
     def _device_bank_count(self):
-        """Pages of PARAMS_PER_PAGE parameters (the base class counts banks of 8)."""
+        """Pages of PAGE_UNIT parameters (the base class counts banks of 8)."""
         n = len(self._reads.device_params())
-        return (n + PARAMS_PER_PAGE - 1) // PARAMS_PER_PAGE
+        return (n + PAGE_UNIT - 1) // PAGE_UNIT
 
     def device_page_step(self):
-        """Pages a device_bank_prev / next press moves: ceil(live device_param_N / 4), counting
-        each N once (1 with device_param_1..4 live, 2 with 1..8), at least 1."""
+        """Pages a device_bank_prev / next press moves: ceil(live device_param_N / 2), counting
+        each N once (1 with device_param_1..2 live, 2 with 1..4, 4 with 1..8), at least 1."""
         live = set()
         for table in (self._analogs, self._encoders):
             for b in table.values():
                 n = device_param_number(b.component.role)
                 if n is not None and self.live(b.component):
                     live.add(n)
-        return max(1, (len(live) + PARAMS_PER_PAGE - 1) // PARAMS_PER_PAGE)
+        return max(1, (len(live) + PAGE_UNIT - 1) // PAGE_UNIT)
+
+    def _device_bank_last(self):
+        """The last page a step can land on: the last that starts a whole step (so with 2 or 4
+        pages a step, the pages stay aligned to the screens), at least 0."""
+        step = self.device_page_step()
+        return max(0, (self._device_bank_count() - 1) // step * step)
 
     def _can_device_bank_step(self, d):
         if d < 0:
             return self.device_bank > 0
-        return self.device_bank + 1 < self._device_bank_count()
+        return self.device_bank < self._device_bank_last()
 
     def device_bank_step(self, d):
         """Move by device_page_step() pages, clamped to the pages that exist, and show the new
         page's first parameter (or the processor's name)."""
-        last = max(0, self._device_bank_count() - 1)
+        last = self._device_bank_last()
         self.device_bank = min(last, max(0, self.device_bank + d * self.device_page_step()))
         params = self._reads.device_params()
-        k = self.device_bank * PARAMS_PER_PAGE
+        k = self.device_bank * PAGE_UNIT
         p = params[k] if k < len(params) else None
         self._hold_text(p.name_label if p is not None else self._reads.device_name())
 
@@ -1033,11 +1173,14 @@ class ZynMapping(Mapping):
         zp = zynpot_role(role)
         if zp is not None:
             return lambda: self.song.zynpot(zp)
+        if role in PRESET_ROLES:
+            p = PresetParam(self.song, role == "device_preset_bank")
+            return lambda: p if self.song.current_processor()[1] is not None else None
         n = device_param_number(role)
         if n is not None:
             def target(i=n - 1):
                 params = self._reads.device_params()
-                k = self.device_bank * PARAMS_PER_PAGE + i
+                k = self.device_bank * PAGE_UNIT + i
                 return params[k] if 0 <= k < len(params) else None
             return target
         return Mapping._cont_role(self, role)

@@ -1205,20 +1205,20 @@ def test_device_param_turns_the_processors_controller(enc):
 
 def test_device_param_paging_follows_screens_and_clamps(enc):
     m = enc.drv.mapping
-    assert len(enc.drv.song.device_params()) == 12 and m._device_bank_count() == 3
-    assert m.device_page_step() == 1            # enc_zyn: device_param_1..4 live
+    assert len(enc.drv.song.device_params()) == 12 and m._device_bank_count() == 6
+    assert m.device_page_step() == 2            # enc_zyn: device_param_1..4 live, 2 pages of 2
     press(enc, BANK_ZYN + 1)                    # device_bank_next
-    assert m.device_bank == 1
+    assert m.device_bank == 2
     turn(enc, DP_ZYN, 1)                        # Filter / cutoff
     turn(enc, DP_ZYN + 2, 1)                    # a padded gap: nothing
     assert zc(enc, "cutoff").value == 65
     press(enc, BANK_ZYN + 1)
     press(enc, BANK_ZYN + 1)                    # clamped at the last page
-    assert m.device_bank == 2
+    assert m.device_bank == 4
     turn(enc, DP_ZYN + 3, 5)
     assert zc(enc, "release").value == 5
     press(enc, BANK_ZYN)                        # device_bank_prev
-    assert m.device_bank == 1
+    assert m.device_bank == 2
     press(enc, BANK_ZYN)
     press(enc, BANK_ZYN)
     assert m.device_bank == 0
@@ -1240,21 +1240,21 @@ def test_device_mode_pages_by_eight(enc):
     enc.dev.set_mode(ENC_ZYN, False)
     enc.dev.set_mode(ENC_DEV, True)
     assert enc.drv.device.layers_on == {ENC_DEV}
-    assert m.device_page_step() == 2            # device_param_1..8 live
+    assert m.device_page_step() == 4            # device_param_1..8 live
     turn(enc, DP_DEV + 4, 1)                    # device_param_5 on page 0: Filter / cutoff
     assert zc(enc, "cutoff").value == 65
-    press(enc, BANK_DEV + 1)                    # by 2 pages
-    assert m.device_bank == 2
+    press(enc, BANK_DEV + 1)                    # by 4 pages of 2
+    assert m.device_bank == 4
     turn(enc, DP_DEV, 1)                        # device_param_1: Env / attack
     assert zc(enc, "attack").value == 1
     press(enc, BANK_DEV + 1)                    # clamped
-    assert m.device_bank == 2
+    assert m.device_bank == 4
     press(enc, BANK_DEV)
     assert m.device_bank == 0
 
 
 def test_page_step_from_liveness():
-    for modes, step in (((), 1), ((ENC_MIDI,), 1), ((ENC_ZYN,), 1), ((ENC_DEV,), 2), ((ENC_ZYN, ENC_DEV), 2)):
+    for modes, step in (((), 1), ((ENC_MIDI,), 1), ((ENC_ZYN,), 2), ((ENC_DEV,), 4), ((ENC_ZYN, ENC_DEV), 4)):
         r = enc_rig(modes)
         assert r.drv.mapping.device_page_step() == step, modes
         r.drv.end()
@@ -1272,7 +1272,7 @@ def test_page_resets_when_the_processor_or_chain_changes(enc):
     m = enc.drv.mapping
     press(enc, BANK_ZYN + 1)
     press(enc, BANK_ZYN + 1)
-    assert m.device_bank == 2
+    assert m.device_bank == 4
     enc.chain(1).current_processor = synth()            # another processor (same id here: 7)
     enc.chain(1).current_processor.id = 8
     enc.drv.tick()
@@ -1293,7 +1293,7 @@ def test_page_clamped_when_the_screens_shrink(enc):
     press(enc, BANK_ZYN + 1)
     del enc.chain(1).current_processor.screens["Env"]
     enc.drv.tick()
-    assert m.device_bank == 1
+    assert m.device_bank == 2
 
 
 def test_no_processor_maps_nothing():
@@ -1385,14 +1385,14 @@ def test_old_firmware_without_layers_counts_everything_live():
     r = enc_rig(layers=False)
     assert all(c.layer is None for c in r.drv.device.all_components())
     assert r.drv.device.layers_on == set()
-    assert r.drv.mapping.device_page_step() == 2                # device_param_1..8 all count
+    assert r.drv.mapping.device_page_step() == 4                # device_param_1..8 all count
     turn(r, DP_ZYN, 1)
     turn(r, DP_DEV + 7, 1)                                      # device_param_8: Filter's gap
     assert zc(r, "volume").value == 101
     r.drv.end()
 
 
-def test_old_firmware_four_device_params_page_by_one():
+def test_old_firmware_four_device_params_page_by_a_screen():
     comps = [C(P.KIND_ENCODER, i, "device_param_%d" % (i + 1), ring=0, mode=P.ENC_REL_TWOS) for i in range(4)] + [
         C(P.KIND_BUTTON, 0, "device_bank_next")]
     r = Rig(components=comps)
@@ -1400,7 +1400,7 @@ def test_old_firmware_four_device_params_page_by_one():
     r.chain(1).current_processor = synth()
     r.drv.init()
     press(r, 0)
-    assert r.drv.mapping.device_bank == 1
+    assert r.drv.mapping.device_bank == 2
     r.drv.end()
 
 
@@ -1409,4 +1409,161 @@ def test_layer_event_refreshes_and_is_not_a_control(enc):
     enc.dev.set_mode(ENC_ZYN, False)
     assert enc.sm.cuias == [] and enc.drv.mapping.device_page_step() == 1
     enc.dev.set_mode(ENC_DEV, True)
-    assert enc.drv.mapping.device_page_step() == 2
+    assert enc.drv.mapping.device_page_step() == 4
+
+
+# ---- device_preset, device_preset_bank (the Code 61's ZYN mode since 0.2.107: E5, E6) ----
+
+class FakePresetProcessor(FakeProcessor):
+    """synth() with zynthian_processor's bank / preset lists: entries [id, ..., name], a None id
+    is a separator, '*FAVS*' the favourites entry."""
+
+    BANKS = {"Pads": ["Warm", None, "Glass", "Choir"], "Keys": ["Grand", "EP"], "Bass": ["Sub"]}
+
+    def __init__(self):
+        FakeProcessor.__init__(self, 7, "OB-Xd", synth().screens)
+        self.bank_list = [["*FAVS*", 0, "*** Favorites ***"], ["pads", 0, "Pads"], [None, 0, "-- user --"],
+                          ["keys", 0, "Keys"], ["bass", 0, "Bass"]]
+        self.bank_index, self.preset_index, self.show_fav_presets = 1, 0, False
+        self.calls = []
+        self.load_preset_list()
+
+    def get_bank_index(self):
+        return self.bank_index
+
+    def get_preset_index(self):
+        return self.preset_index
+
+    def set_bank(self, i):
+        self.calls.append(("bank", i))
+        self.bank_index = i
+        return True
+
+    def set_show_fav_presets(self, on):
+        self.show_fav_presets = on
+
+    def load_preset_list(self):
+        names = self.BANKS[self.bank_list[self.bank_index][2]]
+        self.preset_list = [[None if n is None else n.lower(), 0, n or "-- sep --"] for n in names]
+
+    def set_preset(self, i):
+        self.calls.append(("preset", i))
+        self.preset_index = i
+        return True
+
+
+PRESET, PRESET_BANK, ZDP = 12, 13, 14       # encoder indices of the enc_zyn twins of E5, E6, E7
+
+
+def code61_zyn_components():
+    """The Code 61's enc_zyn step since 0.2.107: E1-E4 zynpots, E5 device_preset, E6
+    device_preset_bank, E7-E8 device_param_1..2; Bank left / right its device_bank_prev / next."""
+    B, E = P.KIND_BUTTON, P.KIND_ENCODER
+    enc = lambda role, layer: C(E, 0, role, ring=0, mode=P.ENC_ABSOLUTE, layer=layer)
+    return ([C(B, 0, "shift", layer=0), C(B, 1, "nav_back", layer=0),
+             C(B, 2, "bank_left", led=0, layer=0), C(B, 3, "bank_right", led=1, layer=0),
+             C(B, 4, "device_bank_prev", led=2, layer=ENC_ZYN + 1),
+             C(B, 5, "device_bank_next", led=3, layer=ENC_ZYN + 1)] +
+            [enc("", 0) for _ in range(8)] +
+            [enc("zynthian.zynpot_%d" % n, ENC_ZYN + 1) for n in range(1, 5)] +
+            [enc("device_preset", ENC_ZYN + 1), enc("device_preset_bank", ENC_ZYN + 1),
+             enc("device_param_1", ENC_ZYN + 1), enc("device_param_2", ENC_ZYN + 1)] +
+            [C(P.KIND_LED, i, "", colours=1, owner=P.OWNER_HOST_THEN_LOCAL, layer=0) for i in range(4)] +
+            [C(P.KIND_DISPLAY, 0, "param", cols=6, rows=1, display_type=1)])
+
+
+@pytest.fixture
+def zyn():
+    r = Rig(components=code61_zyn_components())
+    r.dev.modes_on = {ENC_ZYN}
+    r.dev.replay_layers = True
+    r.chain(1).current_processor = FakePresetProcessor()
+    now = [100.0]
+    r.drv.song.clock = lambda: now[0]
+    r.now = now
+    r.drv.init()
+    yield r
+    r.drv.end()
+
+
+def rest(rig, seconds=0.3):
+    rig.now[0] += seconds
+    rig.drv.tick()
+
+
+def test_preset_roles_are_known(zyn):
+    roles = [r for _k, _i, r in zyn.drv.mapping.unknown_roles]
+    assert "device_preset" not in roles and "device_preset_bank" not in roles
+
+
+def test_preset_encoder_steps_and_loads_once_it_rests(zyn):
+    proc = zyn.chain(1).current_processor
+    zyn.dev.take()
+    turn(zyn, PRESET, 1)                        # Warm -> (separator) -> Glass
+    zyn.drv.flush()
+    assert _texts(zyn.dev.take()) == [(0, 0, 0, "Glass ")]
+    assert proc.calls == []                     # not loaded while it turns
+    turn(zyn, PRESET, 1)                        # Choir
+    zyn.now[0] += 0.1
+    zyn.drv.tick()
+    assert proc.calls == []                     # not rested long enough
+    rest(zyn)
+    assert proc.calls == [("preset", 3)] and proc.preset_index == 3
+    assert ("refresh_screen", ["control", "bank", "preset", "mixer"]) in zyn.sm.cuias
+    turn(zyn, PRESET, 5)                        # clamped at the last preset: nothing to load
+    rest(zyn)
+    assert proc.calls == [("preset", 3)]
+    turn(zyn, PRESET, -9)                       # back to the first, the separator skipped
+    rest(zyn)
+    assert proc.calls[-1] == ("preset", 0)
+
+
+def test_bank_encoder_picks_the_bank_and_its_first_preset(zyn):
+    proc = zyn.chain(1).current_processor
+    zyn.dev.take()
+    turn(zyn, PRESET_BANK, 1)                   # Pads -> (user separator) -> Keys
+    zyn.drv.flush()
+    assert _texts(zyn.dev.take()) == [(0, 0, 0, "Keys  ")]
+    rest(zyn)
+    assert proc.calls == [("bank", 3), ("preset", 0)]
+    assert [e[2] for e in proc.preset_list] == ["Grand", "EP"]
+    turn(zyn, PRESET_BANK, -5)                  # back to Pads; the favourites entry is skipped
+    rest(zyn)
+    assert proc.calls[-2:] == [("bank", 1), ("preset", 0)]
+
+
+def test_preset_pick_is_dropped_when_the_processor_changes(zyn):
+    proc = zyn.chain(1).current_processor
+    turn(zyn, PRESET, 1)
+    zyn.chain(1).current_processor = FakePresetProcessor()
+    zyn.chain(1).current_processor.id = 8
+    rest(zyn)
+    assert proc.calls == [] and zyn.chain(1).current_processor.calls == []
+
+
+def test_zyn_mode_pages_two_parameters(zyn):
+    m = zyn.drv.mapping
+    assert m.device_page_step() == 1            # device_param_1..2 live: pages of 2
+    turn(zyn, ZDP + 1, -4)                      # E8: device_param_2 = tune
+    assert zc(zyn, "tune").value == 60
+    press(zyn, 5)                               # Bank right: device_bank_next
+    turn(zyn, ZDP, 1)                           # E7 now Main / osc
+    turn(zyn, ZDP + 1, 10)                      # E8 Main / glide
+    assert zc(zyn, "osc").value == 1 and zc(zyn, "glide").value == pytest.approx(0.6)
+    press(zyn, 5)
+    turn(zyn, ZDP, 1)                           # Filter / cutoff
+    assert zc(zyn, "cutoff").value == 65
+    for _ in range(5):
+        press(zyn, 5)                           # clamped at the last pair (Env / sustain, release)
+    assert m.device_bank == 5
+    turn(zyn, ZDP + 1, 3)
+    assert zc(zyn, "release").value == 3
+
+
+def test_no_processor_the_preset_encoders_do_nothing(zyn):
+    zyn.chain(1).current_processor = None
+    zyn.drv.tick()
+    turn(zyn, PRESET, 1)
+    turn(zyn, PRESET_BANK, 1)
+    rest(zyn)
+    assert not [c for c in zyn.sm.cuias if c[0] == "refresh_screen"]
