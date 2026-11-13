@@ -49,6 +49,9 @@ class zynthian_gui_bluetooth(zynthian_gui_selector_info):
         self.ble_controllers = {}
         self.ble_devices = {}           # Map of BLE devices, indexed by device address
         self.pending_actions = []       # List of BLE commands to queue
+        # Devices being paired whose auto-connect must be re-armed, indexed by address: "pairing" or "disconnecting".
+        # See check_auto_connect_rearm.
+        self.auto_connect_rearm = {}
         super().__init__('Bluetooth')
         self.select_path.set("Bluetooth")
 
@@ -158,6 +161,7 @@ class zynthian_gui_bluetooth(zynthian_gui_selector_info):
 
         self.ble_controllers = {}
         self.ble_devices = {}
+        self.auto_connect_rearm = {}
         if self.proc:
             # Stop bluetooth scanning
             self.send_ble_cmd("scan off")
@@ -255,6 +259,7 @@ class zynthian_gui_bluetooth(zynthian_gui_selector_info):
                             # BLE MIDI device has "Vender specific" UUID with value 03b80e5a-ede8-4b33-a751-6ce34ec4c700
                             self.ble_devices[addr][4] = True
                             self.update = True
+                        self.check_auto_connect_rearm(addr)
 
                 elif parsing and cur_ctrl:
                     logging.debug(f"\tParsing Controller => {result}")
@@ -287,6 +292,7 @@ class zynthian_gui_bluetooth(zynthian_gui_selector_info):
                         # Do not let an untrusted device remain connected
                         # self.send_ble_cmd(f"disconnect {cur_dev}")
                     self.update |= config != self.ble_devices[cur_dev]
+                    self.check_auto_connect_rearm(cur_dev)
 
             except Exception as e:
                 # Accept occasional error instead of checking length of result many times.
@@ -303,6 +309,7 @@ class zynthian_gui_bluetooth(zynthian_gui_selector_info):
             If a device is paired, it needs to be removed but that will also remove it from the list until it is detected again
             If a device is trusted and connected, it may ask for pairing and authentication.
             """
+            self.auto_connect_rearm.pop(addr, None)
             if self.ble_devices[addr][1] or self.ble_devices[addr][2]:
                 self.send_ble_cmd(f"untrust {addr}")
                 self.send_ble_cmd(f"disconnect {addr}")
@@ -313,6 +320,7 @@ class zynthian_gui_bluetooth(zynthian_gui_selector_info):
                 self.send_ble_cmd(f"untrust {addr}")
                 self.send_ble_cmd(f"disconnect {addr}")
             else:
+                self.auto_connect_rearm[addr] = "pairing"
                 self.send_ble_cmd(f"trust {addr}")
                 self.send_ble_cmd(f"pair {addr}")
         except Exception as e:
@@ -321,6 +329,38 @@ class zynthian_gui_bluetooth(zynthian_gui_selector_info):
             self.update = True
         sleep(2)
         self.zyngui.state_manager.end_busy("Toggle BLE Device")
+
+    def check_auto_connect_rearm(self, addr):
+        """Re-arm BlueZ auto-connect for a device paired from this page
+
+        addr - BLE address
+
+        A BLE MIDI device advertises its service UUID, so bluetoothd probes the
+        MIDI profile while the device is still a temporary (scan-only) device.
+        In that state BlueZ sets disable_auto_connect instead of enabling
+        auto-connect, and pairing does not clear it. Only Device1.Connect on a
+        disconnected LE device does. Without it the device does not reconnect
+        after a power cycle until bluetoothd restarts.
+
+        After pairing the device is still connected, so Connect would return
+        early. Disconnect first (allowed, because the device is trusted), then
+        connect once bluetoothctl reports the link is down.
+        """
+        stage = self.auto_connect_rearm.get(addr)
+        if stage is None or addr not in self.ble_devices:
+            return
+        paired = self.ble_devices[addr][1]
+        connected = self.ble_devices[addr][3]
+        if stage == "pairing" and paired:
+            if connected is False:
+                self.auto_connect_rearm.pop(addr)
+                self.send_ble_cmd(f"connect {addr}")
+            else:
+                self.auto_connect_rearm[addr] = "disconnecting"
+                self.send_ble_cmd(f"disconnect {addr}")
+        elif stage == "disconnecting" and connected is False:
+            self.auto_connect_rearm.pop(addr)
+            self.send_ble_cmd(f"connect {addr}")
 
     def remove_ble(self, addr):
         """Remove the Bluetooth device
