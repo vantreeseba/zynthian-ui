@@ -1204,7 +1204,15 @@ class PadMatrixHandler(ModeHandlerBase):
                 is_empty = all(self._zynseq.is_pattern_empty(pattern) for pattern in patterns)
             else:
                 is_empty = pad_info["empty"]
-            if repeat == 0 or is_empty:
+            if state == zynseq.SEQ_RECORDING:
+                # A take shows red whether or not the pad holds anything yet:
+                # steady whilst recording, blinking whilst waiting to punch in/out
+                led_colour = zynthian_gui_config.LAUNCHER_REC_COLOUR[self.driver.apc_color_variant]
+                led_mode = LED_BRIGHT_100
+            elif state in (zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD):
+                led_colour = zynthian_gui_config.LAUNCHER_REC_COLOUR[self.driver.apc_color_variant]
+                led_mode = RGB_MODE_BLINK_8
+            elif repeat == 0 or is_empty:
                 led_colour = COLORS.COLOR_BLACK
                 led_mode = RGB_MODE_PRIMARY
             elif state == zynseq.SEQ_STOPPED:

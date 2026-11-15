@@ -121,7 +121,15 @@ class zynthian_ctrldev_launchkey_mk3_88(zynthian_ctrldev_zynpad, zynthian_ctrlde
             state  = pad_info["state"]
             repeat = pad_info["repeat"]
             group  = pad_info["group"]
-            if repeat == 0 or group >= MAX_NUM_MIDI_CHANS:
+            # A take shows red whether or not the pad holds anything yet:
+            # steady whilst recording, flashing whilst waiting to punch in/out
+            if state == zynseq.SEQ_RECORDING:
+                vel  = zynthian_gui_config.LAUNCHER_REC_COLOUR["launchpad"]
+                chan = self.CHAN_STEADY
+            elif state in (zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD):
+                vel  = zynthian_gui_config.LAUNCHER_REC_COLOUR["launchpad"]
+                chan = self.CHAN_FLASH
+            elif repeat == 0 or group >= MAX_NUM_MIDI_CHANS or pad_info.get("empty"):
                 pass  # vel=0 → LED off
             elif state == zynseq.SEQ_STOPPED:
                 vel = zynthian_gui_config.LAUNCHER_COLOUR[group]["launchpad"]

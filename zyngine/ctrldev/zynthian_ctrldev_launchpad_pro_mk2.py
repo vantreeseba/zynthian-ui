@@ -725,8 +725,8 @@ class zynthian_ctrldev_launchpad_pro_mk2(zynthian_ctrldev_zynpad, zynthian_ctrld
                         # Convert column to MIDI channel (same as midi_event)
                         midi_chan = self.get_filtered_midi_chan_by_index(col)
                         if midi_chan is not None:
-                            pad_info = self.zynseq.state["scenes"][self.zynseq.scene]["phrases"][phrase]["sequences"][midi_chan]
-                            self.update_pad(row, col, pad_info)
+                            info = self.zynseq.state["scenes"][self.zynseq.scene]["phrases"][phrase]["sequences"][midi_chan]
+                            self.update_pad(row, col, self.get_pad_info(phrase, midi_chan, info))
                     except (KeyError, IndexError, TypeError):
                         # Pad doesn't exist or is empty, skip it
                         pass           
@@ -830,7 +830,7 @@ class zynthian_ctrldev_launchpad_pro_mk2(zynthian_ctrldev_zynpad, zynthian_ctrld
         if self.mode != MODE_SESSION:
             return  # Only light pads in session mode
         chan = 0
-        color = 0 # AKA velocity
+        vel = 0  # AKA colour
         note = 10 * (8 - row) + col + 1
         try:
             state = pad_info["state"]
@@ -842,7 +842,7 @@ class zynthian_ctrldev_launchpad_pro_mk2(zynthian_ctrldev_zynpad, zynthian_ctrld
                 group = pad_info["group"]
             if repeat == 0 or mode == 0 or group >= MAX_NUM_MIDI_CHANS:
                 pass
-            elif state == zynseq.SEQ_STOPPED:
+            elif state == zynseq.SEQ_STOPPED and not pad_info.get("empty"):
                 chan = 0
                 vel = zynthian_gui_config.LAUNCHER_COLOUR[group]["launchpad"]
             elif state == zynseq.SEQ_PLAYING:

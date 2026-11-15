@@ -158,6 +158,7 @@ class zynthian_ctrldev_arturia_keylab_61_mk2(zynthian_ctrldev_zynpad, zynthian_c
     COLOR_STARTING = (127, 127, 0)
     COLOR_STOPPING = (127, 0, 0)
     COLOR_EMPTY = (0, 0, 0)
+    COLOR_RECORDING = (127, 0, 0)
 
 
 
@@ -227,7 +228,12 @@ class zynthian_ctrldev_arturia_keylab_61_mk2(zynthian_ctrldev_zynpad, zynthian_c
             state = pad_info.get("state")
             group = pad_info.get("group", 0)
 
-            if state == zynseq.SEQ_STOPPED:
+            if state in (zynseq.SEQ_RECORDING, zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD):
+                # A take shows whether or not the pad holds anything yet (no LED blink here)
+                r, g, b = self.COLOR_RECORDING
+            elif pad_info.get("empty"):
+                r, g, b = self.COLOR_EMPTY
+            elif state == zynseq.SEQ_STOPPED:
                 r, g, b = self.PAD_COLORS[group % len(self.PAD_COLORS)]
                 # dim it
                 r, g, b = r // dim_ratio, g // dim_ratio, b // dim_ratio

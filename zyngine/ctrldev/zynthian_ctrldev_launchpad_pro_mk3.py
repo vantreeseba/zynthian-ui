@@ -83,7 +83,7 @@ class zynthian_ctrldev_launchpad_pro_mk3(zynthian_ctrldev_zynpad):
                 group = pad_info["group"]
             if repeat == 0 or mode == 0 or group >= MAX_NUM_MIDI_CHANS:
                 pass
-            elif state == zynseq.SEQ_STOPPED:
+            elif state == zynseq.SEQ_STOPPED and not pad_info.get("empty"):
                 chan = 0
                 vel = zynthian_gui_config.LAUNCHER_COLOUR[group]["launchpad"]
             elif state == zynseq.SEQ_PLAYING:

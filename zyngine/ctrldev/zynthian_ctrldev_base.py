@@ -453,32 +453,46 @@ class zynthian_ctrldev_zynpad(zynthian_ctrldev_base):
         # Sequence/Clip launcher
         else:
             try:
-                pad_info = self.zynseq.state["scenes"][self.zynseq.scene]["phrases"][phrase]["sequences"][chan]
-                # Sequence
-                if pad_info["group"] < 16:
-                    try:
-                        pattern = pad_info["tracks"][0]["patns"]["0"]
-                        pad_info["empty"] = len(self.zynseq.state["patns"][str(pattern)]["events"]) == 0
-                    except:
-                        pad_info["empty"] = True
-                # Clippy
-                else:
-                    try:
-                        chain_id = self.chain_manager.get_chain_ids_by_midi_chan(chan)[0]
-                        chain = self.chain_manager.chains[chain_id]
-                        clippy_proc = chain.get_clippy_processor()
-                        if clippy_proc.controllers_dict[f"file {phrase + 1}"].get_value():
-                            pad_info["empty"] = False
-                        else:
-                            pad_info["empty"] = True
-                    except:
-                        pad_info["empty"] = True
+                info = self.zynseq.state["scenes"][self.zynseq.scene]["phrases"][phrase]["sequences"][chan]
+                pad_info = self.get_pad_info(phrase, chan, info)
             except IndexError:
                 pad_info = None
             for idx in self.chain_manager.get_pos_by_midi_chan(chan):
                 col = idx - self.scroll_h
                 if 0 <= col < self.cols:
                     self.update_pad(row, col, pad_info)
+
+    # Play state a driver's update_pad() draws for each pad look
+    PAD_LOOK_STATE = {
+        zynseq.PAD_REC_ARMED: zynseq.SEQ_STARTING_RECORD,
+        zynseq.PAD_RECORDING: zynseq.SEQ_RECORDING,
+        zynseq.PAD_REC_STOPPING: zynseq.SEQ_STOPPING_RECORD,
+        zynseq.PAD_EMPTY: zynseq.SEQ_STOPPED,
+    }
+
+    def get_pad_info(self, phrase, chan, info):
+        """Pad info for update_pad(): a copy of the pad's sequence state, normalised to
+        the shared pad look (zynthian_state_manager.get_pad_state) so every driver
+        draws the same thing whatever its own colour logic:
+            "pad_state": the zynseq.PAD_* look
+            "empty": True if the pad holds no content
+            "state": live MIDI capture reads as recording, an empty pad that isn't
+                recording as stopped (drivers light a stopped pad only if not empty)
+        """
+
+        pad_info = dict(info)
+        try:
+            pad_state = self.state_manager.get_pad_state(phrase, chan, info)
+            pad_info["pad_state"] = pad_state
+            pad_info["empty"] = pad_state == zynseq.PAD_EMPTY or (
+                pad_state == zynseq.PAD_DISABLED and not self.state_manager.pad_filled(phrase, chan))
+            if pad_state in self.PAD_LOOK_STATE:
+                pad_info["state"] = self.PAD_LOOK_STATE[pad_state]
+        except Exception as e:
+            # Never leave a pad undrawn => its raw sequence state, assumed empty
+            logging.error(f"Can't resolve pad look ({phrase}, {chan}) => {e}")
+            pad_info.setdefault("empty", True)
+        return pad_info
 
     def toggle_pad(self, phrase, midi_chan):
         """Launch/stop the pad at phrase,midi_chan, routing clippy pads through

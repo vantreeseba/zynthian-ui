@@ -297,6 +297,12 @@ class zynthian_gui_launcher_pad():
             self.canvas.itemconfig(self.progress_line, state=tkinter.HIDDEN)
             self.progress_shown = False
 
+    def flash(self, color):
+        """ Pulse the pad between color and a dimmed color on the beat (flash_tick) """
+        self.flashing = True
+        self.flash_bright = color
+        self.flash_dim = zynthian_gui_config.color_scale(color, 0.45)
+
     def flash_tick(self):
         """ Beat-synced pulse for queued (starting/stopping) pads """
         if self.flashing and self.flash_bright:
@@ -322,13 +328,20 @@ class zynthian_gui_launcher_pad():
             else:
                 state_seq = state_phrase["sequences"][self.chain.midi_chan]
 
-            # Don't draw if state didn't change. The pad also shows things that aren't in
-            # the sequence state (live MIDI capture, the clip a finished take leaves
-            # behind), so whatever signals a change to one pad must force its redraw.
-            if not force and self.last_state is not None and self.last_state == state_seq:
+            # The pad's look also depends on things outside the sequence state (live MIDI
+            # capture, the pattern's events, the clip file) => resolved live and part of
+            # the redraw check, so the pad redraws whenever any of them changes
+            if self.chain.chain_id:
+                pad_state = self.gui_mixer.state_manager.get_pad_state(self.phrase, self.chain.midi_chan, state_seq)
+            else:
+                pad_state = None
+
+            # Don't draw if state didn't change
+            draw_state = (copy.copy(state_seq), pad_state)
+            if not force and self.last_state is not None and self.last_state == draw_state:
                 return
 
-            self.last_state = copy.copy(state_seq)      # NOTE: Better deepcopy?
+            self.last_state = draw_state
 
             # Cleared only once we know we are redrawing; the early return above
             # leaves a flashing or playing pad to carry on as it is
@@ -363,33 +376,23 @@ class zynthian_gui_launcher_pad():
 
             # Chain launcher =>
             if self.chain.chain_id:
+                empty = pad_state == zynseq.PAD_EMPTY
+                disabled = pad_state == zynseq.PAD_DISABLED
                 # Zynstep pattern
                 if state_seq["group"] < 16:
                     try:
-                        #pattern = state_seq["tracks"][0]["patns"]["0"]
-                        #n_beats = self.gui_mixer.zynseq.libseq.getBeatsInPattern(pattern)
                         n_beats = state_seq["nBeats"]
                         timesig_text = self.get_pattern_length(n_beats, state_phrase["bpb"])
-                        try:
-                            #empty = len(self.gui_mixer.zynseq.state["patns"][str(pattern)]["events"]) == 0
-                            empty = (state_seq["nEvents"] == 0)
-                        except:
-                            empty = True
                     except Exception as e:
                         logging.error(e)
                         disabled = True
                 # Clippy
-                else:
-                    if self.get_clippy_file():
-                        empty = False
-                        timesig = self.get_clippy_timesig()
-                        if timesig is not None:
-                            timesig_text = str(timesig)
-                        else:
-                            timesig_text = "1"
+                elif self.get_clippy_file():
+                    timesig = self.get_clippy_timesig()
+                    if timesig is not None:
+                        timesig_text = str(timesig)
                     else:
-                        empty = True
-                        timesig = "1"
+                        timesig_text = "1"
 
                 if state_seq["repeat"] == 1:
                     mode_text = "↦"
@@ -528,52 +531,41 @@ class zynthian_gui_launcher_pad():
                         color_text = zynthian_gui_config.PAD_COLOUR_STATE_DISABLED
                         color_state = zynthian_gui_config.PAD_COLOUR_STATE_DISABLED
                         state_text = "?"
-                st = state_seq["state"]
-                midi_recording = self.gui_mixer.state_manager.midi_record_pad == (self.phrase, self.chain.midi_chan)
-                if midi_recording:
-                    # Live MIDI capture into this pad's pattern
+                if pad_state == zynseq.PAD_RECORDING:
+                    # Live MIDI capture has no record play state of its own
                     state_text = "⏺"
 
                 # Progress sweep (update_progress) only shows on pads
                 # actively sounding, not queued or child-playing ones.
+                st = state_seq["state"]
                 self.playing = (st == zynseq.SEQ_PLAYING and not empty) or st == zynseq.SEQ_RECORDING
 
-                # Brightness codes activity (dim = has content but idle,
-                # bright = playing); queued pads pulse on the beat via
-                # flash_tick(). Phrase pads (main chain) keep their colour.
-                if midi_recording or st in (zynseq.SEQ_RECORDING, zynseq.SEQ_STARTING_RECORD,
-                                            zynseq.SEQ_STOPPING_RECORD):
+                # Phrase pads (main chain) keep their colour. Chain pads: gray when
+                # empty, track colour when holding content (dim = idle, bright =
+                # playing); queued pads pulse on the beat via flash_tick().
+                if pad_state in zynseq.PAD_REC_STATES:
                     # A take is the one thing that must never be mistaken for a pad
                     # that is merely playing, so it takes over the whole pad, empty
                     # or not: solid whilst recording, pulsing whilst waiting to
                     # punch in or out
                     color = zynthian_gui_config.PAD_COLOUR_RECORDING
                     color_state = color_text
-                    if st == zynseq.SEQ_STARTING_RECORD:
+                    if pad_state == zynseq.PAD_REC_ARMED:
                         title = "ARMED"
-                    elif st == zynseq.SEQ_STOPPING_RECORD:
+                    elif pad_state == zynseq.PAD_REC_STOPPING:
                         title = "ENDING"
                     else:
                         title = "REC"
-                    if st in (zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD):
-                        self.flashing = True
-                        self.flash_bright = color
-                        self.flash_dim = zynthian_gui_config.color_scale(color, 0.45)
+                    if pad_state != zynseq.PAD_RECORDING:
+                        self.flash(color)
                         if not self.gui_mixer.flash_on:
                             color = self.flash_dim
-                elif self.chain.chain_id and not empty:
-                    if st in (zynseq.SEQ_STARTING,
-                              zynseq.SEQ_STOPPING, zynseq.SEQ_STOPPING_SYNC,
-                              zynseq.SEQ_CHILD_STOPPING):
-                        self.flashing = True
-                        self.flash_bright = color
-                        self.flash_dim = zynthian_gui_config.color_scale(color, 0.45)
-                        if not self.gui_mixer.flash_on:
-                            color = self.flash_dim
-                    elif st not in (zynseq.SEQ_PLAYING, zynseq.SEQ_RECORDING,
-                                    zynseq.SEQ_CHILD_PLAYING):
-                        # Stopped with content
-                        color = zynthian_gui_config.color_scale(color, 0.55)
+                elif pad_state in (zynseq.PAD_STARTING, zynseq.PAD_STOPPING):
+                    self.flash(color)
+                    if not self.gui_mixer.flash_on:
+                        color = self.flash_dim
+                elif pad_state == zynseq.PAD_IDLE:
+                    color = zynthian_gui_config.color_scale(color, 0.55)
         except:
             #logging.exception(traceback.format_exc())
             title = ""
@@ -3193,15 +3185,9 @@ class zynthian_gui_mixer(zynthian_gui_base):
     def pad_filled(self, chain, phrase):
         """True if a chain's launcher pad holds content (a clip file or a non-empty pattern)"""
 
-        proc = chain.get_clippy_processor() if chain else None
-        if proc:
-            try:
-                return bool(proc.controllers_dict[f"file {phrase + 1}"].get_value())
-            except Exception:
-                return False
-        if chain and chain.chain_id and type(chain.midi_chan) is int and chain.midi_chan < 16:
-            return not self.zynseq.libseq.isEmpty(self.zynseq.scene, phrase, chain.midi_chan)
-        return False
+        if not chain or not chain.chain_id:
+            return False
+        return self.state_manager.pad_filled(phrase, chain.midi_chan)
 
     def select_pad_by_index(self, track, pad):
         """Select a launcher pad by position, making its chain active

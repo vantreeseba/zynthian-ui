@@ -709,7 +709,15 @@ class ZynSong(Song):
 
     def _filled(self, track, phrase, info):
         """Whether the pad holds anything, as the mixer's launcher draws it: a clippy pad its clip
-        file, a sequence its events."""
+        file, a sequence its events. Asks the state manager (read live from the engines, as
+        every pad renderer does) when it can, else the sequence state."""
+        pad_filled = getattr(self.sm, "pad_filled", None)
+        chan = getattr(track.chain, "midi_chan", None)
+        if pad_filled is not None and isinstance(chan, int):
+            try:
+                return bool(pad_filled(phrase, chan))
+            except Exception:
+                pass
         if info.get("group", 0) >= SEQ_GROUP_CLIPPY:
             try:
                 proc = track.chain.get_clippy_processor()

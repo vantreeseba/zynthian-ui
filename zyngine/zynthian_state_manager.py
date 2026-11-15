@@ -2798,7 +2798,77 @@ class zynthian_state_manager:
         self.zynseq.libseq.enableMidiRecord(False)
         self.midi_record_pad = None
         self.stop_record_metronome()
+        # Notes captured by the RT thread don't update the sequence's empty flag or
+        # the cached state (nEvents, nBeats) => refresh both before redrawing the pad
+        self.zynseq.libseq.updateSequenceInfo()
+        self.zynseq.refresh_state(send=False)
         zynsigman.send_queued(zynsigman.S_STEPSEQ, zynsigman.SS_SEQ_PLAY_STATE, phrase=phrase, chan=midi_chan)
+
+    def pad_filled(self, phrase, chan):
+        """True if a launcher pad holds content, read live from the engines
+
+        phrase: Phrase (launcher row) index
+        chan: zynseq channel of the pad (0-15 MIDI, 16-31 clippy)
+
+        A MIDI pad holds content when its pattern has events, an audio pad when it
+        has a clip file or a finished take is being committed (the file controller
+        is only set once the take is saved).
+        """
+
+        if not isinstance(chan, int) or not 0 <= chan < zynseq.PHRASE_CHANNEL:
+            return False
+        if chan < 16:
+            return not self.zynseq.libseq.isEmpty(self.zynseq.scene, phrase, chan)
+        try:
+            chain_id = self.chain_manager.get_chain_ids_by_midi_chan(chan)[0]
+            proc = self.chain_manager.chains[chain_id].get_clippy_processor()
+            if proc.controllers_dict[f"file {phrase + 1}"].get_value():
+                return True
+            rec = proc.engine.recordings.get((proc, phrase))
+            return bool(rec and rec["state"] in ("recording", "saving"))
+        except Exception:
+            return False
+
+    def get_pad_state(self, phrase, chan, info=None):
+        """Get the look of a launcher pad (zynseq.PAD_*), shared by every pad renderer
+
+        phrase: Phrase (launcher row) index
+        chan: zynseq channel of the pad (0-15 MIDI, 16-31 clippy)
+        info: The pad's sequence state dict, if already looked up (default: from zynseq.state)
+
+        A take shows whether or not the pad holds anything yet: armed until the
+        punch in, recording until the punch out is requested, then stopping until
+        the punch out. Otherwise an empty pad shows empty whatever its play state.
+        """
+
+        if info is None:
+            try:
+                info = self.zynseq.state["scenes"][self.zynseq.scene]["phrases"][phrase]["sequences"][chan]
+            except Exception:
+                info = None
+        if not info:
+            return zynseq.PAD_DISABLED
+        state = info.get("state", zynseq.SEQ_STOPPED)
+        if chan < 16 and self.midi_record_pad == (phrase, chan):
+            return zynseq.PAD_RECORDING
+        if state == zynseq.SEQ_STARTING_RECORD:
+            return zynseq.PAD_REC_ARMED
+        if state == zynseq.SEQ_RECORDING:
+            return zynseq.PAD_RECORDING
+        if state == zynseq.SEQ_STOPPING_RECORD:
+            return zynseq.PAD_REC_STOPPING
+        if info.get("repeat", 1) == 0:
+            return zynseq.PAD_DISABLED
+        if not self.pad_filled(phrase, chan):
+            return zynseq.PAD_EMPTY
+        if state == zynseq.SEQ_STARTING:
+            return zynseq.PAD_STARTING
+        if state in (zynseq.SEQ_STOPPING, zynseq.SEQ_FORCED_STOP, zynseq.SEQ_STOPPING_SYNC,
+                     zynseq.SEQ_CHILD_STOPPING):
+            return zynseq.PAD_STOPPING
+        if state in (zynseq.SEQ_PLAYING, zynseq.SEQ_CHILD_PLAYING):
+            return zynseq.PAD_PLAYING
+        return zynseq.PAD_IDLE
 
     def set_tempo(self, tempo):
         self.zynseq.set_tempo(tempo)

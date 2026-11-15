@@ -388,24 +388,8 @@ class zynthian_ctrldev_akai_mpk249(zynthian_ctrldev_zynpad, zynthian_ctrldev_zyn
             return
 
         try:
-            pad_info = self.zynseq.state["scenes"][self.zynseq.scene]["phrases"][phrase]["sequences"][chan]
-            if pad_info["group"] < 16:
-                try:
-                    pattern = pad_info["tracks"][0]["patns"]["0"]
-                    pad_info["empty"] = len(self.zynseq.state["patns"][str(pattern)]["events"]) == 0
-                except Exception:
-                    pad_info["empty"] = True
-            else:
-                try:
-                    chain_id = self.chain_manager.get_chain_ids_by_midi_chan(chan)[0]
-                    chain = self.chain_manager.chains[chain_id]
-                    clippy_proc = chain.get_clippy_processor()
-                    if clippy_proc.controllers_dict[f"file {phrase + 1}"].get_value():
-                        pad_info["empty"] = False
-                    else:
-                        pad_info["empty"] = True
-                except Exception:
-                    pad_info["empty"] = True
+            info = self.zynseq.state["scenes"][self.zynseq.scene]["phrases"][phrase]["sequences"][chan]
+            pad_info = self.get_pad_info(phrase, chan, info)
         except IndexError:
             pad_info = None
 
@@ -1417,7 +1401,12 @@ class zynthian_ctrldev_akai_mpk249(zynthian_ctrldev_zynpad, zynthian_ctrldev_zyn
         syx = PAD_SYSEX_COLOR_OFF
         try:
             state = pad_info["state"]
-            if state == zynseq.SEQ_PLAYING:
+            if state in (zynseq.SEQ_RECORDING, zynseq.SEQ_STARTING_RECORD, zynseq.SEQ_STOPPING_RECORD):
+                # A take shows whether or not the pad holds anything yet, in the
+                # stopping colour (no dedicated record colour in the MPK palette)
+                vel = PAD_LED_STOPPING_VEL
+                syx = PAD_SYSEX_COLOR_STOPPING
+            elif state == zynseq.SEQ_PLAYING:
                 vel = PAD_LED_ACTIVE_VEL
                 syx = PAD_SYSEX_COLOR_ACTIVE
             elif state in (

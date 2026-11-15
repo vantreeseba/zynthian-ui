@@ -102,6 +102,19 @@ SEQ_RECORDING = 9        # Recording audio (PLAYING | 8)
 SEQ_STARTING_RECORD = 10 # Armed, waiting for bar sync to punch in (STARTING | 8)
 SEQ_STOPPING_RECORD = 11 # Recording, waiting for bar sync to punch out (STOPPING | 8)
 
+# Launcher pad look, shared by every pad renderer (GUI launcher, controller LEDs)
+# => see zynthian_state_manager.get_pad_state()
+PAD_DISABLED = 0      # No sequence there or disabled (repeat 0)
+PAD_EMPTY = 1         # Nothing in the pad => default gray
+PAD_IDLE = 2          # Content, stopped => track colour (dimmed)
+PAD_STARTING = 3      # Content, waiting for the sync point to start
+PAD_PLAYING = 4       # Content, playing => track colour
+PAD_STOPPING = 5      # Content, waiting for the sync point to stop
+PAD_REC_ARMED = 6     # Armed, waiting for the punch in
+PAD_RECORDING = 7     # Recording (audio take or live MIDI capture)
+PAD_REC_STOPPING = 8  # Recording, waiting for the punch out
+PAD_REC_STATES = (PAD_REC_ARMED, PAD_RECORDING, PAD_REC_STOPPING)
+
 FOLLOW_ACTION_NONE  = 0
 FOLLOW_ACTION_RELATIVE = 1
 FOLLOW_ACTION_ABSOLUTE  = 2
